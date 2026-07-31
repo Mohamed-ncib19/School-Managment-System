@@ -1,12 +1,12 @@
 @echo off
 REM ============================================================
-REM  IQ Academy - Intern Management System
+REM  IQ Academy - Start All Servers
 REM  Double-click this file to start the system.
 REM ============================================================
 title IQ Academy - Starting
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launcher.ps1" %*
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0\scripts\launcher.ps1" %*
 
 if errorlevel 1 (
   echo.
