@@ -11,6 +11,9 @@ out
 *.db-journal
 coverage
 
+# Build artifacts
+*.tsbuildinfo
+
 # Local operational data — never commit school records, logs, or the DB itself
 backups/
 logs/
