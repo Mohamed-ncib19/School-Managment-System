@@ -4,7 +4,9 @@ build
 .next
 out
 .env
+.env.local
 .env.*.local
+.env**
 *.db
 *.db-journal
 coverage
