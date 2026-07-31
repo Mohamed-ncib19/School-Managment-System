@@ -7,11 +7,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
 import { groupsApi } from "@/lib/api/groups.api";
 import { useLevels, useProfessors, useFields, useStudents } from "@/hooks/use-queries";
+import { useViewMode } from "@/hooks/use-view-mode";
 import type { Group, Level, Professor, Field, Student } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
-import { ViewToggle, type ViewMode } from "@/components/shared/view-toggle";
+import { ViewToggle } from "@/components/shared/view-toggle";
 import { TreeView, buildGroupsTree } from "@/components/shared/tree-view";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -30,7 +31,7 @@ export default function GroupsPage() {
 
   const { data: students } = useStudents();
 
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const { viewMode, setViewMode } = useViewMode("list");
 
   const treeData = useMemo(
     () => buildGroupsTree(groups ?? [], levels ?? [], professors ?? [], fields ?? [], students ?? []),

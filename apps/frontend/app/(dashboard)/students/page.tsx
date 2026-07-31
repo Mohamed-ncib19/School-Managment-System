@@ -8,11 +8,12 @@ import { Search, ChevronRight, Trash2, DollarSign, Eye, Plus } from "lucide-reac
 import { studentsApi } from "@/lib/api/students.api";
 import { useFields, useProfessors, useLevels, useGroups, useStudents } from "@/hooks/use-queries";
 import { useGeneratePaymentForStudent } from "@/hooks/use-payments";
+import { useViewMode } from "@/hooks/use-view-mode";
 import type { Student } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { ViewToggle, type ViewMode } from "@/components/shared/view-toggle";
+import { ViewToggle } from "@/components/shared/view-toggle";
 import { TreeView, buildStudentTree } from "@/components/shared/tree-view";
 import { ConfirmDeleteDialog, FormButton } from "@/components/forms/form-helpers";
 import Tooltip from "@/components/shared/tooltip";
@@ -23,7 +24,7 @@ import { useTranslation } from "@/lib/i18n/context";
 export default function StudentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const { viewMode, setViewMode } = useViewMode("list");
   const [search, setSearch] = useState("");
   const [fieldId, setFieldId] = useState("");
   const [profId, setProfId] = useState("");

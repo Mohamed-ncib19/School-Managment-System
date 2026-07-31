@@ -7,11 +7,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, BookOpen, Users, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { fieldsApi } from "@/lib/api/fields.api";
 import { useProfessors, useLevels, useGroups, useStudents } from "@/hooks/use-queries";
+import { useViewMode } from "@/hooks/use-view-mode";
 import type { Field, Professor, Level, Group, Student } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmDeleteDialog, FormButton } from "@/components/forms/form-helpers";
-import { ViewToggle, type ViewMode } from "@/components/shared/view-toggle";
+import { ViewToggle } from "@/components/shared/view-toggle";
 import { TreeView, buildFieldsTree } from "@/components/shared/tree-view";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -25,7 +26,7 @@ export default function FieldsPage() {
   const { data: groups } = useGroups();
   const { data: students } = useStudents();
 
-  const [viewMode, setViewMode] = useState<ViewMode>("cards");
+  const { viewMode, setViewMode } = useViewMode("cards");
 
   const statsMap = useMemo(() => {
     const map: Record<string, { professors: number; levels: number; groups: number; students: number }> = {};

@@ -5,13 +5,14 @@
   import { useParams, useRouter, useSearchParams } from "next/navigation";
   import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
   import { ArrowLeft, Plus, ChevronRight, Pencil, Trash2, Eye, DollarSign } from "lucide-react";
-  import { studentsApi } from "@/lib/api/students.api";
-  import { useFields, useProfessors, useLevels, useGroups } from "@/hooks/use-queries";
-  import type { Student } from "@/types";
-  import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
-  import { EmptyState } from "@/components/shared/empty-state";
-  import { StatusBadge } from "@/components/shared/status-badge";
-  import { ViewToggle, type ViewMode } from "@/components/shared/view-toggle";
+import { studentsApi } from "@/lib/api/students.api";
+import { useFields, useProfessors, useLevels, useGroups } from "@/hooks/use-queries";
+import { useViewMode } from "@/hooks/use-view-mode";
+import type { Student } from "@/types";
+import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { EmptyState } from "@/components/shared/empty-state";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { ViewToggle } from "@/components/shared/view-toggle";
   import { TreeView, buildStudentTree } from "@/components/shared/tree-view";
   import StudentDetailModal from "@/components/shared/student-detail-modal";
   import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
@@ -42,7 +43,7 @@ export default function GroupStudentsPage() {
   const level = levels?.find((l) => l.id === levelId);
   const group = groups?.find((g) => g.id === groupId);
 
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const { viewMode, setViewMode } = useViewMode("list");
   const [createOpen, setCreateOpen] = useState(false);
   const [editStudent, setEditStudent] = useState<Student | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);

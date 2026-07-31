@@ -7,6 +7,137 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model users {
+  id                  String             @id @default(uuid()) @db.Uuid
+  full_name           String
+  email               String             @unique
+  password_hash       String
+  role                UserRole           @default(super_admin)
+  is_active           Boolean            @default(true)
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+  reset_token         String?
+  reset_token_expires DateTime?
+  audit_logs          audit_logs[]       @relation("AuditActor")
+  created_fields      fields[]           @relation("FieldCreator")
+  professors          professors[]
+  recorded_payments   student_payments[]
+
+  @@map("users")
+}
+
+model fields {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  created_by  String       @db.Uuid
+  created_at  DateTime     @default(now())
+  creator     users        @relation("FieldCreator", fields: [created_by], references: [id])
+  professors  professors[] @relation("FieldProfessors")
+
+  @@map("fields")
+}
+
+model professors {
+  id         String   @id @default(uuid()) @db.Uuid
+  field_id   String   @db.Uuid
+  full_name  String
+  phone      String
+  email      String?
+  user_id    String?  @db.Uuid
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  levels     levels[] @relation("ProfessorLevels")
+  field      fields   @relation("FieldProfessors", fields: [field_id], references: [id])
+  user       users?   @relation(fields: [user_id], references: [id])
+
+  @@map("professors")
+}
+
+model levels {
+  id         String     @id @default(uuid()) @db.Uuid
+  prof_id    String     @db.Uuid
+  name       String
+  created_at DateTime   @default(now())
+  is_active  Boolean    @default(true)
+  groups     groups[]   @relation("LevelGroups")
+  professor  professors @relation("ProfessorLevels", fields: [prof_id], references: [id])
+
+  @@map("levels")
+}
+
+model groups {
+  id             String     @id @default(uuid()) @db.Uuid
+  level_id       String     @db.Uuid
+  name           String
+  capacity       Int?
+  schedule_notes String?
+  created_at     DateTime   @default(now())
+  is_active      Boolean    @default(true)
+  level          levels     @relation("LevelGroups", fields: [level_id], references: [id])
+  students       students[] @relation("GroupStudents")
+
+  @@map("groups")
+}
+
+model students {
+  id              String             @id @default(uuid()) @db.Uuid
+  group_id        String             @db.Uuid
+  first_name      String
+  last_name       String
+  phone           String
+  parent_phone    String?
+  email           String?
+  enrollment_date DateTime
+  monthly_fee     Decimal            @db.Decimal(10, 2)
+  status          StudentStatus      @default(active)
+  created_at      DateTime           @default(now())
+  payments        student_payments[] @relation("StudentPayments")
+  group           groups             @relation("GroupStudents", fields: [group_id], references: [id])
+
+  @@map("students")
+}
+
+model student_payments {
+  id             String         @id @default(uuid()) @db.Uuid
+  student_id     String         @db.Uuid
+  period         String
+  amount_due     Decimal        @db.Decimal(10, 2)
+  due_date       DateTime
+  status         PaymentStatus  @default(not_paid)
+  paid_amount    Decimal?       @db.Decimal(10, 2)
+  paid_at        DateTime?
+  recorded_by    String?        @db.Uuid
+  payment_method PaymentMethod?
+  notes          String?
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+  recorder       users?         @relation(fields: [recorded_by], references: [id])
+  student        students       @relation("StudentPayments", fields: [student_id], references: [id])
+
+  @@unique([student_id, period])
+  @@index([status])
+  @@index([due_date])
+  @@index([period])
+  @@map("student_payments")
+}
+
+model audit_logs {
+  id            String   @id @default(uuid()) @db.Uuid
+  actor_user_id String   @db.Uuid
+  action        String
+  entity_type   String
+  entity_id     String   @db.Uuid
+  meta          Json?
+  created_at    DateTime @default(now())
+  actor         users    @relation("AuditActor", fields: [actor_user_id], references: [id], onDelete: Cascade)
+
+  @@index([entity_type, entity_id])
+  @@index([created_at])
+  @@index([actor_user_id])
+  @@map("audit_logs")
+}
+
 enum UserRole {
   super_admin
 }
@@ -26,143 +157,4 @@ enum PaymentStatus {
   due_soon
   overdue
   paid
-}
-
-model users {
-  id            String    @id @default(uuid()) @db.Uuid
-  full_name     String
-  email         String    @unique
-  password_hash String
-  role          UserRole  @default(super_admin)
-  is_active     Boolean   @default(true)
-  reset_token       String?
-  reset_token_expires DateTime?
-  created_at    DateTime  @default(now())
-  updated_at    DateTime  @updatedAt
-
-  created_fields    fields[]           @relation("FieldCreator")
-  professors        professors[]
-  recorded_payments student_payments[]
-  audit_logs        audit_logs[]       @relation("AuditActor")
-
-  @@map("users")
-}
-
-model fields {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  description String?
-  created_by  String    @db.Uuid
-  created_at  DateTime  @default(now())
-
-  creator    users         @relation("FieldCreator", fields: [created_by], references: [id])
-  professors professors[]  @relation("FieldProfessors")
-
-  @@map("fields")
-}
-
-model professors {
-  id        String    @id @default(uuid()) @db.Uuid
-  field_id  String    @db.Uuid
-  full_name String
-  phone     String
-  email     String?
-  user_id   String?   @db.Uuid
-  is_active Boolean   @default(true)
-  created_at DateTime @default(now())
-
-  field   fields    @relation("FieldProfessors", fields: [field_id], references: [id])
-  user    users?    @relation(fields: [user_id], references: [id])
-  levels  levels[]  @relation("ProfessorLevels")
-
-  @@map("professors")
-}
-
-model levels {
-  id          String    @id @default(uuid()) @db.Uuid
-  prof_id     String    @db.Uuid
-  name        String
-  is_active   Boolean   @default(true)
-  created_at  DateTime  @default(now())
-
-  professor professors    @relation("ProfessorLevels", fields: [prof_id], references: [id])
-  groups     groups[]      @relation("LevelGroups")
-
-  @@map("levels")
-}
-
-model groups {
-  id            String    @id @default(uuid()) @db.Uuid
-  level_id      String    @db.Uuid
-  name          String
-  capacity      Int?
-  schedule_notes String?
-  is_active     Boolean   @default(true)
-  created_at    DateTime  @default(now())
-
-  level    levels      @relation("LevelGroups", fields: [level_id], references: [id])
-  students students[]  @relation("GroupStudents")
-
-  @@map("groups")
-}
-
-model students {
-  id              String      @id @default(uuid()) @db.Uuid
-  group_id        String      @db.Uuid
-  first_name      String
-  last_name       String
-  phone           String
-  parent_phone    String?
-  email           String?
-  enrollment_date DateTime
-  monthly_fee     Decimal     @db.Decimal(10, 2)
-  status          StudentStatus @default(active)
-  created_at      DateTime    @default(now())
-
-  group    groups            @relation("GroupStudents", fields: [group_id], references: [id])
-  payments student_payments[] @relation("StudentPayments")
-
-  @@map("students")
-}
-
-model student_payments {
-  id            String      @id @default(uuid()) @db.Uuid
-  student_id    String      @db.Uuid
-  period        String
-  amount_due    Decimal     @db.Decimal(10, 2)
-  due_date      DateTime
-  status        PaymentStatus @default(not_paid)
-  paid_amount   Decimal?    @db.Decimal(10, 2)
-  paid_at       DateTime?
-  recorded_by   String?     @db.Uuid
-  payment_method PaymentMethod?
-  notes         String?
-  created_at    DateTime    @default(now())
-  updated_at    DateTime    @updatedAt
-
-  student students  @relation("StudentPayments", fields: [student_id], references: [id])
-  recorder users?   @relation(fields: [recorded_by], references: [id])
-
-  @@unique([student_id, period])
-  @@index([status])
-  @@index([due_date])
-  @@index([period])
-  @@map("student_payments")
-}
-
-model audit_logs {
-  id            String   @id @default(uuid()) @db.Uuid
-  actor_user_id String   @db.Uuid
-  action        String
-  entity_type   String
-  entity_id     String   @db.Uuid
-  meta          Json?
-  created_at    DateTime @default(now())
-
-  actor users @relation("AuditActor", fields: [actor_user_id], references: [id], onDelete: Cascade)
-
-  @@index([entity_type, entity_id])
-  @@index([created_at])
-  @@index([actor_user_id])
-  @@map("audit_logs")
 }

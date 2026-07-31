@@ -7,11 +7,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
 import { levelsApi } from "@/lib/api/levels.api";
 import { useProfessors, useFields, useGroups, useStudents } from "@/hooks/use-queries";
+import { useViewMode } from "@/hooks/use-view-mode";
 import type { Level, Professor, Field, Group, Student } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
-import { ViewToggle, type ViewMode } from "@/components/shared/view-toggle";
+import { ViewToggle } from "@/components/shared/view-toggle";
 import { TreeView, buildLevelsTree } from "@/components/shared/tree-view";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -30,7 +31,7 @@ export default function LevelsPage() {
   const { data: groups } = useGroups();
   const { data: students } = useStudents();
 
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const { viewMode, setViewMode } = useViewMode("list");
 
   const treeData = useMemo(
     () => buildLevelsTree(levels ?? [], professors ?? [], fields ?? [], groups ?? [], students ?? []),

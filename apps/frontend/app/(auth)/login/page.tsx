@@ -65,7 +65,7 @@ export default function LoginPage() {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder={t("auth.adminEmail")}
+                placeholder={t("auth.enterEmail")}
                 className={`input ${errors.email ? "input-error" : ""}`}
                 {...register("email")}
               />

@@ -5,12 +5,13 @@ import Link from "next/link";
 import { ChevronRight, Plus, RefreshCw, Search, CircleDollarSign, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 import { usePayments, useGenerateMonthlyPayments } from "@/hooks/use-payments";
 import { useFields, useProfessors, useLevels, useGroups, useStudents } from "@/hooks/use-queries";
+import { useViewMode } from "@/hooks/use-view-mode";
 import type { StudentPayment } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PaymentStatusControl } from "@/components/shared/payment-status-control";
 import { RecordPaymentModal } from "@/components/forms/record-payment-modal";
-import { ViewToggle, type ViewMode } from "@/components/shared/view-toggle";
+import { ViewToggle } from "@/components/shared/view-toggle";
 import { PaymentReceipt } from "@/components/shared/payment-receipt";
 import { cn, formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -25,7 +26,7 @@ const STATUS_FILTER_OPTIONS: { label: string; value: string; icon: any }[] = [
 
 export default function PaymentsPage() {
   const { t } = useTranslation();
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const { viewMode, setViewMode } = useViewMode("list");
   const [statusFilter, setStatusFilter] = useState("all");
   const [fieldId, setFieldId] = useState("");
   const [profId, setProfId] = useState("");
