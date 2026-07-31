@@ -1,0 +1,20 @@
+node_modules
+dist
+build
+.next
+out
+.env
+.env.*.local
+*.db
+*.db-journal
+coverage
+
+# Local operational data — never commit school records, logs, or the DB itself
+backups/
+logs/
+.postgres/
+
+.vscode
+.idea
+.DS_Store
+Thumbs.db

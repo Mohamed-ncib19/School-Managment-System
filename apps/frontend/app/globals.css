@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #264EAE;
+    --color-sky: #77D4F2;
+    --color-gold: #F5B940;
+    --color-background: #F8FAFC;
+    --color-surface: #FFFFFF;
+    --color-border: #E5E7EB;
+    --color-text-primary: #1F2937;
+    --color-text-secondary: #6B7280;
+    --font-poppins: "Poppins", "Manrope", "Nunito", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .dark {
+    --color-background: #0F172A;
+    --color-surface: #1E293B;
+    --color-border: #334155;
+    --color-text-primary: #F1F5F9;
+    --color-text-secondary: #94A3B8;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    @apply bg-background text-text-primary text-body antialiased;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-btn px-6 py-2.5 text-sm font-medium transition-all duration-150;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary text-white shadow-card hover:bg-primary-600 hover:shadow-hover;
+  }
+
+  .btn-secondary {
+    @apply btn bg-surface border border-primary text-primary hover:bg-primary-50;
+  }
+
+  .dark .btn-secondary {
+    @apply border-primary/40 hover:bg-primary/10;
+  }
+
+  .btn-danger {
+    @apply btn bg-danger text-white hover:opacity-90;
+  }
+
+  .btn-warning {
+    @apply btn bg-gold text-text-primary hover:opacity-90;
+  }
+
+  .dark .btn-warning {
+    @apply bg-gold-400 text-gray-900;
+  }
+
+  .input {
+    @apply w-full rounded-input border border-border bg-surface px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary transition-all duration-150;
+    @apply focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-200;
+    @apply disabled:opacity-50 disabled:bg-neutral-soft;
+  }
+
+  .dark .input {
+    @apply focus:ring-primary/30 disabled:bg-white/5;
+  }
+
+  .input-error {
+    @apply border-danger focus:border-danger focus:ring-danger/30;
+  }
+
+  .card {
+    @apply rounded-card bg-surface shadow-card p-6;
+  }
+
+  .table-container {
+    @apply rounded-table overflow-hidden border border-border shadow-card;
+  }
+
+  .stat-card {
+    @apply card flex items-center gap-4;
+  }
+
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium;
+  }
+
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm;
+  }
+
+  .modal-content {
+    @apply w-full max-w-lg rounded-modal bg-surface shadow-modal p-6 max-h-[90vh] overflow-y-auto;
+  }
+
+  .dark .modal-content {
+    @apply border border-border;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #D1D5DB transparent;
+  }
+  .dark .scrollbar-thin {
+    scrollbar-color: #475569 transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #D1D5DB;
+    border-radius: 3px;
+  }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #475569;
+  }
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}

@@ -1,0 +1,13 @@
+import { ApiClient } from "./client";
+import type { Student, StudentPayment } from "@/types";
+
+export const studentsApi = {
+  list: (groupId?: string) =>
+    ApiClient.get<Student[]>("/students", { params: groupId ? { groupId } : {} }),
+  get: (id: string) => ApiClient.get<Student>(`/students/${id}`),
+  create: (data: any) => ApiClient.post<Student>("/students", data),
+  update: (id: string, data: any) => ApiClient.put<Student>(`/students/${id}`, data),
+  delete: (id: string) => ApiClient.del(`/students/${id}`),
+  move: (id: string, groupId: string) => ApiClient.post<Student>(`/students/${id}/move`, { group_id: groupId }),
+  getPayments: (studentId: string) => ApiClient.get<StudentPayment[]>(`/students/${studentId}/payments`),
+};
