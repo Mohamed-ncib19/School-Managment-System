@@ -35,6 +35,7 @@ model fields {
   creator     users        @relation("FieldCreator", fields: [created_by], references: [id])
   professors  professors[] @relation("FieldProfessors")
 
+  @@index([created_by])
   @@map("fields")
 }
 
@@ -51,6 +52,8 @@ model professors {
   field      fields   @relation("FieldProfessors", fields: [field_id], references: [id])
   user       users?   @relation(fields: [user_id], references: [id])
 
+  @@index([field_id])
+  @@index([is_active])
   @@map("professors")
 }
 
@@ -63,6 +66,7 @@ model levels {
   groups     groups[]   @relation("LevelGroups")
   professor  professors @relation("ProfessorLevels", fields: [prof_id], references: [id])
 
+  @@index([prof_id])
   @@map("levels")
 }
 
@@ -77,6 +81,7 @@ model groups {
   level          levels     @relation("LevelGroups", fields: [level_id], references: [id])
   students       students[] @relation("GroupStudents")
 
+  @@index([level_id])
   @@map("groups")
 }
 
@@ -95,6 +100,9 @@ model students {
   payments        student_payments[] @relation("StudentPayments")
   group           groups             @relation("GroupStudents", fields: [group_id], references: [id])
 
+  @@index([group_id])
+  @@index([status])
+  @@index([last_name, first_name])
   @@map("students")
 }
 
@@ -122,19 +130,37 @@ model student_payments {
   @@map("student_payments")
 }
 
+/// Append-only administrative audit trail.
+///
+/// `actor_user_id` and `entity_id` are nullable on purpose: a failed login has
+/// no authenticated actor, and events like "logout" or a settings change have
+/// no entity row to point at. They used to be required, which made the audit
+/// service throw on exactly those events.
+///
+/// The actor relation is `SetNull`, never `Cascade`: removing a user must not
+/// erase the record of what that user did.
 model audit_logs {
   id            String   @id @default(uuid()) @db.Uuid
-  actor_user_id String   @db.Uuid
+  actor_user_id String?  @db.Uuid
+  actor_label   String?
+  actor_role    String?
   action        String
   entity_type   String
-  entity_id     String   @db.Uuid
+  entity_id     String?  @db.Uuid
+  entity_label  String?
+  prev_values   Json?
+  new_values    Json?
+  ip_address    String?
+  user_agent    String?
   meta          Json?
-  created_at    DateTime @default(now())
-  actor         users    @relation("AuditActor", fields: [actor_user_id], references: [id], onDelete: Cascade)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  actor         users?   @relation("AuditActor", fields: [actor_user_id], references: [id], onDelete: SetNull)
 
   @@index([entity_type, entity_id])
   @@index([created_at])
   @@index([actor_user_id])
+  @@index([action])
+  @@index([action, created_at])
   @@map("audit_logs")
 }
 

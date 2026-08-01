@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useForm, type DefaultValues, type FieldValues } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -12,10 +13,35 @@ export function useFormWithZod<T extends FieldValues>(
   return useForm<T>({ resolver: zodResolver(schema), defaultValues: defaults });
 }
 
-export function FormButton({ isLoading, children, ...props }: { isLoading?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+/**
+ * Submit button that disables itself while the request is in flight, so a
+ * double-click cannot create the same record twice.
+ *
+ * `disabled` is combined with `isLoading` rather than spread over it: with
+ * `{...props}` applied after `disabled={isLoading}`, passing any `disabled`
+ * value silently cancelled the in-flight guard.
+ */
+export function FormButton({
+  isLoading,
+  children,
+  disabled,
+  className,
+  ...props
+}: { isLoading?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button disabled={isLoading} className="btn btn-primary" {...props}>
-      {isLoading ? <><Loader2 size={16} className="animate-spin" /> Loading...</> : children}
+    <button
+      {...props}
+      disabled={isLoading || disabled}
+      aria-busy={isLoading || undefined}
+      className={`btn btn-primary disabled:cursor-not-allowed disabled:opacity-60 ${className ?? ""}`}
+    >
+      {isLoading ? (
+        <>
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" /> Saving...
+        </>
+      ) : (
+        children
+      )}
     </button>
   );
 }
@@ -36,25 +62,55 @@ export function ConfirmDeleteDialog({
   error?: string;
   isDeleting?: boolean;
 }) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  // Escape closes, and focus starts on the safe action rather than Delete.
+  useEffect(() => {
+    if (!isOpen) return;
+    cancelRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isDeleting) onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, isDeleting, onClose]);
+
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-label={`Delete ${entityName}`}>
-      <div className="bg-surface rounded-modal p-6 shadow-hover w-full max-w-sm mx-4">
-        <h3 className="text-h4 font-bold text-text-primary mb-2">Delete {entityName}</h3>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-delete-title"
+      aria-describedby="confirm-delete-body"
+      onClick={() => !isDeleting && onClose()}
+    >
+      <div
+        className="mx-4 w-full max-w-sm rounded-modal bg-surface p-6 shadow-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="confirm-delete-title" className="mb-2 text-h4 font-bold text-text-primary">
+          Delete {entityName}
+        </h3>
         {error ? (
-          <p role="alert" className="text-sm text-danger mb-6">{error}</p>
+          <p id="confirm-delete-body" role="alert" className="mb-6 text-sm text-danger">{error}</p>
         ) : (
-          <p className="text-sm text-text-secondary mb-6">
+          <p id="confirm-delete-body" className="mb-6 text-sm text-text-secondary">
             Are you sure? This action cannot be undone.
           </p>
         )}
-        <div className="flex gap-3 justify-end">
-          <button className="btn btn-secondary text-sm" onClick={onClose}>
+        <div className="flex justify-end gap-3">
+          <button ref={cancelRef} className="btn btn-secondary text-sm" onClick={onClose} disabled={isDeleting}>
             {error ? "Close" : "Cancel"}
           </button>
           {!error && (
-            <button className="btn btn-danger text-sm" onClick={onConfirm} disabled={isDeleting}>
-              {isDeleting ? "Deleting…" : "Delete"}
+            <button
+              className="btn btn-danger text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onConfirm}
+              disabled={isDeleting}
+              aria-busy={isDeleting || undefined}
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
             </button>
           )}
         </div>

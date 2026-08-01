@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { changedFields } from "../audit/audit.util";
 
 @Injectable()
 export class ProfessorsService {
@@ -30,7 +31,7 @@ export class ProfessorsService {
     phone: string;
     email?: string;
     user_id?: string;
-  }) {
+  }, userId?: string) {
     const prof = await this.prisma.professors.create({
       data: {
         field_id: dto.field_id,
@@ -40,7 +41,23 @@ export class ProfessorsService {
         user_id: dto.user_id,
       },
     });
-    await this.auditService.createLog(dto.user_id ?? "system", "professor.created", "professor", prof.id, { full_name: prof.full_name });
+    // The actor is the administrator performing the action. `dto.user_id` is the
+    // staff account being linked TO the professor - crediting it as the actor
+    // attributed the change to the wrong person entirely.
+    await this.auditService.record({
+      action: "professor.created",
+      entityType: "professor",
+      entityId: prof.id,
+      entityLabel: prof.full_name,
+      actorId: userId,
+      newValues: {
+        full_name: prof.full_name,
+        phone: prof.phone,
+        email: prof.email,
+        field_id: prof.field_id,
+        user_id: prof.user_id,
+      },
+    });
     return prof;
   }
 
@@ -51,7 +68,7 @@ export class ProfessorsService {
     user_id?: string;
     is_active?: boolean;
   }, userId?: string) {
-    await this.getProfessor(id);
+    const before = await this.getProfessor(id);
     const data: any = {};
     if (dto.full_name !== undefined) data.full_name = dto.full_name;
     if (dto.phone !== undefined) data.phone = dto.phone;
@@ -59,18 +76,51 @@ export class ProfessorsService {
     if (dto.user_id !== undefined) data.user_id = dto.user_id;
     if (dto.is_active !== undefined) data.is_active = dto.is_active;
     const updated = await this.prisma.professors.update({ where: { id }, data });
-    if (userId) {
-      await this.auditService.createLog(userId, "professor.updated", "professor", id, dto);
-    }
+
+    const { prevValues, newValues, changed } = changedFields(before, data);
+    // A change to the linked staff account is an access change, not a detail edit.
+    const isAccountChange = changed.includes("user_id");
+    await this.auditService.record({
+      action: isAccountChange ? "professor.account_linked" : "professor.updated",
+      entityType: "professor",
+      entityId: id,
+      entityLabel: updated.full_name,
+      actorId: userId,
+      prevValues,
+      newValues,
+      meta: { changed_fields: changed },
+    });
     return updated;
   }
 
   async deactivateProfessor(id: string, userId?: string) {
     const prof = await this.getProfessor(id);
     const updated = await this.prisma.professors.update({ where: { id }, data: { is_active: false } });
-    if (userId) {
-      await this.auditService.createLog(userId, "professor.deactivated", "professor", id, { full_name: prof.full_name });
-    }
+    await this.auditService.record({
+      action: "professor.deactivated",
+      entityType: "professor",
+      entityId: id,
+      entityLabel: prof.full_name,
+      actorId: userId,
+      prevValues: { is_active: prof.is_active },
+      newValues: { is_active: false },
+    });
+    return updated;
+  }
+
+  /** Reactivates a deactivated professor. */
+  async restoreProfessor(id: string, userId?: string) {
+    const prof = await this.getProfessor(id);
+    const updated = await this.prisma.professors.update({ where: { id }, data: { is_active: true } });
+    await this.auditService.record({
+      action: "professor.restored",
+      entityType: "professor",
+      entityId: id,
+      entityLabel: prof.full_name,
+      actorId: userId,
+      prevValues: { is_active: prof.is_active },
+      newValues: { is_active: true },
+    });
     return updated;
   }
 }

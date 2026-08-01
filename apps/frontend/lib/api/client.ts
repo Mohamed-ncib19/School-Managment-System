@@ -49,8 +49,36 @@ const resolveUrl = (url: string) => url;
 const unwrap = <T>(body: any): T =>
   body && typeof body === "object" && "data" in body && "error" in body ? body.data : body;
 
+/** A paginated payload, with the envelope's `meta` preserved. */
+export interface Paginated<T> {
+  data: T[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+/**
+ * Paginated reads must not go through `unwrap`: it returns `body.data` and
+ * discards `body.meta`, so the caller receives a bare array. Anything then
+ * reading `result.data` / `result.meta` - as the audit history page did - gets
+ * `undefined` and renders as permanently empty, however many rows exist.
+ */
+const unwrapPaginated = <T>(body: any): Paginated<T> => {
+  const rows: T[] = Array.isArray(body?.data) ? body.data : Array.isArray(body) ? body : [];
+  const meta = body?.meta ?? {};
+  return {
+    data: rows,
+    meta: {
+      total: meta.total ?? rows.length,
+      page: meta.page ?? 1,
+      limit: meta.limit ?? rows.length,
+      totalPages: meta.totalPages ?? 1,
+    },
+  };
+};
+
 export const ApiClient = {
   get: <T>(url: string, config = {}): Promise<T> => getApiClient().get(resolveUrl(url), config).then((r) => unwrap<T>(r.data)),
+  getPaginated: <T>(url: string, config = {}): Promise<Paginated<T>> =>
+    getApiClient().get(resolveUrl(url), config).then((r) => unwrapPaginated<T>(r.data)),
   post: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().post(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
   put: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().put(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
   patch: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().patch(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),

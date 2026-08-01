@@ -1,17 +1,37 @@
-import { ApiClient } from "./client";
+import { ApiClient, type Paginated } from "./client";
 import type { AuditLog } from "@/types";
 
-export interface AuditLogResponse {
-  data: AuditLog[];
-  meta: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
+export type AuditLogResponse = Paginated<AuditLog>;
+
+export interface AuditListParams {
+  page?: number;
+  limit?: number;
+  entityType?: string;
+  action?: string;
+  actorUserId?: string;
+  search?: string;
+  from?: string;
+  to?: string;
+  sortBy?: "created_at" | "action" | "entity_type";
+  sortDir?: "asc" | "desc";
 }
 
+export interface AuditFilterOptions {
+  actions: string[];
+  entityTypes: string[];
+  actors: { id: string; full_name: string; email: string }[];
+}
+
+/** Drops empty values so the query string stays clean and cache keys stay stable. */
+const compact = (params: object) =>
+  Object.fromEntries(
+    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""),
+  );
+
 export const auditApi = {
-  list: (params?: { page?: number; limit?: number; entityType?: string; action?: string }) =>
-    ApiClient.get<AuditLogResponse>("/audit-logs", { params: params ?? {} }),
+  // Paginated: keeps the envelope's `meta` instead of collapsing to a bare array.
+  list: (params?: AuditListParams) =>
+    ApiClient.getPaginated<AuditLog>("/audit-logs", { params: compact(params ?? {}) }),
+
+  options: () => ApiClient.get<AuditFilterOptions>("/audit-logs/options"),
 };

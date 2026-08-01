@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { changedFields } from "../audit/audit.util";
 
 @Injectable()
 export class FieldsService {
@@ -29,28 +30,49 @@ export class FieldsService {
         creator: { connect: { id: dto.created_by } },
       },
     });
-    await this.auditService.createLog(dto.created_by, "field.created", "field", field.id, { name: field.name });
+    await this.auditService.record({
+      action: "field.created",
+      entityType: "field",
+      entityId: field.id,
+      entityLabel: field.name,
+      actorId: dto.created_by,
+      newValues: { name: field.name, description: field.description },
+    });
     return field;
   }
 
   async updateField(id: string, dto: { name?: string; description?: string }, userId?: string) {
-    await this.getField(id);
+    const before = await this.getField(id);
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.description !== undefined) data.description = dto.description;
     const updated = await this.prisma.fields.update({ where: { id }, data });
-    if (userId) {
-      await this.auditService.createLog(userId, "field.updated", "field", id, dto);
-    }
+
+    const { prevValues, newValues, changed } = changedFields(before, data);
+    await this.auditService.record({
+      action: "field.updated",
+      entityType: "field",
+      entityId: id,
+      entityLabel: updated.name,
+      actorId: userId,
+      prevValues,
+      newValues,
+      meta: { changed_fields: changed },
+    });
     return updated;
   }
 
   async deleteField(id: string, userId?: string) {
     const field = await this.getField(id);
     await this.prisma.fields.delete({ where: { id } });
-    if (userId) {
-      await this.auditService.createLog(userId, "field.deleted", "field", id, { name: field.name });
-    }
+    await this.auditService.record({
+      action: "field.deleted",
+      entityType: "field",
+      entityId: id,
+      entityLabel: field.name,
+      actorId: userId,
+      prevValues: { name: field.name, description: field.description },
+    });
     return field;
   }
 }

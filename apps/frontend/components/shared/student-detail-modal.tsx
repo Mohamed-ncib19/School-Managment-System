@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { X, User, Phone, Mail, CalendarDays, DollarSign, UserCheck, Trash2, ArrowUpRight } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { X, User, Phone, Mail, CalendarDays, DollarSign, UserCheck, Trash2 } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
-import { useFields, useProfessors, useLevels, useGroups } from "@/hooks/use-queries";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
+import { ErrorState, describeError } from "@/components/shared/error-state";
+import { useToast } from "@/components/shared/toast";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import type { StudentStatus } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
@@ -21,13 +21,13 @@ interface StudentDetailModalProps {
 
 export default function StudentDetailModal({ studentId, isOpen, onClose }: StudentDetailModalProps) {
   const { t } = useTranslation();
+  const qc = useQueryClient();
+  const toast = useToast();
 
-  const { data: fields } = useFields();
-  const { data: professors } = useProfessors();
-  const { data: levels } = useLevels();
-  const { data: groups } = useGroups();
-
-  const { data: student, isLoading } = useQuery({
+  // The field / professor / level / group lists used to be fetched here and
+  // never read - four extra requests (including the full group list) on every
+  // open. The assignment card reads the chain off the student record itself.
+  const { data: student, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["student", studentId],
     queryFn: () => studentsApi.get(studentId),
     enabled: isOpen && !!studentId,
@@ -35,6 +35,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
 
   const [isEditing, setIsEditing] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -65,8 +66,33 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
     if (!isOpen) {
       setIsEditing(false);
       setDeleteId(null);
+      setDeleteError(null);
     }
   }, [isOpen]);
+
+  /**
+   * Confirming the delete used to just close the dialog, so "Delete student"
+   * reported nothing and removed nothing - the student was still there after a
+   * reload. It now calls the API and surfaces the server's refusal in place
+   * (the backend declines to delete a student who has settled payments).
+   */
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => studentsApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["students"] });
+      qc.invalidateQueries({ queryKey: ["hierarchy-summary"] });
+      toast.success(
+        t("studentDetail.deleteStudent", "Student deleted"),
+        student ? `${student.first_name} ${student.last_name}` : undefined,
+      );
+      setDeleteId(null);
+      onClose();
+    },
+    onError: (err) => {
+      const { detail } = describeError(err);
+      setDeleteError(detail);
+    },
+  });
 
   if (!isOpen) return null;
 
@@ -89,6 +115,8 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                 <div key={i} className="h-12 bg-neutral-soft rounded animate-pulse" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState error={error} onRetry={() => refetch()} />
           ) : !student ? (
             <p className="text-text-secondary text-center py-8">{t("studentDetail.notFound")}</p>
           ) : (
@@ -231,10 +259,11 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
       <ConfirmDeleteDialog
         entityName={t("studentDetail.entityName")}
         isOpen={!!deleteId}
-        onClose={() => setDeleteId(null)}
+        error={deleteError ?? undefined}
+        isDeleting={deleteMutation.isPending}
+        onClose={() => { setDeleteId(null); setDeleteError(null); }}
         onConfirm={() => {
-          setDeleteId(null);
-          onClose();
+          if (deleteId && !deleteMutation.isPending) deleteMutation.mutate(deleteId);
         }}
       />
     </div>

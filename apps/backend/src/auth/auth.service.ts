@@ -26,41 +26,60 @@ export class AuthService {
     private readonly auditService: AuditService,
   ) {}
 
+  /**
+   * A failed login has no authenticated actor, so the entry is written with a
+   * null actor and the attempted address as the label. Passing the literal
+   * strings "system"/"unknown" into the uuid columns is what previously made
+   * every failed login throw a database error and surface as HTTP 500 - which
+   * also meant not one failed attempt was ever recorded.
+   */
+  private async recordFailedLogin(
+    reason: string,
+    email: string,
+    userId: string | null,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    await this.auditService.record({
+      action: "auth.login_failed",
+      entityType: "user",
+      entityId: userId,
+      entityLabel: email,
+      actorId: null,
+      actorLabel: `anonymous (${email})`,
+      ipAddress: ipAddress ?? null,
+      userAgent: userAgent ?? null,
+      meta: { reason, email },
+    });
+  }
+
   async validateUser(email: string, password: string, ipAddress?: string, userAgent?: string) {
     const user = await this.prisma.users.findUnique({ where: { email } });
     if (!user) {
-      await this.auditService.createLog("system", "auth.login_failed", "user", "unknown", {
-        reason: "user_not_found",
-        email,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-      });
+      await this.recordFailedLogin("user_not_found", email, null, ipAddress, userAgent);
       throw new UnauthorizedException("Invalid credentials");
     }
     const valid = await compare(password, user.password_hash);
     if (!valid) {
-      await this.auditService.createLog("system", "auth.login_failed", "user", user.id, {
-        reason: "invalid_password",
-        email,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-      });
+      await this.recordFailedLogin("invalid_password", email, user.id, ipAddress, userAgent);
       throw new UnauthorizedException("Invalid credentials");
     }
     if (!user.is_active) {
-      await this.auditService.createLog("system", "auth.login_failed", "user", user.id, {
-        reason: "account_deactivated",
-        email,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-      });
+      await this.recordFailedLogin("account_deactivated", email, user.id, ipAddress, userAgent);
       throw new UnauthorizedException("Your account has been deactivated");
     }
     const { password_hash, ...result } = user;
-    await this.auditService.createLog(user.id, "auth.login_success", "user", user.id, {
-      email,
-      ip_address: ipAddress,
-      user_agent: userAgent,
+    await this.auditService.record({
+      action: "auth.login_success",
+      entityType: "user",
+      entityId: user.id,
+      entityLabel: user.full_name,
+      actorId: user.id,
+      actorLabel: user.full_name,
+      actorRole: user.role,
+      ipAddress: ipAddress ?? null,
+      userAgent: userAgent ?? null,
+      meta: { email },
     });
     return result;
   }
@@ -117,8 +136,13 @@ export class AuthService {
 
     const valid = await compare(currentPassword, user.password_hash);
     if (!valid) {
-      await this.auditService.createLog(userId, "auth.change_password_failed", "user", userId, {
-        reason: "incorrect_current_password",
+      await this.auditService.record({
+        action: "auth.change_password_failed",
+        entityType: "user",
+        entityId: userId,
+        entityLabel: user.full_name,
+        actorId: userId,
+        meta: { reason: "incorrect_current_password" },
       });
       throw new UnauthorizedException("Current password is incorrect");
     }
@@ -129,11 +153,24 @@ export class AuthService {
       data: { password_hash },
     });
 
-    await this.auditService.createLog(userId, "auth.change_password_success", "user", userId, {});
+    // The event is recorded; the credential itself never is.
+    await this.auditService.record({
+      action: "auth.change_password_success",
+      entityType: "user",
+      entityId: userId,
+      entityLabel: user.full_name,
+      actorId: userId,
+    });
     return { message: "Password changed successfully" };
   }
 
   async log(userId: string, action: string, meta?: any) {
-    await this.auditService.createLog(userId, action, "user", userId, meta ?? {});
+    await this.auditService.record({
+      action,
+      entityType: "user",
+      entityId: userId,
+      actorId: userId,
+      meta: meta ?? undefined,
+    });
   }
 }

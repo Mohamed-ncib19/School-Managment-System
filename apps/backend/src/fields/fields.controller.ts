@@ -11,6 +11,7 @@ import {
   ParseUUIDPipe,
 } from "@nestjs/common";
 import { FieldsService } from "./fields.service";
+import { CreateFieldDto, UpdateFieldDto } from "./dto/field.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/guards/roles.guard";
@@ -32,7 +33,7 @@ export class FieldsController {
 
   @Post()
   @Roles("super_admin")
-  async create(@Body() dto: { name: string; description?: string }, @Req() req: any) {
+  async create(@Body() dto: CreateFieldDto, @Req() req: any) {
     return this.fieldsService.createField({ ...dto, created_by: req.user.id });
   }
 
@@ -40,7 +41,7 @@ export class FieldsController {
   @Roles("super_admin")
   async update(
     @Param("id", ParseUUIDPipe) id: string,
-    @Body() dto: { name?: string; description?: string },
+    @Body() dto: UpdateFieldDto,
     @Req() req: any,
   ) {
     return this.fieldsService.updateField(id, dto, req.user.id);

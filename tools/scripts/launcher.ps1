@@ -1,0 +1,422 @@
+<#
+  IQ Academy - one-click launcher.
+
+  Starts PostgreSQL (existing server, native Windows service, or a private
+  portable one), takes a safety backup, applies migrations, then starts the
+  API and the web portal.
+
+  DATA SAFETY: this script never resets, drops, or force-pushes the database.
+  If migrations cannot be applied it stops and tells you, leaving the data
+  exactly as it was. A timestamped dump is written to backups\ on every start.
+
+  No Docker required. Run it via tools\start.bat.
+#>
+[CmdletBinding()]
+param(
+  # Build and run production servers instead of the dev servers.
+  [switch]$Prod,
+  # Skip the safety backup (not recommended).
+  [switch]$NoBackup
+)
+
+$ErrorActionPreference = "Continue"
+$ProgressPreference = "SilentlyContinue"
+
+$Root        = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$RootScripts = Join-Path $Root "scripts"
+$BackendDir  = Join-Path $Root "apps\backend"
+$FrontendDir = Join-Path $Root "apps\frontend"
+$LogDir      = Join-Path $Root "logs"
+$BackupDir   = Join-Path $Root "backups"
+
+$BackendPort  = 3001
+$FrontendPort = 3000
+
+# --- console presentation --------------------------------------------------
+. (Join-Path $PSScriptRoot "ui.ps1")
+
+# Build step is only present with -Prod, so the progress bar counts accordingly.
+Initialize-Ui -TotalSteps $(if ($Prod) { 8 } else { 7 })
+
+function Fail {
+  param([string]$Message, [string]$Hint)
+  Write-Host ""
+  Write-Panel -Title "STARTUP FAILED" -Colour Red -Icon fail -Note (Get-UiElapsed) -Rows @(
+    $Message
+  )
+  if ($Hint) {
+    Write-Host "  $Hint" -ForegroundColor Yellow
+    Write-Host ""
+  }
+  exit 1
+}
+
+function Test-Port {
+  param([int]$Port)
+  try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $wait = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+    $ok = $wait.AsyncWaitHandle.WaitOne(1200, $false)
+    if ($ok -and $client.Connected) { $client.Close(); return $true }
+    $client.Close()
+    return $false
+  } catch { return $false }
+}
+
+function Get-EnvValue {
+  param([string]$Path, [string]$Key)
+  if (-not (Test-Path $Path)) { return $null }
+  foreach ($line in Get-Content $Path) {
+    if ($line -match "^\s*$([regex]::Escape($Key))\s*=\s*(.+)\s*$") { return $Matches[1].Trim() }
+  }
+  return $null
+}
+
+function Find-Tool {
+  param([string]$Name, [string]$PgBin)
+  if ($PgBin) {
+    $candidate = Join-Path $PgBin "$Name.exe"
+    if (Test-Path $candidate) { return $candidate }
+  }
+  $portable = Join-Path $Root ".postgres\runtime"
+  if (Test-Path $portable) {
+    $found = Get-ChildItem $portable -Filter "$Name.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { return $found.FullName }
+  }
+  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  $native = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\$Name.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+  if ($native) { return $native.FullName }
+  return $null
+}
+
+# ===========================================================================
+#  BANNER
+# ===========================================================================
+Clear-Host
+Write-Banner -Title "IQ ACADEMY" -Subtitle $(
+  if ($Prod) { "School Management System   -   production mode" }
+  else { "School Management System" }
+)
+
+# ===========================================================================
+#  1. TOOLCHAIN
+# ===========================================================================
+Write-Step "Checking prerequisites"
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Fail "Node.js is not installed." "Install Node.js 20 LTS from https://nodejs.org and run tools\start.bat again."
+}
+Write-Ok "Node.js" (node --version)
+
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+  Write-Info "pnpm not found - enabling it via corepack..."
+  try {
+    corepack enable pnpm 2>$null | Out-Null
+    corepack prepare pnpm@latest --activate 2>$null | Out-Null
+  } catch {
+    npm install -g pnpm 2>$null | Out-Null
+  }
+  $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+              [System.Environment]::GetEnvironmentVariable("Path", "User")
+  if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+    Fail "Could not install pnpm." "Run: npm install -g pnpm"
+  }
+}
+Write-Ok "pnpm" (pnpm --version)
+
+# ===========================================================================
+#  2. CONFIGURATION
+# ===========================================================================
+Write-Step "Reading configuration"
+
+$backendEnv  = Join-Path $BackendDir ".env"
+$frontendEnv = Join-Path $FrontendDir ".env.local"
+
+if (-not (Test-Path $backendEnv)) {
+  $example = Join-Path $BackendDir ".env.example"
+  if (Test-Path $example) {
+    Copy-Item $example $backendEnv
+    Write-Ok "Created apps\backend\.env from .env.example"
+  } else {
+    Fail "apps\backend\.env is missing." "Create it with a DATABASE_URL line."
+  }
+}
+if (-not (Test-Path $frontendEnv)) {
+  $example = Join-Path $FrontendDir ".env.example"
+  if (Test-Path $example) {
+    Copy-Item $example $frontendEnv
+    Write-Ok "Created apps\frontend\.env.local from .env.example"
+  }
+}
+
+$databaseUrl = Get-EnvValue $backendEnv "DATABASE_URL"
+if (-not $databaseUrl) { Fail "DATABASE_URL is missing from apps\backend\.env" }
+if ($databaseUrl -notmatch "postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^?]+)") {
+  Fail "DATABASE_URL in apps\backend\.env is not a valid PostgreSQL connection string."
+}
+$dbUser = $Matches[1]; $dbPass = $Matches[2]; $dbHost = $Matches[3]
+$dbPort = [int]$Matches[4]; $dbName = $Matches[5]
+Write-Ok "Database target" "$dbName @ $dbHost`:$dbPort"
+
+# ===========================================================================
+#  3. POSTGRESQL
+# ===========================================================================
+Write-Step "Starting PostgreSQL"
+
+$pgBin = $null
+try {
+  <#
+    Stay quiet when a server is already up - the launcher reports that outcome
+    itself, and the helper's own progress lines break the step formatting.
+    When nothing is listening it may have to download and initialise a server,
+    so let it narrate: a silent 44 MB download is indistinguishable from a hang.
+  #>
+  $pgAlreadyUp = Test-Port $dbPort
+  $pgBin = & (Join-Path $RootScripts "ensure-postgres.ps1") -Port $dbPort -Quiet:$pgAlreadyUp
+} catch {
+  Fail "Could not start PostgreSQL: $($_.Exception.Message)" `
+       "Install PostgreSQL 16 from https://www.postgresql.org/download/windows/ and run tools\start.bat again."
+}
+if (-not (Test-Port $dbPort)) {
+  Fail "Nothing is listening on port $dbPort." "PostgreSQL did not start. See the messages above."
+}
+Write-Ok "PostgreSQL accepting connections" "port $dbPort"
+
+$psql = Find-Tool -Name "psql" -PgBin $pgBin
+
+# Can the application already log in? On an established install this is the
+# whole story, and we never need superuser rights.
+$appLoginOk = $false
+$tableCount = -1
+if ($psql) {
+  $env:PGPASSWORD = $dbPass
+  $tables = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
+  if ($LASTEXITCODE -eq 0 -and $tables -match "^\d+$") {
+    $appLoginOk = $true
+    $tableCount = [int]$tables
+  }
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+}
+
+if ($appLoginOk) {
+  Write-Ok "Connected to '$dbName'" "$tableCount tables"
+} elseif ($psql) {
+  # Fresh machine: create the role and database as the superuser.
+  Write-Info "Application login failed - setting up the role and database..."
+  $superPass = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
+  if (-not $superPass) { $superPass = "iq_academy_local" }
+  $env:PGPASSWORD = $superPass
+
+  $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
+  if ($roleExists -ne "1") {
+    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE ROLE $dbUser LOGIN PASSWORD '$dbPass' CREATEDB" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
+  }
+
+  $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
+  if ($dbExists -ne "1") {
+    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE DATABASE $dbName OWNER $dbUser" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
+  }
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+} else {
+  Write-Warn2 "psql not found - skipping the database check (Prisma will report any problem)"
+}
+
+<#
+  Guard against pointing at the wrong server. An empty database on a machine
+  that already has backups usually means something else has taken port
+  $dbPort (a Docker container, a second PostgreSQL install) and the real data
+  is elsewhere. Migrating would build a fresh, empty schema and the system
+  would look wiped, so stop and let a human decide.
+#>
+if ($appLoginOk -and $tableCount -eq 0) {
+  $existingDumps = @(Get-ChildItem (Join-Path $BackupDir "iq-academy-*.dump") -ErrorAction SilentlyContinue)
+  if ($existingDumps.Count -gt 0) {
+    Write-Host ""
+    Write-Warn2 "The database '$dbName' on port $dbPort is EMPTY, but $($existingDumps.Count) backup(s) exist."
+    Write-Info "Another PostgreSQL server may be using port $dbPort, with your real data on the original one."
+    Write-Info "Continuing will set up an empty system. Your backups will NOT be touched."
+    Write-Info "To restore the most recent backup instead, close this window and run restore.bat."
+    Write-Host ""
+    $answer = Read-Host "  Continue with the empty database? Type YES to continue"
+    if ($answer -ne "YES") { Fail "Stopped at your request. Nothing was changed." "Run restore.bat to restore a backup." }
+  }
+}
+
+# ===========================================================================
+#  4. DEPENDENCIES
+# ===========================================================================
+Write-Step "Checking dependencies"
+
+$needsInstall = (-not (Test-Path (Join-Path $Root "node_modules"))) -or
+                (-not (Test-Path (Join-Path $BackendDir "node_modules"))) -or
+                (-not (Test-Path (Join-Path $FrontendDir "node_modules")))
+
+if ($needsInstall) {
+  Write-Info "Installing packages (the first run takes a few minutes)..."
+  Push-Location $Root
+  pnpm install 2>$null | Out-Null
+  $installExit = $LASTEXITCODE
+  Pop-Location
+  if ($installExit -ne 0) { Fail "pnpm install failed." "Check your internet connection and run tools\start.bat again." }
+  Write-Ok "Packages installed"
+} else {
+  Write-Ok "Packages up to date"
+}
+
+# ===========================================================================
+#  5. SAFETY BACKUP
+# ===========================================================================
+Write-Step "Safety backup"
+
+if ($NoBackup) {
+  Write-Warn2 "Skipped (-NoBackup was passed)"
+} elseif ($appLoginOk -and $tableCount -eq 0) {
+  Write-Info "Nothing to back up yet (empty database)"
+} else {
+  try {
+    & (Join-Path $RootScripts "backup.ps1") -Quiet
+    $newest = Get-ChildItem (Join-Path $BackupDir "iq-academy-*.dump") -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($newest) {
+      $sizeKb = [math]::Round($newest.Length / 1KB, 1)
+      Write-Ok "Snapshot saved" "$($newest.Name)  ($sizeKb KB)"
+    } else {
+      Write-Ok "Backup complete"
+    }
+  } catch {
+    Write-Warn2 "Backup failed: $($_.Exception.Message)"
+    Write-Info "Startup continues, but there is no fresh restore point for this session."
+  }
+}
+
+# ===========================================================================
+#  6. MIGRATIONS
+# ===========================================================================
+Write-Step "Applying database migrations"
+
+Push-Location $BackendDir
+pnpm exec prisma generate 2>&1 | Out-Null
+$genExit = $LASTEXITCODE
+Pop-Location
+if ($genExit -ne 0) { Fail "prisma generate failed." "Run 'pnpm exec prisma generate' in apps\backend to see the error." }
+Write-Ok "Prisma client generated"
+
+
+Push-Location $BackendDir
+$migOutput = pnpm exec prisma migrate deploy 2>&1
+$migExit = $LASTEXITCODE
+Pop-Location
+
+if ($migExit -ne 0) {
+  $migOutput | ForEach-Object { Write-Info "  $_" }
+  Fail "Migrations could not be applied - your data has NOT been changed." `
+       "A backup from this session is in backups\. Fix the error above, then run tools\start.bat again. Never run 'prisma migrate reset' on this database: it deletes everything."
+}
+Write-Ok "Database schema is up to date"
+
+# The admin account seed is an upsert - it never touches existing data.
+Push-Location $BackendDir
+pnpm run db:seed 2>&1 | Out-Null
+Pop-Location
+Write-Ok "Administrator account ready"
+
+# ===========================================================================
+#  7. BUILD (production mode only)
+# ===========================================================================
+if ($Prod) {
+  Write-Step "Building the application"
+  Push-Location $Root
+  pnpm build 2>&1 | Out-Null
+  $buildExit = $LASTEXITCODE
+  Pop-Location
+  if ($buildExit -ne 0) { Fail "Build failed." "Run 'pnpm build' to see the error, or start without -Prod." }
+  Write-Ok "Build complete"
+}
+
+# ===========================================================================
+#  8. START SERVERS
+# ===========================================================================
+Write-Step "Starting servers"
+
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+if ($Prod) {
+  $backendCmd  = "pnpm run start:prod"
+  $frontendCmd = "pnpm run start"
+} else {
+  $backendCmd  = "pnpm run start:dev"
+  $frontendCmd = "pnpm run dev"
+}
+
+$apiUp = Test-Port $BackendPort
+$webUp = Test-Port $FrontendPort
+
+if ($apiUp) {
+  Write-Ok "API already running" "port $BackendPort"
+} else {
+  Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $BackendDir `
+    -ArgumentList "-NoLogo", "-NoProfile", "-Command",
+      "`$Host.UI.RawUI.WindowTitle='IQ Academy - API'; $backendCmd 2>&1 | Tee-Object -FilePath '$LogDir\backend.log'"
+}
+
+if ($webUp) {
+  Write-Ok "Web portal already running" "port $FrontendPort"
+} else {
+  Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $FrontendDir `
+    -ArgumentList "-NoLogo", "-NoProfile", "-Command",
+      "`$Host.UI.RawUI.WindowTitle='IQ Academy - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
+}
+
+if (-not $apiUp) {
+  if (Wait-For -Condition { Test-Port $BackendPort } -Label "Compiling the API" -TimeoutSec 150) {
+    $apiUp = $true
+    Write-Ok "API listening" "port $BackendPort"
+  }
+}
+
+if (-not $webUp) {
+  if (Wait-For -Condition { Test-Port $FrontendPort } -Label "Building the web portal" -TimeoutSec 150) {
+    $webUp = $true
+    Write-Ok "Web portal listening" "port $FrontendPort"
+  }
+}
+
+if (-not $apiUp) { Write-Warn2 "The API did not start in time - see logs\backend.log" }
+if (-not $webUp) { Fail "The web portal did not start in time." "See logs\frontend.log for the reason." }
+
+# ===========================================================================
+#  9. READY
+# ===========================================================================
+$adminEmail = Get-EnvValue $backendEnv "SEED_ADMIN_EMAIL"
+if (-not $adminEmail) { $adminEmail = "admin@iqacademy.com" }
+
+# Row count for the panel - reassures the operator the data is really there.
+$studentCount = $null
+if ($psql) {
+  $env:PGPASSWORD = $dbPass
+  $counted = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc "SELECT count(*) FROM students" 2>$null
+  if ($LASTEXITCODE -eq 0 -and $counted -match "^\d+$") { $studentCount = [int]$counted }
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+}
+
+Start-Process "http://localhost:$FrontendPort"
+
+Write-Panel -Title "IQ ACADEMY IS RUNNING" -Colour Green -Note ("ready in " + (Get-UiElapsed)) -Rows @(
+  "---",
+  "Portal|http://localhost:$FrontendPort",
+  "API docs|http://localhost:$BackendPort/api/docs",
+  "Sign in|$adminEmail",
+  "---",
+  $(if ($null -ne $studentCount) { "Data|$dbName - $studentCount students" } else { "Data|$dbName on port $dbPort" }),
+  "Backups|backups\  (new snapshot every start)",
+  "Stop|tools\stop.bat"
+)
+
+Write-Host "  This window can be closed - the servers keep running." -ForegroundColor DarkGray
+Write-Host ""
+Start-Sleep -Seconds 4

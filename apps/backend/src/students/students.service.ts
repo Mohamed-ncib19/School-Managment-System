@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { changedFields } from "../audit/audit.util";
 
 @Injectable()
 export class StudentsService {
@@ -23,31 +24,91 @@ export class StudentsService {
     return parsed;
   }
 
-  async listStudents(groupId?: string) {
-    const where = groupId ? { group_id: groupId } : {};
-    return this.prisma.students.findMany({
-      where,
+  /** Parent chain each student row carries for display. */
+  private static readonly HIERARCHY_INCLUDE = {
+    group: {
       include: {
-        group: {
+        level: {
           include: {
-            level: {
-              include: {
-                professor: {
-                  include: { field: true },
-                },
-              },
+            professor: {
+              include: { field: true },
             },
           },
         },
       },
-      orderBy: { created_at: "desc" },
-    });
+    },
+  } as const;
+
+  /**
+   * Returns a bare array when no `page` is supplied, so existing callers keep
+   * working, and a paginated envelope when it is.
+   *
+   * Unpaginated, this endpoint serialises every student together with their
+   * whole parent chain - 384 KB and ~1.6 s for 324 students, and growing
+   * linearly with enrolment. Callers that only need counts should use
+   * /hierarchy/summary, which aggregates in SQL instead.
+   */
+  async listStudents(params: {
+    groupId?: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+  } = {}) {
+    const { groupId, page, limit = 25, search, status } = params;
+
+    const where: any = {};
+    if (groupId) where.group_id = groupId;
+    if (status) where.status = status;
+    if (search?.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { first_name: { contains: term, mode: "insensitive" } },
+        { last_name: { contains: term, mode: "insensitive" } },
+        { phone: { contains: term } },
+        { parent_phone: { contains: term } },
+        { email: { contains: term, mode: "insensitive" } },
+      ];
+    }
+
+    if (!page) {
+      return this.prisma.students.findMany({
+        where,
+        include: StudentsService.HIERARCHY_INCLUDE,
+        orderBy: { created_at: "desc" },
+      });
+    }
+
+    const take = Math.min(Math.max(1, limit), 200);
+    const [data, total] = await Promise.all([
+      this.prisma.students.findMany({
+        where,
+        include: StudentsService.HIERARCHY_INCLUDE,
+        orderBy: { created_at: "desc" },
+        skip: (Math.max(1, page) - 1) * take,
+        take,
+      }),
+      this.prisma.students.count({ where }),
+    ]);
+
+    return {
+      data,
+      meta: { total, page: Math.max(1, page), limit: take, totalPages: Math.max(1, Math.ceil(total / take)) },
+    };
   }
 
+  /**
+   * Includes the full parent chain, not just the group.
+   *
+   * The detail modal reads `group.level.professor.field`, but this endpoint
+   * only ever loaded `group`, so Specialty / Professor / Level rendered as "—"
+   * while the group name resolved - the assignment card looked half-empty for
+   * every student.
+   */
   async getStudent(id: string) {
     const student = await this.prisma.students.findUnique({
       where: { id },
-      include: { group: true, payments: true },
+      include: { ...StudentsService.HIERARCHY_INCLUDE, payments: true },
     });
     if (!student) throw new NotFoundException(`Student ${id} not found`);
     return student;
@@ -77,10 +138,23 @@ export class StudentsService {
       },
       include: { group: true },
     });
-    await this.auditService.createLog(userId, "student.created", "student", student.id, {
-      first_name: student.first_name,
-      last_name: student.last_name,
-      group_id: student.group_id,
+    await this.auditService.record({
+      action: "student.created",
+      entityType: "student",
+      entityId: student.id,
+      entityLabel: `${student.first_name} ${student.last_name}`,
+      actorId: userId,
+      newValues: {
+        first_name: student.first_name,
+        last_name: student.last_name,
+        phone: student.phone,
+        parent_phone: student.parent_phone,
+        email: student.email,
+        group_id: student.group_id,
+        monthly_fee: student.monthly_fee,
+        enrollment_date: student.enrollment_date,
+        status: student.status,
+      },
     });
     return student;
   }
@@ -95,7 +169,7 @@ export class StudentsService {
     monthly_fee?: number;
     status?: string;
   }, userId: string) {
-    await this.getStudent(id);
+    const before = await this.getStudent(id);
     const data: any = {};
     if (dto.first_name !== undefined) data.first_name = dto.first_name;
     if (dto.last_name !== undefined) data.last_name = dto.last_name;
@@ -108,9 +182,19 @@ export class StudentsService {
 
     const updated = await this.prisma.students.update({ where: { id }, data });
 
-    await this.auditService.createLog(userId, "student.updated", "student", id, {
-      updated_fields: Object.keys(dto),
-      ...(dto.status && { status: dto.status }),
+    const { prevValues, newValues, changed } = changedFields(before, data);
+    // A status change is a distinct administrative event and is filed as one so
+    // it can be found without digging through generic edits.
+    const isStatusChange = changed.includes("status");
+    await this.auditService.record({
+      action: isStatusChange ? "student.status_changed" : "student.updated",
+      entityType: "student",
+      entityId: id,
+      entityLabel: `${updated.first_name} ${updated.last_name}`,
+      actorId: userId,
+      prevValues,
+      newValues,
+      meta: { changed_fields: changed },
     });
 
     return updated;
@@ -140,17 +224,15 @@ export class StudentsService {
       data: { group_id: targetGroupId },
     });
 
-    await this.auditService.createLog(
-      userId,
-      "student.moved_group",
-      "student",
-      studentId,
-      {
-        from_group_id: student.group_id,
-        to_group_id: targetGroupId,
-        student_name: `${student.first_name} ${student.last_name}`,
-      },
-    );
+    await this.auditService.record({
+      action: "student.moved_group",
+      entityType: "student",
+      entityId: studentId,
+      entityLabel: `${student.first_name} ${student.last_name}`,
+      actorId: userId,
+      prevValues: { group_id: student.group_id },
+      newValues: { group_id: targetGroupId },
+    });
 
     return updated;
   }
@@ -182,10 +264,21 @@ export class StudentsService {
       this.prisma.students.delete({ where: { id: studentId } }),
     ]);
 
-    await this.auditService.createLog(userId, "student.deleted", "student", studentId, {
-      student_name: `${student.first_name} ${student.last_name}`,
-      group_id: student.group_id,
-      discarded_unpaid_payments: student.payments.length,
+    await this.auditService.record({
+      action: "student.deleted",
+      entityType: "student",
+      entityId: studentId,
+      entityLabel: `${student.first_name} ${student.last_name}`,
+      actorId: userId,
+      prevValues: {
+        first_name: student.first_name,
+        last_name: student.last_name,
+        phone: student.phone,
+        group_id: student.group_id,
+        monthly_fee: student.monthly_fee,
+        status: student.status,
+      },
+      meta: { discarded_unpaid_payments: student.payments.length },
     });
   }
 

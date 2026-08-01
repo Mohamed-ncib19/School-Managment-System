@@ -12,6 +12,7 @@ import {
   ParseUUIDPipe,
 } from "@nestjs/common";
 import { LevelsService } from "./levels.service";
+import { CreateLevelDto, UpdateLevelDto } from "./dto/level.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/guards/roles.guard";
@@ -33,7 +34,7 @@ export class LevelsController {
 
   @Post()
   @Roles("super_admin")
-  async create(@Body() dto: { prof_id: string; name: string }, @Req() req: any) {
+  async create(@Body() dto: CreateLevelDto, @Req() req: any) {
     return this.levelsService.createLevel(dto, req.user.id);
   }
 
@@ -41,7 +42,7 @@ export class LevelsController {
   @Roles("super_admin")
   async update(
     @Param("id", ParseUUIDPipe) id: string,
-    @Body() dto: { name?: string },
+    @Body() dto: UpdateLevelDto,
     @Req() req: any,
   ) {
     return this.levelsService.updateLevel(id, dto, req.user.id);
@@ -51,5 +52,11 @@ export class LevelsController {
   @Roles("super_admin")
   async remove(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
     return this.levelsService.deleteLevel(id, req.user.id);
+  }
+
+  @Post(":id/restore")
+  @Roles("super_admin")
+  async restore(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.levelsService.restoreLevel(id, req.user.id);
   }
 }

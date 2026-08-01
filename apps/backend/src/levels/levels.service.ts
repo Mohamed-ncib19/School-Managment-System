@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { changedFields } from "../audit/audit.util";
 
 @Injectable()
 export class LevelsService {
@@ -28,29 +29,66 @@ export class LevelsService {
     const level = await this.prisma.levels.create({
       data: { prof_id: dto.prof_id, name: dto.name },
     });
-    if (userId) {
-      await this.auditService.createLog(userId, "level.created", "level", level.id, { name: level.name });
-    }
+    await this.auditService.record({
+      action: "level.created",
+      entityType: "level",
+      entityId: level.id,
+      entityLabel: level.name,
+      actorId: userId,
+      newValues: { name: level.name, prof_id: level.prof_id },
+    });
     return level;
   }
 
   async updateLevel(id: string, dto: { name?: string }, userId?: string) {
-    await this.getLevel(id);
+    const before = await this.getLevel(id);
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
     const updated = await this.prisma.levels.update({ where: { id }, data });
-    if (userId) {
-      await this.auditService.createLog(userId, "level.updated", "level", id, dto);
-    }
+
+    const { prevValues, newValues, changed } = changedFields(before, data);
+    await this.auditService.record({
+      action: "level.updated",
+      entityType: "level",
+      entityId: id,
+      entityLabel: updated.name,
+      actorId: userId,
+      prevValues,
+      newValues,
+      meta: { changed_fields: changed },
+    });
     return updated;
   }
 
+  /** Archive, not a row delete - the level keeps its history. */
   async deleteLevel(id: string, userId?: string) {
     const level = await this.getLevel(id);
     const updated = await this.prisma.levels.update({ where: { id }, data: { is_active: false } });
-    if (userId) {
-      await this.auditService.createLog(userId, "level.deleted", "level", id, { name: level.name });
-    }
+    await this.auditService.record({
+      action: "level.archived",
+      entityType: "level",
+      entityId: id,
+      entityLabel: level.name,
+      actorId: userId,
+      prevValues: { is_active: level.is_active },
+      newValues: { is_active: false },
+    });
+    return updated;
+  }
+
+  /** Restores an archived level. */
+  async restoreLevel(id: string, userId?: string) {
+    const level = await this.getLevel(id);
+    const updated = await this.prisma.levels.update({ where: { id }, data: { is_active: true } });
+    await this.auditService.record({
+      action: "level.restored",
+      entityType: "level",
+      entityId: id,
+      entityLabel: level.name,
+      actorId: userId,
+      prevValues: { is_active: level.is_active },
+      newValues: { is_active: true },
+    });
     return updated;
   }
 }

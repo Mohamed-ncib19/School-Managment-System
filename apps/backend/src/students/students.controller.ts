@@ -22,8 +22,21 @@ export class StudentsController {
   constructor(private readonly studentsService: StudentsService) {}
 
   @Get()
-  async findAll(@Query("groupId") groupId?: string) {
-    return this.studentsService.listStudents(groupId);
+  async findAll(
+    @Query("groupId") groupId?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+  ) {
+    return this.studentsService.listStudents({
+      groupId,
+      // Absent `page` keeps the historical bare-array response.
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      search,
+      status,
+    });
   }
 
   @Get(":id")

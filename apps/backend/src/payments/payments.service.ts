@@ -18,7 +18,15 @@ export class PaymentsService {
   ) {
     const payment = await this.prisma.student_payments.findUnique({
       where: { id: paymentId },
-      select: { id: true, student_id: true, status: true, amount_due: true },
+      select: {
+        id: true,
+        student_id: true,
+        status: true,
+        amount_due: true,
+        period: true,
+        paid_amount: true,
+        paid_at: true,
+      },
     });
     if (!payment) {
       throw new NotFoundException(`Payment record ${paymentId} not found`);
@@ -39,13 +47,16 @@ export class PaymentsService {
       },
     });
 
-    await this.auditService.createLog(
-      userId,
-      "payment.recorded",
-      "student_payment",
-      paymentId,
-      { amount: paidAmount, amount_due: amountDue, student_id: payment.student_id, previous_status: payment.status },
-    );
+    await this.auditService.record({
+      action: "payment.recorded",
+      entityType: "student_payment",
+      entityId: paymentId,
+      entityLabel: `${payment.period} - ${paidAmount}`,
+      actorId: userId,
+      prevValues: { status: payment.status, paid_amount: payment.paid_amount, paid_at: payment.paid_at },
+      newValues: { status: "paid", paid_amount: paidAmount, payment_method: "cash" },
+      meta: { amount_due: amountDue, student_id: payment.student_id, period: payment.period },
+    });
 
     return updated;
   }
@@ -331,7 +342,7 @@ export class PaymentsService {
   ) {
     const payment = await this.prisma.student_payments.findUnique({
       where: { id: paymentId },
-      select: { id: true, student_id: true, status: true },
+      select: { id: true, student_id: true, status: true, period: true },
     });
     if (!payment) {
       throw new NotFoundException(`Payment record ${paymentId} not found`);
@@ -352,13 +363,21 @@ export class PaymentsService {
       },
     });
 
-    await this.auditService.createLog(
-      userId,
-      "payment.status_changed",
-      "student_payment",
-      paymentId,
-      { previous_status: payment.status, new_status: status, student_id: payment.student_id },
-    );
+    await this.auditService.record({
+      action: "payment.status_changed",
+      entityType: "student_payment",
+      entityId: paymentId,
+      entityLabel: payment.period,
+      actorId: userId,
+      prevValues: { status: payment.status },
+      newValues: { status },
+      meta: {
+        student_id: payment.student_id,
+        // `status` can never be "paid" here, so moving off a paid row is always
+        // a reversal - record that the settlement columns were cleared.
+        settlement_cleared: payment.status === "paid",
+      },
+    });
 
     return updated;
   }

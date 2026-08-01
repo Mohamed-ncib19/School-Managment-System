@@ -86,10 +86,20 @@ export interface StudentPayment {
 
 export interface AuditLog {
   id: string;
-  actor_user_id: string;
+  /** Null for unauthenticated events such as a failed login. */
+  actor_user_id: string | null;
+  actor_label: string | null;
+  actor_role: string | null;
   action: string;
   entity_type: string;
-  entity_id: string;
+  /** Null for events with no target row (logout, settings changes). */
+  entity_id: string | null;
+  entity_label: string | null;
+  prev_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
   meta: any;
   created_at: string;
+  actor?: { id: string; full_name: string; email: string; role?: string } | null;
 }

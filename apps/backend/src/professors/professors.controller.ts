@@ -12,6 +12,7 @@ import {
   ParseUUIDPipe,
 } from "@nestjs/common";
 import { ProfessorsService } from "./professors.service";
+import { CreateProfessorDto, UpdateProfessorDto } from "./dto/professor.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/guards/roles.guard";
@@ -33,15 +34,18 @@ export class ProfessorsController {
 
   @Post()
   @Roles("super_admin")
-  async create(@Body() dto: { field_id: string; full_name: string; phone: string; email?: string; user_id?: string }, @Req() req: any) {
-    return this.professorsService.createProfessor({ ...dto, user_id: dto.user_id ?? req.user.id });
+  async create(@Body() dto: CreateProfessorDto, @Req() req: any) {
+    // `user_id` links a professor to their own staff login. Defaulting it to the
+    // signed-in administrator attached every professor created without an
+    // explicit account to the admin's account instead of leaving it unset.
+    return this.professorsService.createProfessor(dto, req.user.id);
   }
 
   @Put(":id")
   @Roles("super_admin")
   async update(
     @Param("id", ParseUUIDPipe) id: string,
-    @Body() dto: { full_name?: string; phone?: string; email?: string; user_id?: string; is_active?: boolean },
+    @Body() dto: UpdateProfessorDto,
     @Req() req: any,
   ) {
     return this.professorsService.updateProfessor(id, dto, req.user.id);
@@ -51,5 +55,11 @@ export class ProfessorsController {
   @Roles("super_admin")
   async remove(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
     return this.professorsService.deactivateProfessor(id, req.user.id);
+  }
+
+  @Post(":id/restore")
+  @Roles("super_admin")
+  async restore(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.professorsService.restoreProfessor(id, req.user.id);
   }
 }

@@ -12,6 +12,7 @@ import { PaymentsModule } from "./payments/payments.module";
 import { AuditModule } from "./audit/audit.module";
 import { ImportsModule } from "./imports/imports.module";
 import { BackupModule } from "./backup/backup.module";
+import { HierarchyModule } from "./hierarchy/hierarchy.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { BackupModule } from "./backup/backup.module";
     AuditModule,
     ImportsModule,
     BackupModule,
+    HierarchyModule,
   ],
 })
 export class AppModule {}
