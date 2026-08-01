@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, User, CircleDollarSign, Printer, Plus, TrendingUp, Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, User, CircleDollarSign, Printer, Plus, TrendingUp, Clock, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
+import { useGeneratePaymentForStudent, useUpdatePaymentStatusesForStudent } from "@/hooks/use-payments";
 import { PaymentReceipt } from "@/components/shared/payment-receipt";
 import { PaymentStatusControl } from "@/components/shared/payment-status-control";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
@@ -21,6 +22,10 @@ export default function StudentPaymentsPage() {
   const studentId = params.studentId as string;
   const queryClient = useQueryClient();
   const [selectedPayment, setSelectedPayment] = useState<StudentPayment | null>(null);
+  const hasAutoUpdated = useRef(false);
+
+  const generatePayment = useGeneratePaymentForStudent();
+  const updateStatuses = useUpdatePaymentStatusesForStudent();
 
   const { data: student } = useQuery({
     queryKey: ["student", studentId],
@@ -33,6 +38,12 @@ export default function StudentPaymentsPage() {
     queryFn: () => studentsApi.getPayments(studentId),
     enabled: !!studentId,
   });
+
+  useEffect(() => {
+    if (!payments || !studentId || hasAutoUpdated.current) return;
+    hasAutoUpdated.current = true;
+    updateStatuses.mutate(studentId);
+  }, [payments, studentId, updateStatuses]);
 
   const monthlyFee = student?.monthly_fee ?? 0;
 
@@ -68,6 +79,14 @@ export default function StudentPaymentsPage() {
             </div>
           )}
         </div>
+        <button
+          onClick={() => generatePayment.mutate(studentId)}
+          disabled={generatePayment.isPending}
+          className="btn btn-primary"
+        >
+          {generatePayment.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />}
+          {t("payments.generateMonthly", "Generate Monthly Payment")}
+        </button>
       </div>
 
       {isLoading ? (

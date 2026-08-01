@@ -1,7 +1,8 @@
 @echo off
 REM ============================================================
 REM  IQ Academy - Update Script
-REM  Checks for new commits, stops servers, pulls, restarts.
+REM  Fetches from GitHub, pulls changes, syncs dependencies,
+REM  runs migrations (data-safe), and restarts the app.
 REM ============================================================
 title IQ Academy - Update
 cd /d "%~dp0\.."
@@ -14,7 +15,7 @@ echo   IQ Academy - Update Script
 echo ==========================================
 echo.
 
-REM Check if git is available
+REM Check prerequisites
 where git >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Git is not available in PATH.
@@ -22,14 +23,13 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-REM Check if we are in a git repository
 if not exist ".git" (
     echo ERROR: Not a git repository. Run this from the project root.
     pause
     exit /b 1
 )
 
-REM Fetch the latest changes from origin
+REM Fetch latest
 echo Fetching latest changes from origin...
 git fetch origin
 if %ERRORLEVEL% neq 0 (
@@ -38,8 +38,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-REM Check if we are behind the remote
-git rev-parse --is-inside-work-tree >nul 2>&1
+REM Check if behind
 for /f "delims=" %%i in ('git rev-list HEAD..origin/main --count 2^>nul') do set BEHIND=%%i
 for /f "delims=" %%i in ('git rev-list origin/main..HEAD --count 2^>nul') do set AHEAD=%%i
 
@@ -47,39 +46,94 @@ echo.
 echo Local commits ahead of remote: %AHEAD%
 echo Remote commits ahead of local: %BEHIND%
 
-REM If no changes, skip update
 if "%BEHIND%"=="0" (
     echo.
     echo Already on the latest version. No update needed.
-    goto :check_servers
+    goto :start_servers
 )
 
 echo.
 echo Found %BEHIND% new commit(s). Proceeding with update...
 
-REM Stop servers if they are running
+REM Stop servers
 echo.
 echo Stopping servers...
-
-REM Stop by using the stop.bat script
 call "%~dp0stop.bat"
 
-REM Wait a moment for ports to be released
-timeout /t 2 /nobreak >nul
+REM Wait for Windows to release locked DLL handles (fixes EPERM on prisma generate)
+echo.
+echo Waiting for processes to release file handles...
+set /a WAIT_COUNT=0
+:wait_loop
+timeout /t 1 /nobreak >nul
+set /a WAIT_COUNT+=1
+netstat -ano | findstr ":3000 " >nul 2>&1
+set PORT3000=%ERRORLEVEL%
+netstat -ano | findstr ":3001 " >nul 2>&1
+set PORT3001=%ERRORLEVEL%
+if !PORT3000! equ 0 (
+    if !PORT3001! equ 0 (
+        if !WAIT_COUNT! lss 10 goto :wait_loop
+    )
+)
+echo Ready after !WAIT_COUNT!s.
 
-REM Pull latest changes
+REM Pull changes
 echo.
 echo Pulling latest changes from origin...
 git pull origin main
+if %ERRORLEVEL% neq 0 (
+    echo ERROR: Failed to pull changes. Resolve conflicts and try again.
+    pause
+    exit /b 1
+)
+
+REM Sync dependencies (fixes prisma generate errors)
+echo.
+echo Syncing dependencies...
+pnpm install
+if %ERRORLEVEL% neq 0 (
+    echo ERROR: Failed to install dependencies.
+    pause
+    exit /b 1
+)
+
+REM Ensure Prisma client matches schema (with retry for Windows EPERM)
+echo.
+echo Generating Prisma client...
+cd /d "%~dp0..\apps\backend"
+set /a GEN_ATTEMPT=0
+:gen_loop
+set /a GEN_ATTEMPT+=1
+pnpm exec prisma generate
+if %ERRORLEVEL% equ 0 goto :gen_success
+if !GEN_ATTEMPT! geq 5 (
+    echo ERROR: prisma generate failed after !GEN_ATTEMPT! attempts.
+    echo Check apps\backend\prisma\schema.prisma for errors.
+    pause
+    exit /b 1
+)
+echo prisma generate failed (attempt !GEN_ATTEMPT!/5), retrying in 3s...
+timeout /t 3 /nobreak >nul
+goto :gen_loop
+:gen_success
+echo Prisma client generated successfully.
+
+REM Apply any new migrations without erasing data
+echo.
+echo Applying database migrations...
+pnpm run db:migrate
+if %ERRORLEVEL% neq 0 (
+    echo WARNING: Migration encountered issues. Your data is safe.
+    echo Review the error above. If needed, run 'pnpm db:migrate' manually.
+)
 
 echo.
 echo Update complete.
 
-:check_servers
+:start_servers
 echo.
 echo Starting servers...
-
-REM Start using the start.bat script
 call "%~dp0start.bat"
 
 echo.

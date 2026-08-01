@@ -208,6 +208,29 @@ export class PaymentsService {
     return { overdue: overdue.count, dueSoon: dueSoon.count, total: overdue.count + dueSoon.count };
   }
 
+  /**
+   * Rolls pending rows forward for one student only: anything past its due date
+   * becomes overdue, anything due within two days becomes due_soon.
+   */
+  async updatePaymentStatusesForStudent(studentId: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueSoonCutoff = new Date(today);
+    dueSoonCutoff.setDate(dueSoonCutoff.getDate() + 2);
+
+    const overdue = await this.prisma.student_payments.updateMany({
+      where: { student_id: studentId, status: { in: ["not_paid", "due_soon"] }, due_date: { lt: today } },
+      data: { status: "overdue" },
+    });
+
+    const dueSoon = await this.prisma.student_payments.updateMany({
+      where: { student_id: studentId, status: "not_paid", due_date: { gte: today, lte: dueSoonCutoff } },
+      data: { status: "due_soon" },
+    });
+
+    return { overdue: overdue.count, dueSoon: dueSoon.count, total: overdue.count + dueSoon.count };
+  }
+
   async generateReceipt(paymentId: string): Promise<string> {
     const payment = await this.prisma.student_payments.findUnique({
       where: { id: paymentId },

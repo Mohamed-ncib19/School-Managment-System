@@ -11,6 +11,7 @@
     "db:migrate:dev": "pnpm -C apps/backend run db:migrate:dev",
     "db:reset": "pnpm -C apps/backend run db:reset",
     "db:seed": "pnpm -C apps/backend run db:seed",
+    "db:seed:hierarchy": "pnpm -C apps/backend run db:seed:hierarchy",
     "db:studio": "pnpm -C apps/backend run db:studio"
   },
   "devDependencies": {

@@ -73,6 +73,16 @@ export function useGeneratePaymentForStudent() {
  * `paid` is not settable here — the API rejects it. Marking a payment paid has
  * to record who collected it and when, which is what `useRecordPayment` does.
  */
+export function useUpdatePaymentStatusesForStudent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (studentId: string) => ApiClient.post(`/payments/update-status-for-student/${studentId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+    },
+  });
+}
+
 export function useUpdatePaymentStatus() {
   const queryClient = useQueryClient();
   return useMutation({

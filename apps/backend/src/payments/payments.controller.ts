@@ -48,6 +48,11 @@ export class PaymentsController {
     return this.paymentsService.generatePaymentForStudent(studentId);
   }
 
+  @Post("update-status-for-student/:studentId")
+  async updateStatusForStudent(@Param("studentId", ParseUUIDPipe) studentId: string, @Request() req: any) {
+    return this.paymentsService.updatePaymentStatusesForStudent(studentId);
+  }
+
   @Post(":id/record-payment")
   async recordPayment(
     @Param("id", ParseUUIDPipe) id: string,
