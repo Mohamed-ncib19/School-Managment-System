@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
+import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
 
 @Injectable()
 export class LevelsService {
@@ -10,24 +11,49 @@ export class LevelsService {
     private readonly auditService: AuditService,
   ) {}
 
-  async listLevels(profId?: string) {
-    const where = profId ? { prof_id: profId } : {};
+  /** Level names are unique (case-insensitive, trimmed). */
+  private async assertUniqueName(name: string, exceptId?: string) {
+    const existing = await this.prisma.levels.findFirst({
+      where: {
+        name: { equals: name, mode: "insensitive" },
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+    });
+    if (existing) {
+      throw new ConflictException(`A level named "${existing.name}" already exists`);
+    }
+  }
+
+  /** Levels are the root of the hierarchy, so there is no parent to filter by. */
+  async listLevels() {
+    const levels = await this.prisma.levels.findMany({
+      where: { is_active: true },
+      orderBy: { created_at: "desc" },
+      // Active fields only: a soft-deleted field must not keep the level's
+      // counter showing a phantom. The same shape `_count` produced before.
+      include: { fields: { where: { is_active: true }, select: { id: true } } },
+    });
+    return levels.map(({ fields, ...level }) => ({ ...level, _count: { fields: fields.length } }));
+  }
+
+  /** Archived levels - the "Deleted" space, restorable at any time. */
+  async listDeletedLevels() {
     return this.prisma.levels.findMany({
-      where,
-      include: { professor: { include: { field: true } } },
+      where: { is_active: false },
       orderBy: { created_at: "desc" },
     });
   }
 
   async getLevel(id: string) {
-    const level = await this.prisma.levels.findUnique({ where: { id }, include: { professor: { include: { field: true } } } });
+    const level = await this.prisma.levels.findUnique({ where: { id } });
     if (!level) throw new NotFoundException(`Level ${id} not found`);
     return level;
   }
 
-  async createLevel(dto: { prof_id: string; name: string }, userId?: string) {
+  async createLevel(dto: { name: string; color?: string }, userId?: string) {
+    await this.assertUniqueName(dto.name);
     const level = await this.prisma.levels.create({
-      data: { prof_id: dto.prof_id, name: dto.name },
+      data: { name: dto.name, color: dto.color },
     });
     await this.auditService.record({
       action: "level.created",
@@ -35,15 +61,19 @@ export class LevelsService {
       entityId: level.id,
       entityLabel: level.name,
       actorId: userId,
-      newValues: { name: level.name, prof_id: level.prof_id },
+      newValues: { name: level.name, color: level.color },
     });
     return level;
   }
 
-  async updateLevel(id: string, dto: { name?: string }, userId?: string) {
+  async updateLevel(id: string, dto: { name?: string; color?: string }, userId?: string) {
     const before = await this.getLevel(id);
     const data: any = {};
-    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.name !== undefined) {
+      await this.assertUniqueName(dto.name, id);
+      data.name = dto.name;
+    }
+    if (dto.color !== undefined) data.color = dto.color;
     const updated = await this.prisma.levels.update({ where: { id }, data });
 
     const { prevValues, newValues, changed } = changedFields(before, data);
@@ -90,5 +120,28 @@ export class LevelsService {
       newValues: { is_active: true },
     });
     return updated;
+  }
+
+  /**
+   * Permanent purge of an archived level and everything beneath it. Only an
+   * archived level can be hard-deleted, so a live level can never be
+   * wiped out by accident from this path.
+   */
+  async hardDeleteLevel(id: string, userId?: string) {
+    const level = await this.getLevel(id);
+    if (level.is_active) {
+      throw new ConflictException(`Level "${level.name}" is still active - archive it first`);
+    }
+    const counts = await hardDeleteHierarchy(this.prisma, "level", id);
+    await this.auditService.record({
+      action: "level.hard_deleted",
+      entityType: "level",
+      entityId: id,
+      entityLabel: level.name,
+      actorId: userId,
+      prevValues: { name: level.name, is_active: level.is_active },
+      meta: { purged: counts },
+    });
+    return { id, purged: counts };
   }
 }

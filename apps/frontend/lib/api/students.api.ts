@@ -10,4 +10,7 @@ export const studentsApi = {
   delete: (id: string) => ApiClient.del(`/students/${id}`),
   move: (id: string, groupId: string) => ApiClient.post<Student>(`/students/${id}/move`, { group_id: groupId }),
   getPayments: (studentId: string) => ApiClient.get<StudentPayment[]>(`/students/${studentId}/payments`),
+  deleted: (groupId?: string) =>
+    ApiClient.get<Student[]>("/students", { params: { ...(groupId ? { groupId } : {}), status: "withdrawn" } }),
+  restore: (id: string) => ApiClient.put<Student>(`/students/${id}`, { status: "active" }),
 };

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@/components/shared/toast";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
+import { HierarchyConfigProvider } from "@/hooks/use-hierarchy-config";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -39,9 +40,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <ErrorBoundary label="app">{children}</ErrorBoundary>
-      </ToastProvider>
+      <HierarchyConfigProvider>
+        <ToastProvider>
+          <ErrorBoundary label="app">{children}</ErrorBoundary>
+        </ToastProvider>
+      </HierarchyConfigProvider>
     </QueryClientProvider>
   );
 }

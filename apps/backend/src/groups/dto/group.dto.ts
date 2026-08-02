@@ -1,11 +1,12 @@
-import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from "class-validator";
+import { IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { ENTITY_COLOR_PATTERN, ENTITY_COLOR_MESSAGE } from "../../common/color.util";
 
 export class CreateGroupDto {
   @ApiProperty({ format: "uuid" })
-  @IsUUID("4", { message: "level_id must be a valid level id" })
-  level_id!: string;
+  @IsUUID("4", { message: "prof_id must be a valid professor id" })
+  prof_id!: string;
 
   @ApiProperty({ example: "Group A" })
   @IsString()
@@ -28,6 +29,11 @@ export class CreateGroupDto {
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @MaxLength(500)
   schedule_notes?: string;
+
+  @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
+  @IsOptional()
+  @Matches(ENTITY_COLOR_PATTERN, { message: ENTITY_COLOR_MESSAGE })
+  color?: string;
 }
 
 export class UpdateGroupDto {
@@ -53,4 +59,9 @@ export class UpdateGroupDto {
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @MaxLength(500)
   schedule_notes?: string;
+
+  @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
+  @IsOptional()
+  @Matches(ENTITY_COLOR_PATTERN, { message: ENTITY_COLOR_MESSAGE })
+  color?: string;
 }

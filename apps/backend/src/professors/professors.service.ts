@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
+import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
+import { normalizeTunisianPhone } from "../common/phone.util";
 
 @Injectable()
 export class ProfessorsService {
@@ -11,16 +13,40 @@ export class ProfessorsService {
   ) {}
 
   async listProfessors(fieldId?: string) {
-    const where = fieldId ? { field_id: fieldId } : {};
+    const where = { ...(fieldId ? { field_id: fieldId } : {}), is_active: true };
+    const rows = await this.prisma.professors.findMany({
+      where,
+      include: {
+        field: { include: { level: true } },
+        // Lightweight group preview for the professor cards (id + name only).
+        // Also the source of the `_count` below: it is already filtered to
+        // active groups, so archived ones stop counting.
+        groups: { where: { is_active: true }, select: { id: true, name: true } },
+      },
+      orderBy: { created_at: "desc" },
+    });
+    return rows.map(({ groups, ...prof }) => ({
+      ...prof,
+      groups,
+      _count: { groups: groups.length },
+    }));
+  }
+
+  /** Deactivated professors - the "Deleted" space, restorable at any time. */
+  async listDeletedProfessors(fieldId?: string) {
+    const where = { ...(fieldId ? { field_id: fieldId } : {}), is_active: false };
     return this.prisma.professors.findMany({
       where,
-      include: { field: true },
+      include: { field: { include: { level: true } } },
       orderBy: { created_at: "desc" },
     });
   }
 
   async getProfessor(id: string) {
-    const prof = await this.prisma.professors.findUnique({ where: { id }, include: { field: true } });
+    const prof = await this.prisma.professors.findUnique({
+      where: { id },
+      include: { field: { include: { level: true } } },
+    });
     if (!prof) throw new NotFoundException(`Professor ${id} not found`);
     return prof;
   }
@@ -30,14 +56,18 @@ export class ProfessorsService {
     full_name: string;
     phone: string;
     email?: string;
+    color?: string;
     user_id?: string;
   }, userId?: string) {
+    const phone = normalizeTunisianPhone(dto.phone);
+    if (!phone) throw new BadRequestException("Professor phone must be 8 digits, e.g. +216 22 123 456");
     const prof = await this.prisma.professors.create({
       data: {
         field_id: dto.field_id,
         full_name: dto.full_name,
-        phone: dto.phone,
+        phone,
         email: dto.email,
+        color: dto.color,
         user_id: dto.user_id,
       },
     });
@@ -54,6 +84,7 @@ export class ProfessorsService {
         full_name: prof.full_name,
         phone: prof.phone,
         email: prof.email,
+        color: prof.color,
         field_id: prof.field_id,
         user_id: prof.user_id,
       },
@@ -65,14 +96,20 @@ export class ProfessorsService {
     full_name?: string;
     phone?: string;
     email?: string;
+    color?: string;
     user_id?: string;
     is_active?: boolean;
   }, userId?: string) {
     const before = await this.getProfessor(id);
     const data: any = {};
     if (dto.full_name !== undefined) data.full_name = dto.full_name;
-    if (dto.phone !== undefined) data.phone = dto.phone;
+    if (dto.phone !== undefined) {
+      const phone = normalizeTunisianPhone(dto.phone);
+      if (!phone) throw new BadRequestException("Professor phone must be 8 digits, e.g. +216 22 123 456");
+      data.phone = phone;
+    }
     if (dto.email !== undefined) data.email = dto.email;
+    if (dto.color !== undefined) data.color = dto.color;
     if (dto.user_id !== undefined) data.user_id = dto.user_id;
     if (dto.is_active !== undefined) data.is_active = dto.is_active;
     const updated = await this.prisma.professors.update({ where: { id }, data });
@@ -122,5 +159,24 @@ export class ProfessorsService {
       newValues: { is_active: true },
     });
     return updated;
+  }
+
+  /** Permanent purge of a deactivated professor and their groups/students. */
+  async hardDeleteProfessor(id: string, userId?: string) {
+    const prof = await this.getProfessor(id);
+    if (prof.is_active) {
+      throw new ConflictException(`Professor "${prof.full_name}" is still active - deactivate them first`);
+    }
+    const counts = await hardDeleteHierarchy(this.prisma, "professor", id);
+    await this.auditService.record({
+      action: "professor.hard_deleted",
+      entityType: "professor",
+      entityId: id,
+      entityLabel: prof.full_name,
+      actorId: userId,
+      prevValues: { full_name: prof.full_name, field_id: prof.field_id, is_active: prof.is_active },
+      meta: { purged: counts },
+    });
+    return { id, purged: counts };
   }
 }

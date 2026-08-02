@@ -17,9 +17,14 @@ export class HierarchyController {
     return this.hierarchy.fullSummary();
   }
 
+  @Get("levels")
+  async levels() {
+    return this.hierarchy.levelSummaries();
+  }
+
   @Get("fields")
-  async fields() {
-    return this.hierarchy.fieldSummaries();
+  async fields(@Query("levelId") levelId?: string) {
+    return this.hierarchy.fieldSummaries(levelId);
   }
 
   @Get("professors")
@@ -27,13 +32,15 @@ export class HierarchyController {
     return this.hierarchy.professorSummaries(fieldId);
   }
 
-  @Get("levels")
-  async levels(@Query("profId") profId?: string) {
-    return this.hierarchy.levelSummaries(profId);
+  @Get("groups")
+  async groups(@Query("profId") profId?: string) {
+    return this.hierarchy.groupSummaries(profId);
   }
 
-  @Get("groups")
-  async groups(@Query("levelId") levelId?: string) {
-    return this.hierarchy.groupSummaries(levelId);
+  @Get("resolve")
+  @ApiOperation({ summary: "Resolve a hierarchy path and return breadcrumbs + children" })
+  async resolve(@Query("segments") segmentsJson: string) {
+    const segments = JSON.parse(segmentsJson || "[]");
+    return this.hierarchy.resolvePath(segments);
   }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 import { Menu, Globe, Sun, Moon } from "lucide-react";
 import { useTheme, initTheme } from "@/hooks/use-theme";
 import { useTranslation } from "@/lib/i18n/context";
@@ -8,9 +9,10 @@ import { useTranslation } from "@/lib/i18n/context";
 interface NavbarProps {
   onToggleSidebar: () => void;
   title: string;
+  breadcrumb?: ReactNode;
 }
 
-export default function Navbar({ onToggleSidebar, title }: NavbarProps) {
+export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarProps) {
   const { locale, setLocale, t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
 
@@ -24,15 +26,17 @@ export default function Navbar({ onToggleSidebar, title }: NavbarProps) {
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-surface border-b border-border flex items-center justify-between px-4 lg:px-8">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 min-w-0">
         <button
           onClick={onToggleSidebar}
-          className="lg:hidden h-10 w-10 flex items-center justify-center rounded-btn hover:bg-neutral-soft dark:hover:bg-white/10 transition-colors"
+          className="lg:hidden h-10 w-10 flex items-center justify-center rounded-btn hover:bg-neutral-soft dark:hover:bg-white/10 transition-colors shrink-0"
           aria-label="Toggle sidebar"
         >
           <Menu size={20} />
         </button>
-        <h1 className="text-base lg:text-lg font-semibold text-text-primary">{title}</h1>
+        {breadcrumb ?? (
+          <h1 className="text-base lg:text-lg font-semibold text-text-primary truncate">{title}</h1>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

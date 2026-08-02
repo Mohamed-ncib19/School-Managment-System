@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import * as ExcelJS from "exceljs";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { StudentStatus } from "@iq/shared";
+import { normalizeTunisianPhone } from "../common/phone.util";
 import {
   IMPORT_COLUMNS,
   ImportResult,
@@ -32,6 +34,14 @@ const HEADER_KEYS: Record<string, keyof ParsedRow> = {
 };
 
 const STUDENT_STATUSES: StudentStatus[] = ["active", "paused", "withdrawn"];
+
+/** Per-import lookup of rows already resolved, keyed by parent id + name. */
+interface ImportCaches {
+  levels: Map<string, string>;
+  fields: Map<string, string>;
+  professors: Map<string, string>;
+  groups: Map<string, string>;
+}
 
 @Injectable()
 export class ImportsService {
@@ -77,92 +87,17 @@ export class ImportsService {
       imported: 0,
       skippedDuplicates: 0,
       failed: 0,
-      created: { fields: 0, professors: 0, levels: 0, groups: 0 },
+      created: { levels: 0, fields: 0, professors: 0, groups: 0 },
       errors: [],
     };
 
     if (rows.length === 0) return result;
 
     await this.prisma.$transaction(async (tx) => {
-      const fieldCache = new Map<string, string>();
-      const profCache = new Map<string, string>();
-      const levelCache = new Map<string, string>();
-      const groupCache = new Map<string, string>();
+      const caches = this.newCaches();
 
       for (const row of rows) {
-        const fieldKey = row.field.toLowerCase();
-        let fieldId = fieldCache.get(fieldKey);
-        if (!fieldId) {
-          const existing = await tx.fields.findFirst({ where: { name: row.field } });
-          if (existing) {
-            fieldId = existing.id;
-          } else {
-            const created = await tx.fields.create({
-              data: { name: this.sanitize(row.field), created_by: actorUserId },
-            });
-            fieldId = created.id;
-            result.created.fields++;
-          }
-          fieldCache.set(fieldKey, fieldId);
-        }
-
-        const profKey = `${fieldId}::${row.professor.toLowerCase()}`;
-        let profId = profCache.get(profKey);
-        if (!profId) {
-          const existing = await tx.professors.findFirst({
-            where: { field_id: fieldId, full_name: row.professor },
-          });
-          if (existing) {
-            profId = existing.id;
-          } else {
-            const created = await tx.professors.create({
-              data: {
-                field_id: fieldId,
-                full_name: this.sanitize(row.professor),
-                phone: this.sanitize(row.professorPhone),
-              },
-            });
-            profId = created.id;
-            result.created.professors++;
-          }
-          profCache.set(profKey, profId);
-        }
-
-        const levelKey = `${profId}::${row.level.toLowerCase()}`;
-        let levelId = levelCache.get(levelKey);
-        if (!levelId) {
-          const existing = await tx.levels.findFirst({
-            where: { prof_id: profId, name: row.level },
-          });
-          if (existing) {
-            levelId = existing.id;
-          } else {
-            const created = await tx.levels.create({
-              data: { prof_id: profId, name: this.sanitize(row.level) },
-            });
-            levelId = created.id;
-            result.created.levels++;
-          }
-          levelCache.set(levelKey, levelId);
-        }
-
-        const groupKey = `${levelId}::${row.group.toLowerCase()}`;
-        let groupId = groupCache.get(groupKey);
-        if (!groupId) {
-          const existing = await tx.groups.findFirst({
-            where: { level_id: levelId, name: row.group },
-          });
-          if (existing) {
-            groupId = existing.id;
-          } else {
-            const created = await tx.groups.create({
-              data: { level_id: levelId, name: this.sanitize(row.group) },
-            });
-            groupId = created.id;
-            result.created.groups++;
-          }
-          groupCache.set(groupKey, groupId);
-        }
+        const groupId = await this.resolveGroup(tx, row, actorUserId, caches, result);
 
         const duplicate = await tx.students.findFirst({
           where: {
@@ -181,12 +116,15 @@ export class ImportsService {
             group_id: groupId,
             first_name: this.sanitize(row.firstName),
             last_name: this.sanitize(row.lastName),
-            phone: this.sanitize(row.phone),
-            parent_phone: row.parentPhone ? this.sanitize(row.parentPhone) : null,
+            phone: normalizeTunisianPhone(row.phone) ?? this.sanitize(row.phone),
+            parent_phone: row.parentPhone ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone)) : null,
             email: row.email ? this.sanitize(row.email) : null,
             enrollment_date: row.enrollmentDate,
             monthly_fee: row.monthlyFee,
             status: row.status,
+            assignments: {
+              create: [{ group_id: groupId, fee: row.monthlyFee }],
+            },
           },
         });
         result.imported++;
@@ -229,10 +167,10 @@ export class ImportsService {
     sheet.views = [{ state: "frozen", ySplit: 1 }];
 
     sheet.addRow([
+      "Level 1",
       "Languages",
       "Ahmed Bensalem",
       "0555123456",
-      "Level 1",
       "Group A",
       "Yasmine",
       "Haddad",
@@ -265,7 +203,7 @@ export class ImportsService {
       imported: 0,
       skippedDuplicates: 0,
       failed: errors.length,
-      created: { fields: 0, professors: 0, levels: 0, groups: 0 },
+      created: { levels: 0, fields: 0, professors: 0, groups: 0 },
       errors,
     };
 
@@ -274,85 +212,10 @@ export class ImportsService {
     // One transaction for the whole import: a mid-file failure must not leave
     // a half-built hierarchy behind.
     await this.prisma.$transaction(async (tx) => {
-      const fieldCache = new Map<string, string>();
-      const profCache = new Map<string, string>();
-      const levelCache = new Map<string, string>();
-      const groupCache = new Map<string, string>();
+      const caches = this.newCaches();
 
       for (const row of rows) {
-        const fieldKey = row.field.toLowerCase();
-        let fieldId = fieldCache.get(fieldKey);
-        if (!fieldId) {
-          const existing = await tx.fields.findFirst({ where: { name: row.field } });
-          if (existing) {
-            fieldId = existing.id;
-          } else {
-            const created = await tx.fields.create({
-              data: { name: row.field, created_by: actorUserId },
-            });
-            fieldId = created.id;
-            result.created.fields++;
-          }
-          fieldCache.set(fieldKey, fieldId);
-        }
-
-        const profKey = `${fieldId}::${row.professor.toLowerCase()}`;
-        let profId = profCache.get(profKey);
-        if (!profId) {
-          const existing = await tx.professors.findFirst({
-            where: { field_id: fieldId, full_name: row.professor },
-          });
-          if (existing) {
-            profId = existing.id;
-          } else {
-            const created = await tx.professors.create({
-              data: {
-                field_id: fieldId,
-                full_name: row.professor,
-                phone: row.professorPhone,
-              },
-            });
-            profId = created.id;
-            result.created.professors++;
-          }
-          profCache.set(profKey, profId);
-        }
-
-        const levelKey = `${profId}::${row.level.toLowerCase()}`;
-        let levelId = levelCache.get(levelKey);
-        if (!levelId) {
-          const existing = await tx.levels.findFirst({
-            where: { prof_id: profId, name: row.level },
-          });
-          if (existing) {
-            levelId = existing.id;
-          } else {
-            const created = await tx.levels.create({
-              data: { prof_id: profId, name: row.level },
-            });
-            levelId = created.id;
-            result.created.levels++;
-          }
-          levelCache.set(levelKey, levelId);
-        }
-
-        const groupKey = `${levelId}::${row.group.toLowerCase()}`;
-        let groupId = groupCache.get(groupKey);
-        if (!groupId) {
-          const existing = await tx.groups.findFirst({
-            where: { level_id: levelId, name: row.group },
-          });
-          if (existing) {
-            groupId = existing.id;
-          } else {
-            const created = await tx.groups.create({
-              data: { level_id: levelId, name: row.group },
-            });
-            groupId = created.id;
-            result.created.groups++;
-          }
-          groupCache.set(groupKey, groupId);
-        }
+        const groupId = await this.resolveGroup(tx, row, actorUserId, caches, result);
 
         // Append semantics: re-importing the same roster must not duplicate students.
         const duplicate = await tx.students.findFirst({
@@ -370,14 +233,17 @@ export class ImportsService {
         await tx.students.create({
           data: {
             group_id: groupId,
-            first_name: row.firstName,
-            last_name: row.lastName,
-            phone: row.phone,
-            parent_phone: row.parentPhone,
-            email: row.email,
+            first_name: this.sanitize(row.firstName),
+            last_name: this.sanitize(row.lastName),
+            phone: normalizeTunisianPhone(row.phone) ?? this.sanitize(row.phone),
+            parent_phone: row.parentPhone ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone)) : null,
+            email: row.email ? this.sanitize(row.email) : null,
             enrollment_date: row.enrollmentDate,
             monthly_fee: row.monthlyFee,
             status: row.status,
+            assignments: {
+              create: [{ group_id: groupId, fee: row.monthlyFee }],
+            },
           },
         });
         result.imported++;
@@ -398,6 +264,104 @@ export class ImportsService {
     return result;
   }
 
+  private newCaches(): ImportCaches {
+    return { levels: new Map(), fields: new Map(), professors: new Map(), groups: new Map() };
+  }
+
+  /**
+   * Walks a row's Level > Field > Professor > Group chain, creating whatever is
+   * missing and reusing whatever is already there, and returns the group id.
+   *
+   * Levels are matched school-wide by name. Everything below is matched within
+   * its own parent, so "Group A" under two different professors stays two
+   * groups, and a teacher listed against two levels gets one row per level -
+   * which is what a professor row means now that it sits inside a level.
+   */
+  private async resolveGroup(
+    tx: Prisma.TransactionClient,
+    row: ParsedRow,
+    actorUserId: string,
+    caches: ImportCaches,
+    result: ImportResult,
+  ): Promise<string> {
+    const levelKey = row.level.toLowerCase();
+    let levelId = caches.levels.get(levelKey);
+    if (!levelId) {
+      const existing = await tx.levels.findFirst({ where: { name: row.level } });
+      if (existing) {
+        levelId = existing.id;
+      } else {
+        const created = await tx.levels.create({ data: { name: this.sanitize(row.level) } });
+        levelId = created.id;
+        result.created.levels++;
+      }
+      caches.levels.set(levelKey, levelId);
+    }
+
+    const fieldKey = `${levelId}::${row.field.toLowerCase()}`;
+    let fieldId = caches.fields.get(fieldKey);
+    if (!fieldId) {
+      const existing = await tx.fields.findFirst({
+        where: { level_id: levelId, name: row.field },
+      });
+      if (existing) {
+        fieldId = existing.id;
+      } else {
+        const created = await tx.fields.create({
+          data: { level_id: levelId, name: this.sanitize(row.field), created_by: actorUserId },
+        });
+        fieldId = created.id;
+        result.created.fields++;
+      }
+      caches.fields.set(fieldKey, fieldId);
+    }
+
+    const profKey = `${fieldId}::${row.professor.toLowerCase()}`;
+    let profId = caches.professors.get(profKey);
+    if (!profId) {
+      const existing = await tx.professors.findFirst({
+        where: { field_id: fieldId, full_name: row.professor },
+      });
+      if (existing) {
+        profId = existing.id;
+      } else {
+        const created = await tx.professors.create({
+          data: {
+            field_id: fieldId,
+            full_name: this.sanitize(row.professor),
+            phone:
+              row.professorPhone && row.professorPhone !== "—"
+                ? (normalizeTunisianPhone(row.professorPhone) ?? this.sanitize(row.professorPhone))
+                : "",
+          },
+        });
+        profId = created.id;
+        result.created.professors++;
+      }
+      caches.professors.set(profKey, profId);
+    }
+
+    const groupKey = `${profId}::${row.group.toLowerCase()}`;
+    let groupId = caches.groups.get(groupKey);
+    if (!groupId) {
+      const existing = await tx.groups.findFirst({
+        where: { prof_id: profId, name: row.group },
+      });
+      if (existing) {
+        groupId = existing.id;
+      } else {
+        const created = await tx.groups.create({
+          data: { prof_id: profId, name: this.sanitize(row.group) },
+        });
+        groupId = created.id;
+        result.created.groups++;
+      }
+      caches.groups.set(groupKey, groupId);
+    }
+
+    return groupId;
+  }
+
   private mapColumns(sheet: ExcelJS.Worksheet): { map: Map<keyof ParsedRow, number>; missing: string[] } {
     const headerRow = sheet.getRow(1);
     const map = new Map<keyof ParsedRow, number>();
@@ -408,9 +372,9 @@ export class ImportsService {
     });
 
     const required: (keyof ParsedRow)[] = [
+      "level",
       "field",
       "professor",
-      "level",
       "group",
       "firstName",
       "lastName",
@@ -439,10 +403,10 @@ export class ImportsService {
       const row = sheet.getRow(rowNumber);
 
       const values = {
+        level: read(row, "level"),
         field: read(row, "field"),
         professor: read(row, "professor"),
         professorPhone: read(row, "professorPhone"),
-        level: read(row, "level"),
         group: read(row, "group"),
         firstName: read(row, "firstName"),
         lastName: read(row, "lastName"),
@@ -459,9 +423,9 @@ export class ImportsService {
 
       const missing = (
         [
+          ["level", "Level"],
           ["field", "Field"],
           ["professor", "Professor"],
-          ["level", "Level"],
           ["group", "Group"],
           ["firstName", "First Name"],
           ["lastName", "Last Name"],
@@ -513,17 +477,35 @@ export class ImportsService {
         continue;
       }
 
+      const phone = normalizeTunisianPhone(values.phone);
+      if (!phone) {
+        errors.push({
+          row: rowNumber,
+          message: `Phone "${values.phone}" must be 8 digits with the +216 country code, e.g. +216 22 123 456`,
+        });
+        continue;
+      }
+
+      const parentPhone = values.parentPhone ? normalizeTunisianPhone(values.parentPhone) : null;
+      if (values.parentPhone && !parentPhone) {
+        errors.push({
+          row: rowNumber,
+          message: `Parent Phone "${values.parentPhone}" must be 8 digits with the +216 country code, e.g. +216 22 123 456`,
+        });
+        continue;
+      }
+
       rows.push({
         rowNumber,
+        level: values.level,
         field: values.field,
         professor: values.professor,
         professorPhone: values.professorPhone || "—",
-        level: values.level,
         group: values.group,
         firstName: values.firstName,
         lastName: values.lastName,
-        phone: values.phone,
-        parentPhone: values.parentPhone || null,
+        phone,
+        parentPhone,
         email: values.email || null,
         enrollmentDate,
         monthlyFee,

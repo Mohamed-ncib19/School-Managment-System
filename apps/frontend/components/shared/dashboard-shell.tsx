@@ -5,18 +5,15 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/shared/sidebar";
 import Navbar from "@/components/shared/navbar";
+import PageBreadcrumbs from "@/components/shared/page-breadcrumbs";
 
 /** Most specific route first — the first match wins. */
 const TITLES: ReadonlyArray<[RegExp, string]> = [
-  [/^\/fields\/[^/]+\/professors\/[^/]+\/levels\/[^/]+\/groups\/[^/]+\/students/, "Students"],
-  [/^\/fields\/[^/]+\/professors\/[^/]+\/levels\/[^/]+\/groups/, "Groups"],
-  [/^\/fields\/[^/]+\/professors\/[^/]+\/levels/, "Levels"],
-  [/^\/fields\/[^/]+\/professors/, "Professors"],
-  [/^\/fields/, "Fields & Hierarchy"],
+  [/^\/hierarchy/, "Hierarchy"],
+  [/^\/attendance-sheet/, "Attendance Sheet"],
   [/^\/students\/[^/]+\/payments/, "Payment History"],
   [/^\/payments/, "Payments"],
   [/^\/import/, "Import Data"],
-  [/^\/teachers/, "Teachers"],
   [/^\/audit/, "Audit"],
   [/^\/settings/, "Settings"],
   [/^\/dashboard/, "Dashboard"],
@@ -35,6 +32,10 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
+  // Hierarchy screens (catch-all route, flat entity pages and student screens)
+  // get the entity-name breadcrumb; everywhere else keeps the static title.
+  const showBreadcrumb = /^\/(hierarchy|levels|professors|groups|students)(\/|$)/.test(pathname);
+
   return (
     <div className="min-h-screen flex bg-background">
       <Sidebar
@@ -51,6 +52,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
         <Navbar
           onToggleSidebar={() => setMobileOpen(!mobileOpen)}
           title={titleFor(pathname)}
+          breadcrumb={showBreadcrumb ? <PageBreadcrumbs pathname={pathname} /> : undefined}
         />
         <main className="flex-1 p-4 lg:p-8 overflow-y-auto">
           {children}

@@ -1,0 +1,13 @@
+
+> @iq/frontend@0.0.1 dev
+> next dev --port 3000
+
+  ▲ Next.js 14.2.5
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 4.1s
+ ○ Compiling /financial/professors/[profId] ...
+ ✓ Compiled /financial/professors/[profId] in 6.3s (2570 modules)
+ GET /financial/professors/a01e6196-09e6-4c22-b3c7-51160c1355c2 200 in 8401ms

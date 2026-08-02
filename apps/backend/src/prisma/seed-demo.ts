@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
  *   pnpm run db:seed:demo            add the demo data (idempotent-ish)
  *   pnpm run db:seed:demo -- --reset wipe ALL hierarchy data first
  *
- * `--reset` deletes every field/professor/level/group/student/payment, not just
+ * `--reset` deletes every level/field/professor/group/student/payment, not just
  * the rows this script wrote. It leaves users and audit logs alone.
  */
 
@@ -56,13 +56,13 @@ function periodOf(monthsAgo: number) {
 }
 
 async function reset() {
-  // FK order: payments -> students -> groups -> levels -> professors -> fields.
+  // FK order: payments -> students -> groups -> professors -> fields -> levels.
   await prisma.student_payments.deleteMany({});
   await prisma.students.deleteMany({});
   await prisma.groups.deleteMany({});
-  await prisma.levels.deleteMany({});
   await prisma.professors.deleteMany({});
   await prisma.fields.deleteMany({});
+  await prisma.levels.deleteMany({});
   console.log("  reset: hierarchy tables cleared");
 }
 
@@ -88,34 +88,41 @@ async function main() {
   const levelRows: any[] = [];
   const groupRows: any[] = [];
   const studentRows: any[] = [];
+  const assignmentRows: { student_id: string; group_id: string; fee: number }[] = [];
   const paymentRows: any[] = [];
 
-  for (const field of FIELDS) {
-    const fieldId = randomUUID();
-    fieldRows.push({ id: fieldId, name: field.name, description: field.description, created_by: admin.id });
+  for (const levelName of LEVEL_NAMES) {
+    const levelId = randomUUID();
+    levelRows.push({ id: levelId, name: levelName });
 
-    for (const profName of PROFESSORS[field.name]) {
-      const profId = randomUUID();
-      profRows.push({
-        id: profId,
-        field_id: fieldId,
-        full_name: profName,
-        phone: `05${between(10, 99)}${between(100000, 999999)}`,
-        email: `${profName.toLowerCase().replace(/\s+/g, ".")}@iqacademy.com`,
-        is_active: true,
+    // 1-2 fields per level.
+    for (const field of FIELDS.slice(0, between(1, 2))) {
+      const fieldId = randomUUID();
+      fieldRows.push({
+        id: fieldId,
+        level_id: levelId,
+        name: field.name,
+        description: field.description,
+        created_by: admin.id,
       });
 
-      // 1-2 levels per professor.
-      for (const levelName of LEVEL_NAMES.slice(0, between(1, 2))) {
-        const levelId = randomUUID();
-        levelRows.push({ id: levelId, prof_id: profId, name: levelName });
+      for (const profName of PROFESSORS[field.name]) {
+        const profId = randomUUID();
+        profRows.push({
+          id: profId,
+          field_id: fieldId,
+          full_name: profName,
+          phone: `05${between(10, 99)}${between(100000, 999999)}`,
+          email: `${profName.toLowerCase().replace(/\s+/g, ".")}@iqacademy.com`,
+          is_active: true,
+        });
 
-        // 1-2 groups per level.
+        // 1-2 groups per professor.
         for (const suffix of GROUP_SUFFIX.slice(0, between(1, 2))) {
           const groupId = randomUUID();
           groupRows.push({
             id: groupId,
-            level_id: levelId,
+            prof_id: profId,
             name: `${levelName} ${suffix}`,
             capacity: between(12, 20),
             schedule_notes: pick(["Mon/Wed 17:00", "Tue/Thu 18:30", "Sat 09:00", "Sun 14:00"]),
@@ -143,6 +150,7 @@ async function main() {
               monthly_fee: monthlyFee,
               status: (rand() > 0.93 ? "paused" : "active") as StudentStatus,
             });
+            assignmentRows.push({ student_id: studentId, group_id: groupId, fee: monthlyFee });
 
             // Three months of billing history, newest last.
             for (let back = 2; back >= 0; back--) {
@@ -181,16 +189,17 @@ async function main() {
   }
 
   // Bulk inserts, parent tables first.
+  await prisma.levels.createMany({ data: levelRows });
   await prisma.fields.createMany({ data: fieldRows });
   await prisma.professors.createMany({ data: profRows });
-  await prisma.levels.createMany({ data: levelRows });
   await prisma.groups.createMany({ data: groupRows });
   await prisma.students.createMany({ data: studentRows });
+  await prisma.student_assignments.createMany({ data: assignmentRows });
   await prisma.student_payments.createMany({ data: paymentRows, skipDuplicates: true });
 
   const paid = paymentRows.filter((p) => p.status === "paid").length;
   console.log("Demo data seeded:");
-  console.log(`  ${fieldRows.length} fields, ${profRows.length} professors, ${levelRows.length} levels, ${groupRows.length} groups`);
+  console.log(`  ${levelRows.length} levels, ${fieldRows.length} fields, ${profRows.length} professors, ${groupRows.length} groups`);
   console.log(`  ${studentRows.length} students, ${paymentRows.length} payments (${paid} paid)`);
 }
 

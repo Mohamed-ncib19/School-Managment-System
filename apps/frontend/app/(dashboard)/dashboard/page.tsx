@@ -20,95 +20,81 @@ import { RevenueChart } from "@/components/charts/revenue-chart";
 import { PaymentsByStatusChart } from "@/components/charts/payments-by-status-chart";
 import { StudentsByFieldChart } from "@/components/charts/students-by-field-chart";
 import { useStudents, useFields, useProfessors } from "@/hooks/use-queries";
-import { usePayments } from "@/hooks/use-payments";
+import {
+  useFinancialDashboard,
+  useFinancialPayments,
+  useRevenueSeries,
+  useStatusDistribution,
+} from "@/hooks/use-financial";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function DashboardPage() {
   const { data: students, isLoading: studentsLoading } = useStudents(undefined, { refetchInterval: 30000 });
-  const { data: payments, isLoading: paymentsLoading } = usePayments(undefined, { refetchInterval: 30000 });
   const { data: fields } = useFields({ refetchInterval: 30000 });
   const { data: professors } = useProfessors(undefined, { refetchInterval: 30000 });
   const { t } = useTranslation();
 
-  const todayIso = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  }, []);
+  // Every figure below comes from the financial module's aggregates rather than
+  // from a full payment list reduced in the browser. That list endpoint no
+  // longer exists, and re-deriving revenue here would be a second place the
+  // professor/school split could drift from RevenueCalculationService.
+  const { data: finance, isLoading: financeLoading } = useFinancialDashboard({});
+  const { data: today } = useFinancialDashboard({ range: "today" });
+  const { data: revenue } = useRevenueSeries({ granularity: "monthly" });
+  const { data: statusSlices } = useStatusDistribution({});
+  const { data: recent } = useFinancialPayments({
+    status: "paid",
+    limit: 5,
+    sortBy: "due_date",
+    sortDir: "desc",
+  });
 
-  const { dueSoonCount, overdueCount, pendingCount, todayPaymentsCount, totalRevenue, paidPayments, statusCounts } = useMemo(
-    () =>
-      (payments ?? []).reduce(
-        (acc, p) => {
-          if (p.status === "due_soon") acc.dueSoonCount++;
-          else if (p.status === "overdue") acc.overdueCount++;
-          else if (p.status === "not_paid") acc.pendingCount++;
-          if (p.paid_at) {
-            const paidDate = new Date(p.paid_at);
-            const paidIso = `${paidDate.getFullYear()}-${String(paidDate.getMonth() + 1).padStart(2, "0")}-${String(paidDate.getDate()).padStart(2, "0")}`;
-            if (paidIso === todayIso) acc.todayPaymentsCount++;
-          }
-          if (p.status === "paid") {
-            acc.totalRevenue += Number(p.paid_amount ?? 0);
-            acc.paidPayments.push(p);
-          }
-          acc.statusCounts[p.status] = (acc.statusCounts[p.status] ?? 0) + 1;
-          return acc;
-        },
-        {
-          dueSoonCount: 0,
-          overdueCount: 0,
-          pendingCount: 0,
-          todayPaymentsCount: 0,
-          totalRevenue: 0,
-          paidPayments: [] as NonNullable<typeof payments>,
-          statusCounts: {} as Record<string, number>,
-        },
-      ),
-    [payments, todayIso],
-  );
+  const totalRevenue = Number(finance?.cards.total_revenue.value ?? 0);
+  const pendingCount = finance?.cards.pending_payments.count ?? 0;
+  const overdueCount = finance?.cards.overdue_payments.count ?? 0;
+  const todayPaymentsCount = today?.cards.collected_in_range.count ?? 0;
+  const recentPayments = recent?.data ?? [];
 
-  const recentPayments = paidPayments.slice(0, 5);
   const recentStudents = useMemo(
     () => [...(students ?? [])].sort((a, b) => new Date(b.enrollment_date).getTime() - new Date(a.enrollment_date).getTime()).slice(0, 5),
     [students],
   );
 
-  const revenueByMonth = useMemo(() => {
-    const months: Record<string, number> = {};
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      months[key] = 0;
-    }
-    paidPayments.forEach((p) => {
-      if (months[p.period] !== undefined) {
-        months[p.period] += Number(p.paid_amount ?? 0);
-      }
-    });
-    return Object.entries(months).map(([month, revenue]) => {
-      const [y, m] = month.split("-");
-      const label = new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString("en-US", { month: "short" });
-      return { month: label, revenue };
-    });
-  }, [paidPayments]);
+  const revenueByMonth = useMemo(
+    () =>
+      (revenue?.points ?? []).slice(-6).map((point) => {
+        const [year, month] = point.bucket.split("-");
+        return {
+          month: new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", { month: "short" }),
+          revenue: Number(point.revenue),
+        };
+      }),
+    [revenue],
+  );
 
   const paymentsByStatus = useMemo(
-    () => ["paid", "due_soon", "not_paid", "overdue"].map((status) => ({ status, count: statusCounts[status] ?? 0 })),
-    [statusCounts],
+    () => (statusSlices ?? []).map((slice) => ({ status: slice.status, count: slice.count })),
+    [statusSlices],
+  );
+
+  // Drives the "due soon" banner. Taken from the same distribution the chart
+  // shows, so the two can never disagree.
+  const dueSoonCount = useMemo(
+    () => (statusSlices ?? []).find((slice) => slice.status === "due_soon")?.count ?? 0,
+    [statusSlices],
   );
 
   const studentsByField = useMemo(() => {
     const fieldMap: Record<string, number> = {};
     students?.forEach((s) => {
-      const fieldName = s.group?.level?.professor?.field?.name ?? "Unknown";
+      const fieldName = s.group?.professor?.field?.name ?? "Unknown";
       fieldMap[fieldName] = (fieldMap[fieldName] ?? 0) + 1;
     });
     return Object.entries(fieldMap).map(([field, count]) => ({ field, count }));
   }, [students]);
 
-  const isLoading = studentsLoading || paymentsLoading;
+  const isLoading = studentsLoading || financeLoading;
 
   return (
     <div className="space-y-6">
@@ -147,18 +133,18 @@ export default function DashboardPage() {
             </div>
           </div>
         </Link>
-        <Link href="/payments" className="card hover:shadow-hover transition-shadow group">
+        <Link href="/financial/payments" className="card hover:shadow-hover transition-shadow group">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-card bg-gold-50 dark:bg-gold/15 flex items-center justify-center text-gold-700 dark:text-gold-400 group-hover:bg-gold group-hover:text-white transition-colors">
               <CircleDollarSign size={24} />
             </div>
             <div>
-              <p className="text-sm font-medium text-text-primary">{t("nav.payments")}</p>
+              <p className="text-sm font-medium text-text-primary">{t("nav.studentPayments")}</p>
               <p className="text-xs text-text-secondary">{t("dashboard.monthlyRevenue")}: {formatCurrency(totalRevenue)}</p>
             </div>
           </div>
         </Link>
-        <Link href="/fields" className="card hover:shadow-hover transition-shadow group">
+        <Link href="/hierarchy" className="card hover:shadow-hover transition-shadow group">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-card bg-sky-50 dark:bg-sky/15 flex items-center justify-center text-sky-600 dark:text-sky-400 group-hover:bg-sky-500 group-hover:text-white transition-colors">
               <BookOpen size={24} />
@@ -214,7 +200,7 @@ export default function DashboardPage() {
               <CircleDollarSign size={18} className="text-primary" />
               {t("dashboard.recentPayments")}
             </h2>
-            <Link href="/payments" className="text-xs text-primary hover:text-primary-600 flex items-center gap-1">
+            <Link href="/financial/payments" className="text-xs text-primary hover:text-primary-600 flex items-center gap-1">
               {t("dashboard.viewAll")} <ArrowUpRight size={12} />
             </Link>
           </div>
@@ -256,7 +242,7 @@ export default function DashboardPage() {
               <TrendingUp size={18} className="text-primary" />
               {t("dashboard.latestEnrollments")}
             </h2>
-            <Link href="/fields" className="text-xs text-primary hover:text-primary-600 flex items-center gap-1">
+            <Link href="/hierarchy" className="text-xs text-primary hover:text-primary-600 flex items-center gap-1">
               {t("dashboard.viewAll")} <ArrowUpRight size={12} />
             </Link>
           </div>

@@ -53,6 +53,7 @@ export function ConfirmDeleteDialog({
   onClose,
   error,
   isDeleting,
+  message,
 }: {
   entityName: string;
   onConfirm: () => void;
@@ -61,6 +62,8 @@ export function ConfirmDeleteDialog({
   /** Server-side refusal to show in place — e.g. a student with settled payments. */
   error?: string;
   isDeleting?: boolean;
+  /** Custom body text; defaults to "cannot be undone" when omitted. */
+  message?: string;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -96,7 +99,7 @@ export function ConfirmDeleteDialog({
           <p id="confirm-delete-body" role="alert" className="mb-6 text-sm text-danger">{error}</p>
         ) : (
           <p id="confirm-delete-body" className="mb-6 text-sm text-text-secondary">
-            Are you sure? This action cannot be undone.
+            {message ?? "Are you sure? This action cannot be undone."}
           </p>
         )}
         <div className="flex justify-end gap-3">

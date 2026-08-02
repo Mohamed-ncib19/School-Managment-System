@@ -38,22 +38,19 @@ export function useProfessors(fieldId?: string, options?: Omit<UseQueryOptions<P
   });
 }
 
-export function useLevels(profId?: string, options?: Omit<UseQueryOptions<Level[]>, "queryKey" | "queryFn">) {
+export function useLevels(options?: Omit<UseQueryOptions<Level[]>, "queryKey" | "queryFn">) {
   return useQuery({
-    queryKey: ["levels", profId],
-    queryFn: async () => {
-      const params = profId ? { profId } : {};
-      return ApiClient.get<Level[]>("/levels", { params });
-    },
+    queryKey: ["levels"],
+    queryFn: async () => ApiClient.get<Level[]>("/levels"),
     ...options,
   });
 }
 
-export function useGroups(levelId?: string, options?: Omit<UseQueryOptions<Group[]>, "queryKey" | "queryFn">) {
+export function useGroups(profId?: string, options?: Omit<UseQueryOptions<Group[]>, "queryKey" | "queryFn">) {
   return useQuery({
-    queryKey: ["groups", levelId],
+    queryKey: ["groups", profId],
     queryFn: async () => {
-      const params = levelId ? { levelId } : {};
+      const params = profId ? { profId } : {};
       return ApiClient.get<Group[]>("/groups", { params });
     },
     ...options,

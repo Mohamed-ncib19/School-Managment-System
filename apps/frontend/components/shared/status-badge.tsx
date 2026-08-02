@@ -10,6 +10,8 @@ const PAYMENT_STATUS_CONFIG: Record<PaymentStatus, { labelKey: string; icon: Rea
   due_soon: { labelKey: "statusBadge.dueSoon", icon: <AlarmClock size={12} aria-hidden="true" /> },
   not_paid: { labelKey: "statusBadge.pending", icon: <Circle size={12} aria-hidden="true" /> },
   overdue: { labelKey: "statusBadge.overdue", icon: <AlertTriangle size={12} aria-hidden="true" /> },
+  partially_paid: { labelKey: "statusBadge.partial", icon: <Circle size={12} aria-hidden="true" /> },
+  cancelled: { labelKey: "statusBadge.cancelled", icon: <XCircle size={12} aria-hidden="true" /> },
 };
 
 const STUDENT_STATUS_CONFIG: Record<StudentStatus, { labelKey: string; icon: React.ReactNode; color: string }> = {
@@ -20,8 +22,14 @@ const STUDENT_STATUS_CONFIG: Record<StudentStatus, { labelKey: string; icon: Rea
 
 type StatusType = PaymentStatus | StudentStatus;
 
+/**
+ * Derived from the config rather than a hand-written list. The list used to name
+ * only four of the six payment statuses, so `partially_paid` and `cancelled`
+ * fell through to the student branch and rendered as a green "Active" badge —
+ * a cancelled invoice looked settled.
+ */
 function isPaymentStatus(status: StatusType): status is PaymentStatus {
-  return ["paid", "due_soon", "not_paid", "overdue"].includes(status);
+  return Object.prototype.hasOwnProperty.call(PAYMENT_STATUS_CONFIG, status);
 }
 
 export function StatusBadge({ status }: { status: StatusType }) {
@@ -37,7 +45,7 @@ export function StatusBadge({ status }: { status: StatusType }) {
           getPaymentStatusColorLight(status),
         )}
         role="status"
-        aria-label={`Payment status: ${label}`}
+        aria-label={t("statusBadge.paymentStatusLabel", "Payment status: {label}").replace("{label}", label)}
       >
         {config.icon}
         {label}
@@ -54,7 +62,7 @@ export function StatusBadge({ status }: { status: StatusType }) {
         config.color,
       )}
       role="status"
-      aria-label={`Student status: ${label}`}
+      aria-label={t("statusBadge.studentStatusLabel", "Student status: {label}").replace("{label}", label)}
     >
       {config.icon}
       {label}

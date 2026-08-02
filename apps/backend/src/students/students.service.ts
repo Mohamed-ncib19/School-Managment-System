@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
+import { normalizeTunisianPhone } from "../common/phone.util";
 
 @Injectable()
 export class StudentsService {
@@ -24,18 +25,71 @@ export class StudentsService {
     return parsed;
   }
 
-  /** Parent chain each student row carries for display. */
+  /**
+   * Normalises the three payload shapes the create/update endpoints accept
+   * into a list of enrollments: rich `assignments` (with per-slot fee), plain
+   * `group_ids`, or the legacy singular `group_id`. Throws when nothing is
+   * usable, and dedupes so the same group cannot be enrolled twice.
+   */
+  private resolveEnrollments(dto: {
+    group_id?: string;
+    group_ids?: string[];
+    assignments?: Array<{ group_id: string; fee?: number }>;
+  }): Array<{ group_id: string; fee?: number }> {
+    const provided = dto.assignments?.length
+      ? dto.assignments
+      : dto.group_ids?.length
+        ? dto.group_ids.map((group_id) => ({ group_id }))
+        : dto.group_id
+          ? [{ group_id: dto.group_id }]
+          : [];
+    if (provided.length === 0) {
+      throw new BadRequestException("A student must be assigned to at least one group");
+    }
+    const seen = new Set<string>();
+    return provided.filter((a) => {
+      if (!a.group_id || seen.has(a.group_id)) return false;
+      seen.add(a.group_id);
+      return true;
+    });
+  }
+
+  /** Parent chain each student row carries for display: group -> professor -> field -> level. */
   private static readonly HIERARCHY_INCLUDE = {
     group: {
       include: {
-        level: {
+        professor: {
           include: {
-            professor: {
-              include: { field: true },
+            field: {
+              include: { level: true },
             },
           },
         },
       },
+    },
+  } as const;
+
+  /**
+   * Every enrollment of a student, with the same full chain as the primary
+   * group. A student can be registered in several groups (different fields of
+   * the same level, for example); `group_id` stays the primary for billing.
+   */
+  private static readonly ASSIGNMENTS_INCLUDE = {
+    assignments: {
+      include: {
+        group: {
+          include: {
+            professor: {
+              include: {
+                field: {
+                  include: { level: true },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { created_at: "asc" as const },
     },
   } as const;
 
@@ -58,7 +112,7 @@ export class StudentsService {
     const { groupId, page, limit = 25, search, status } = params;
 
     const where: any = {};
-    if (groupId) where.group_id = groupId;
+    if (groupId) where.assignments = { some: { group_id: groupId } };
     if (status) where.status = status;
     if (search?.trim()) {
       const term = search.trim();
@@ -74,7 +128,7 @@ export class StudentsService {
     if (!page) {
       return this.prisma.students.findMany({
         where,
-        include: StudentsService.HIERARCHY_INCLUDE,
+        include: { ...StudentsService.HIERARCHY_INCLUDE, ...StudentsService.ASSIGNMENTS_INCLUDE },
         orderBy: { created_at: "desc" },
       });
     }
@@ -83,7 +137,7 @@ export class StudentsService {
     const [data, total] = await Promise.all([
       this.prisma.students.findMany({
         where,
-        include: StudentsService.HIERARCHY_INCLUDE,
+        include: { ...StudentsService.HIERARCHY_INCLUDE, ...StudentsService.ASSIGNMENTS_INCLUDE },
         orderBy: { created_at: "desc" },
         skip: (Math.max(1, page) - 1) * take,
         take,
@@ -108,33 +162,56 @@ export class StudentsService {
   async getStudent(id: string) {
     const student = await this.prisma.students.findUnique({
       where: { id },
-      include: { ...StudentsService.HIERARCHY_INCLUDE, payments: true },
+      include: {
+        ...StudentsService.HIERARCHY_INCLUDE,
+        ...StudentsService.ASSIGNMENTS_INCLUDE,
+        payments: true,
+      },
     });
     if (!student) throw new NotFoundException(`Student ${id} not found`);
     return student;
   }
 
   async createStudent(dto: {
-    group_id: string;
+    group_id?: string;
+    group_ids?: string[];
+    assignments?: Array<{ group_id: string; fee?: number }>;
     first_name: string;
     last_name: string;
     phone: string;
     parent_phone?: string;
     email?: string;
+    color?: string;
     enrollment_date: Date | string;
     monthly_fee: number;
   }, userId: string) {
+    const phone = normalizeTunisianPhone(dto.phone);
+    if (!phone) throw new BadRequestException("Student phone must be 8 digits, e.g. +216 22 123 456");
+    const parentPhone = dto.parent_phone
+      ? normalizeTunisianPhone(dto.parent_phone)
+      : undefined;
+    if (dto.parent_phone && !parentPhone) {
+      throw new BadRequestException("Parent phone must be 8 digits, e.g. +216 22 123 456");
+    }
+    const enrollments = this.resolveEnrollments(dto);
     const enrollmentDate = this.parseDate(dto.enrollment_date);
     const student = await this.prisma.students.create({
       data: {
-        group_id: dto.group_id,
+        group_id: enrollments[0].group_id,
         first_name: dto.first_name,
         last_name: dto.last_name,
-        phone: dto.phone,
-        parent_phone: dto.parent_phone,
+        phone,
+        parent_phone: parentPhone,
         email: dto.email,
+        color: dto.color,
         enrollment_date: enrollmentDate,
         monthly_fee: dto.monthly_fee,
+        assignments: {
+          create: enrollments.map(({ group_id, fee }) => ({
+            group_id,
+            fee: fee ?? dto.monthly_fee,
+          })),
+        },
       },
       include: { group: true },
     });
@@ -150,6 +227,7 @@ export class StudentsService {
         phone: student.phone,
         parent_phone: student.parent_phone,
         email: student.email,
+        color: student.color,
         group_id: student.group_id,
         monthly_fee: student.monthly_fee,
         enrollment_date: student.enrollment_date,
@@ -165,20 +243,45 @@ export class StudentsService {
     phone?: string;
     parent_phone?: string;
     email?: string;
+    color?: string;
     enrollment_date?: Date | string;
     monthly_fee?: number;
     status?: string;
+    group_ids?: string[];
+    assignments?: Array<{ group_id: string; fee?: number }>;
   }, userId: string) {
     const before = await this.getStudent(id);
     const data: any = {};
     if (dto.first_name !== undefined) data.first_name = dto.first_name;
     if (dto.last_name !== undefined) data.last_name = dto.last_name;
-    if (dto.phone !== undefined) data.phone = dto.phone;
-    if (dto.parent_phone !== undefined) data.parent_phone = dto.parent_phone;
+    if (dto.phone !== undefined) {
+      const phone = normalizeTunisianPhone(dto.phone);
+      if (!phone) throw new BadRequestException("Student phone must be 8 digits, e.g. +216 22 123 456");
+      data.phone = phone;
+    }
+    if (dto.parent_phone !== undefined) {
+      const parentPhone = dto.parent_phone ? normalizeTunisianPhone(dto.parent_phone) : null;
+      if (dto.parent_phone && !parentPhone) {
+        throw new BadRequestException("Parent phone must be 8 digits, e.g. +216 22 123 456");
+      }
+      data.parent_phone = parentPhone;
+    }
     if (dto.email !== undefined) data.email = dto.email;
+    if (dto.color !== undefined) data.color = dto.color;
     if (dto.enrollment_date !== undefined) data.enrollment_date = this.parseDate(dto.enrollment_date);
     if (dto.monthly_fee !== undefined) data.monthly_fee = dto.monthly_fee;
     if (dto.status !== undefined) data.status = dto.status;
+    if (dto.assignments !== undefined || dto.group_ids !== undefined) {
+      const enrollments = this.resolveEnrollments(dto);
+      data.group_id = enrollments[0].group_id;
+      data.assignments = {
+        deleteMany: {},
+        create: enrollments.map(({ group_id, fee }) => ({
+          group_id,
+          fee: fee ?? dto.monthly_fee ?? before.monthly_fee,
+        })),
+      };
+    }
 
     const updated = await this.prisma.students.update({ where: { id }, data });
 
@@ -221,7 +324,13 @@ export class StudentsService {
 
     const updated = await this.prisma.students.update({
       where: { id: studentId },
-      data: { group_id: targetGroupId },
+      data: {
+        group_id: targetGroupId,
+        assignments: {
+          deleteMany: {},
+          create: [{ group_id: targetGroupId }],
+        },
+      },
     });
 
     await this.auditService.record({
@@ -245,12 +354,18 @@ export class StudentsService {
    *
    * Settled payments are financial records and aren't thrown away: a student who
    * has paid is retired by setting their status to `withdrawn` instead.
+   *
+   * The test is whether the ledger holds anything for them, not whether an
+   * invoice reads `paid`. A part-paid invoice sits at `partially_paid`, and
+   * checking the status alone would let a student with money against their name
+   * be deleted — taking the transactions with them through the cascade, and the
+   * collection out of the academy's revenue.
    */
   async deleteStudent(studentId: string, userId: string) {
     const student = await this.getStudent(studentId);
 
-    const settled = await this.prisma.student_payments.count({
-      where: { student_id: studentId, status: "paid" },
+    const settled = await this.prisma.payment_transactions.count({
+      where: { payment: { student_id: studentId } },
     });
     if (settled > 0) {
       throw new BadRequestException(

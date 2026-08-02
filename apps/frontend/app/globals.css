@@ -13,6 +13,48 @@
     --color-text-primary: #1F2937;
     --color-text-secondary: #6B7280;
     --font-poppins: "Poppins", "Manrope", "Nunito", ui-sans-serif, system-ui, sans-serif;
+
+    /* Chart palette.
+     *
+     * Defined here rather than in components because charts render SVG, where a
+     * Tailwind class cannot reach the `fill` and `stroke` attributes — without
+     * these, every chart would hard-code hex and the design tokens would stop
+     * being the single source of colour.
+     *
+     * The five categorical slots are a fixed order, assigned by series identity
+     * and never cycled or reassigned by rank: filtering a chart down to three
+     * series must not repaint the survivors. Slot 1 is the brand primary.
+     *
+     * Both modes were validated against their own surface (#FFFFFF light,
+     * #1E293B dark) for the lightness band, chroma floor, colour-vision
+     * separation and contrast. The dark steps are the same five hues re-stepped
+     * for the dark surface, not an automatic flip. Light slots 3 and 4 sit below
+     * 3:1 on white by design — every chart using them ships direct labels and a
+     * table view, which is the documented relief. */
+    --chart-1: #264EAE;
+    --chart-2: #EB6834;
+    --chart-3: #1BAF7A;
+    --chart-4: #EDA100;
+    --chart-5: #7C3AED;
+
+    /* Single-hue ramp for magnitude (breakdown bars, heat cells). */
+    --chart-seq-100: #D1DCF5;
+    --chart-seq-300: #7597E0;
+    --chart-seq-500: #264EAE;
+    --chart-seq-700: #193066;
+
+    /* Payment states. Distinct from the categorical slots so a status colour
+     * never impersonates a series; always paired with a label, never alone. */
+    --chart-paid: #15803D;
+    --chart-partial: #B45309;
+    --chart-pending: #6B7280;
+    --chart-overdue: #B91C1C;
+    --chart-cancelled: #9CA3AF;
+
+    /* Chart chrome. */
+    --chart-grid: #E5E7EB;
+    --chart-axis: #9CA3AF;
+    --chart-surface: #FFFFFF;
   }
 
   .dark {
@@ -21,6 +63,27 @@
     --color-border: #334155;
     --color-text-primary: #F1F5F9;
     --color-text-secondary: #94A3B8;
+
+    --chart-1: #3987E5;
+    --chart-2: #D95926;
+    --chart-3: #199E70;
+    --chart-4: #C98500;
+    --chart-5: #9085E9;
+
+    --chart-seq-100: #193066;
+    --chart-seq-300: #4774D6;
+    --chart-seq-500: #7597E0;
+    --chart-seq-700: #A3B9EB;
+
+    --chart-paid: #4ADE80;
+    --chart-partial: #FBBF24;
+    --chart-pending: #94A3B8;
+    --chart-overdue: #F87171;
+    --chart-cancelled: #64748B;
+
+    --chart-grid: #334155;
+    --chart-axis: #64748B;
+    --chart-surface: #1E293B;
   }
 
   * {

@@ -5,15 +5,17 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recha
 const STATUS_COLORS: Record<string, string> = {
   paid: "#22C55E",
   due_soon: "#F5B940",
+  partially_paid: "#F5B940",
   not_paid: "#9CA3AF",
-  overdue: "#EF4444",
+  cancelled: "#9CA3AF",
 };
 
 const STATUS_LABELS: Record<string, string> = {
   paid: "Paid",
   due_soon: "Due Soon",
+  partially_paid: "Partially Paid",
   not_paid: "Not Paid",
-  overdue: "Overdue",
+  cancelled: "Cancelled",
 };
 
 interface PaymentsByStatusChartProps {

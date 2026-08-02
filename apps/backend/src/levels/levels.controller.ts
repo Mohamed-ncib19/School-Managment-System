@@ -6,11 +6,11 @@ import {
   Put,
   Delete,
   Param,
-  Query,
   Req,
   UseGuards,
   ParseUUIDPipe,
 } from "@nestjs/common";
+import { ApiOperation } from "@nestjs/swagger";
 import { LevelsService } from "./levels.service";
 import { CreateLevelDto, UpdateLevelDto } from "./dto/level.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -23,8 +23,15 @@ export class LevelsController {
   constructor(private readonly levelsService: LevelsService) {}
 
   @Get()
-  async findAll(@Query("profId") profId?: string) {
-    return this.levelsService.listLevels(profId);
+  async findAll() {
+    return this.levelsService.listLevels();
+  }
+
+  // Declared before @Get(":id"): the literal "deleted" must win over the UUID param.
+  @Get("deleted")
+  @Roles("super_admin")
+  async findDeleted() {
+    return this.levelsService.listDeletedLevels();
   }
 
   @Get(":id")
@@ -58,5 +65,12 @@ export class LevelsController {
   @Roles("super_admin")
   async restore(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
     return this.levelsService.restoreLevel(id, req.user.id);
+  }
+
+  @Delete(":id/hard")
+  @Roles("super_admin")
+  @ApiOperation({ summary: "Permanently delete an archived level and everything beneath it" })
+  async hardDelete(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.levelsService.hardDeleteLevel(id, req.user.id);
   }
 }

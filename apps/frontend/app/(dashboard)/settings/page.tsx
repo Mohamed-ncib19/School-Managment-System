@@ -1,18 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ChevronRight, User, Lock, Globe, Save, Eye, EyeOff, Database, Download, RefreshCw, Trash2, Calendar } from "lucide-react";
+import { ChevronRight, User, Lock, Globe, Save, Eye, EyeOff, Database, Download, RefreshCw, Trash2, Calendar, Network, ImagePlus, Upload } from "lucide-react";
 import { usersApi } from "@/lib/api/users.api";
 import { authApi } from "@/lib/api/auth.api";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { useTranslation } from "@/lib/i18n/context";
 import { FormButton } from "@/components/forms/form-helpers";
 import { useBackups, useCreateBackup, useRestoreBackup } from "@/hooks/use-backups";
+import { useFinancialSettings, useUploadLogo, useRemoveLogo } from "@/hooks/use-financial";
+import { apiBaseUrl } from "@/lib/api/client";
 
 const profileSchema = z.object({
   full_name: z.string().min(1, "Name is required"),
@@ -47,11 +49,20 @@ export default function SettingsPage() {
     queryFn: usersApi.me,
   });
 
-  const { data: backups, isLoading: backupsLoading } = useBackups();
-  const createBackupMutation = useCreateBackup();
-  const restoreBackupMutation = useRestoreBackup();
+const { data: backups, isLoading: backupsLoading } = useBackups();
+const createBackupMutation = useCreateBackup();
+const restoreBackupMutation = useRestoreBackup();
 
-  const profileForm = useForm<ProfileForm>({
+const { data: settings } = useFinancialSettings();
+const uploadLogo = useUploadLogo();
+const removeLogo = useRemoveLogo();
+const fileInputRef = useRef<HTMLInputElement>(null);
+
+const logoUrl = settings?.logo_path
+  ? `${apiBaseUrl()}/financial/settings/logo?v=${new Date(settings.updated_at).getTime()}`
+  : null;
+
+const profileForm = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
     values: {
       full_name: profile?.full_name ?? user?.full_name ?? "",
@@ -138,6 +149,81 @@ export default function SettingsPage() {
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Branding Section */}
+        <div className="xl:col-span-2">
+          <div className="card">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
+                <ImagePlus size={20} />
+              </div>
+              <div>
+                <h3 className="text-h4 font-bold text-text-primary">{t("settings.brandingTitle", "Branding")}</h3>
+                <p className="text-xs text-text-secondary">{t("settings.brandingDescription", "Upload a logo used in printable documents, the sidebar, and as the browser favicon.")}</p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-4">
+              <div className="h-20 w-20 shrink-0 rounded-btn border border-border bg-background flex items-center justify-center overflow-hidden">
+                {logoUrl ? (
+                  <img src={logoUrl} alt={settings?.academy_name ?? "Academy"} className="h-full w-full object-contain" />
+                ) : (
+                  <ImagePlus size={24} className="text-text-secondary" />
+                )}
+              </div>
+
+              <div className="flex-1 space-y-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setError(null);
+                    uploadLogo.mutate(file, {
+                      onError: (err) => setError((err as Error)?.message || t("common.somethingWentWrong", "Something went wrong")),
+                    });
+                    e.target.value = "";
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadLogo.isPending}
+                    className="btn btn-primary text-xs"
+                  >
+                    {uploadLogo.isPending ? <Upload size={13} className="animate-pulse" aria-hidden="true" /> : <Upload size={13} aria-hidden="true" />}
+                    {uploadLogo.isPending
+                      ? t("settings.uploading", "Uploading…")
+                      : t("settings.uploadLogo", "Upload logo")}
+                  </button>
+                  {logoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        removeLogo.mutate(undefined, {
+                          onError: (err) => setError((err as Error)?.message || t("common.somethingWentWrong", "Something went wrong")),
+                        });
+                      }}
+                      disabled={removeLogo.isPending}
+                      className="btn btn-secondary text-xs"
+                    >
+                      <Trash2 size={13} aria-hidden="true" />
+                      {t("settings.removeLogo", "Remove")}
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-text-secondary">
+                  {t("settings.logoFormat", "PNG, JPG or WebP — up to 2 MB. The file is served from the backend; the old one is deleted on replace.")}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Profile Section */}
         <div className="xl:col-span-2 space-y-6">
           <div className="card">
@@ -326,6 +412,25 @@ export default function SettingsPage() {
                 <p className="font-medium text-text-primary">{profile?.full_name ?? user?.full_name ?? "-"}</p>
               </div>
             </div>
+          </div>
+
+          {/* Navigation Hierarchy */}
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
+                <Network size={20} />
+              </div>
+              <div>
+                <h3 className="text-h4 font-bold text-text-primary">{t("hierarchy.title", "Navigation Hierarchy")}</h3>
+                <p className="text-xs text-text-secondary">{t("hierarchy.subtitle", "Configure hierarchy navigation order")}</p>
+              </div>
+            </div>
+            <Link
+              href="/settings/hierarchy"
+              className="btn btn-primary w-full text-xs"
+            >
+              <Network size={14} /> {t("hierarchy.builder", "Hierarchy Builder")}
+            </Link>
           </div>
 
           {/* Backup & Restore */}

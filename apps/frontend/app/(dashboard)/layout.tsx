@@ -2,6 +2,7 @@
 
 import AuthGuard from "@/components/shared/auth-guard";
 import DashboardShell from "@/components/shared/dashboard-shell";
+import { CurrencyConfigProvider } from "@/components/shared/currency-config-provider";
 
 /**
  * The shell lives here rather than inside each page so the sidebar and navbar
@@ -10,7 +11,9 @@ import DashboardShell from "@/components/shared/dashboard-shell";
 export default function DashboardGroupLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
-      <DashboardShell>{children}</DashboardShell>
+      <CurrencyConfigProvider>
+        <DashboardShell>{children}</DashboardShell>
+      </CurrencyConfigProvider>
     </AuthGuard>
   );
 }

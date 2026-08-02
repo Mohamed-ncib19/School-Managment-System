@@ -18,6 +18,7 @@ coverage
 backups/
 logs/
 .postgres/
+uploads/
 
 .vscode
 .idea

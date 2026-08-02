@@ -5,8 +5,6 @@ import {
   Param,
   Body,
   UseGuards,
-  ParseUUIDPipe,
-  NotFoundException,
   BadRequestException,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiOperation } from "@nestjs/swagger";

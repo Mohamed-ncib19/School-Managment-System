@@ -115,12 +115,15 @@ export function buildStudentTree(students: Student[]): TreeNode[] {
   const rootNodes: TreeNode[] = [];
 
   students.forEach((student) => {
-    const fieldName = student.group?.level?.professor?.field?.name ?? "Unknown Field";
-    const fieldId = student.group?.level?.professor?.field?.id ?? "unknown-field";
-    const profName = student.group?.level?.professor?.full_name ?? "Unknown Professor";
-    const profId = student.group?.level?.professor?.id ?? "unknown-prof";
-    const levelName = student.group?.level?.name ?? "Unknown Level";
-    const levelId = student.group?.level?.id ?? "unknown-level";
+    const prof = student.group?.professor;
+    const field = prof?.field;
+    const level = field?.level;
+    const fieldId = field?.id ?? "unknown-field";
+    const fieldName = field?.name ?? "Unknown Field";
+    const profId = prof?.id ?? "unknown-prof";
+    const profName = prof?.full_name ?? "Unknown Professor";
+    const levelId = level?.id ?? "unknown-level";
+    const levelName = level?.name ?? "Unknown Level";
     const groupName = student.group?.name ?? "Unknown Group";
     const groupId = student.group?.id ?? "unknown-group";
 
@@ -150,7 +153,7 @@ export function buildStudentTree(students: Student[]): TreeNode[] {
   fieldMap.forEach((profMap, fieldId) => {
     const fieldNode: TreeNode = {
       id: fieldId,
-      name: profMap.values().next().value?.values().next().value?.values().next().value?.children?.[0]?.student?.group?.level?.professor?.field?.name ?? "Field",
+      name: profMap.values().next().value?.values().next().value?.values().next().value?.children?.[0]?.student?.group?.professor?.field?.name ?? "Field",
       type: "field",
       children: [],
     };
@@ -158,7 +161,7 @@ export function buildStudentTree(students: Student[]): TreeNode[] {
     profMap.forEach((levelMap, profId) => {
       const profNode: TreeNode = {
         id: profId,
-        name: levelMap.values().next().value?.values().next().value?.children?.[0]?.student?.group?.level?.professor?.full_name ?? "Professor",
+        name: levelMap.values().next().value?.values().next().value?.children?.[0]?.student?.group?.professor?.full_name ?? "Professor",
         type: "professor",
         children: [],
       };
@@ -166,7 +169,7 @@ export function buildStudentTree(students: Student[]): TreeNode[] {
       levelMap.forEach((groupMap, levelId) => {
         const levelNode: TreeNode = {
           id: levelId,
-          name: groupMap.values().next().value?.children?.[0]?.student?.group?.level?.name ?? "Level",
+          name: groupMap.values().next().value?.children?.[0]?.student?.group?.professor?.field?.level?.name ?? "Level",
           type: "level",
           children: Array.from(groupMap.values()),
         };
@@ -193,36 +196,50 @@ export function buildFieldsTree(fields: Field[], professors: Professor[], levels
     profByField.set(p.field_id, arr);
   });
 
-  const levelByProf = new Map<string, Level[]>();
-  levels.forEach((l) => {
-    const arr = levelByProf.get(l.prof_id) ?? [];
-    arr.push(l);
-    levelByProf.set(l.prof_id, arr);
-  });
-
-  const groupByLevel = new Map<string, Group[]>();
+  const groupByProf = new Map<string, Group[]>();
   groups.forEach((g) => {
-    const arr = groupByLevel.get(g.level_id) ?? [];
+    const arr = groupByProf.get(g.prof_id) ?? [];
     arr.push(g);
-    groupByLevel.set(g.level_id, arr);
+    groupByProf.set(g.prof_id, arr);
   });
 
   const studentCountByGroup = new Map<string, number>();
-  students.forEach((s) => {
-    studentCountByGroup.set(s.group_id, (studentCountByGroup.get(s.group_id) ?? 0) + 1);
-  });
+  students
+    .filter((s) => s.status === "active")
+    .forEach((s) => {
+      // Roster = every enrollment, not the legacy primary group: a student in
+      // several groups counts toward each of them.
+      const enrolled = s.assignments?.length ? s.assignments.map((a) => a.group_id) : [s.group_id];
+      enrolled.forEach((gid) => {
+        studentCountByGroup.set(gid, (studentCountByGroup.get(gid) ?? 0) + 1);
+      });
+    });
 
   return fields.map((field) => {
     const fieldProfs = profByField.get(field.id) ?? [];
     const children: TreeNode[] = fieldProfs.map((prof) => {
-      const profLevels = levelByProf.get(prof.id) ?? [];
+      const profGroups = groupByProf.get(prof.id) ?? [];
+      const levelIds = new Set<string>();
+      profGroups.forEach((g) => {
+        const levelId = g.professor?.field?.level?.id;
+        if (levelId) levelIds.add(levelId);
+      });
+
+      const seenLevelIds = new Set<string>();
+      const profLevels = levels.filter((l) => {
+        if (seenLevelIds.has(l.id)) return false;
+        const levelMatches = levelIds.has(l.id);
+        if (levelMatches) seenLevelIds.add(l.id);
+        return levelMatches;
+      });
+
       const levelNodes: TreeNode[] = profLevels.map((level) => {
-        const levelGroups = groupByLevel.get(level.id) ?? [];
+        const levelGroups = profGroups.filter((g) => g.professor?.field?.level?.id === level.id);
         const groupNodes: TreeNode[] = levelGroups.map((group) => ({
           id: group.id,
           name: group.name,
           type: "group" as const,
-          meta: { capacity: group.capacity, schedule_notes: group.schedule_notes, student_count: studentCountByGroup.get(group.id) ?? 0, field_id: field.id, prof_id: prof.id, level_id: level.id },
+          meta: { capacity: group.capacity, schedule_notes: group.schedule_notes, student_count: studentCountByGroup.get(group.id) ?? 0, field_id: field.id, prof_id: prof.id },
           children: [],
         }));
         return {
@@ -233,6 +250,7 @@ export function buildFieldsTree(fields: Field[], professors: Professor[], levels
           children: groupNodes,
         };
       });
+
       return {
         id: prof.id,
         name: prof.full_name,
@@ -255,24 +273,24 @@ export function buildProfessorsTree(professors: Professor[], fields: Field[], le
   const fieldMap = new Map<string, Field>();
   fields.forEach((f) => fieldMap.set(f.id, f));
 
-  const levelByProf = new Map<string, Level[]>();
-  levels.forEach((l) => {
-    const arr = levelByProf.get(l.prof_id) ?? [];
-    arr.push(l);
-    levelByProf.set(l.prof_id, arr);
-  });
-
-  const groupByLevel = new Map<string, Group[]>();
+  const groupByProf = new Map<string, Group[]>();
   groups.forEach((g) => {
-    const arr = groupByLevel.get(g.level_id) ?? [];
+    const arr = groupByProf.get(g.prof_id) ?? [];
     arr.push(g);
-    groupByLevel.set(g.level_id, arr);
+    groupByProf.set(g.prof_id, arr);
   });
 
   const studentCountByGroup = new Map<string, number>();
-  students.forEach((s) => {
-    studentCountByGroup.set(s.group_id, (studentCountByGroup.get(s.group_id) ?? 0) + 1);
-  });
+  students
+    .filter((s) => s.status === "active")
+    .forEach((s) => {
+      // Roster = every enrollment, not the legacy primary group: a student in
+      // several groups counts toward each of them.
+      const enrolled = s.assignments?.length ? s.assignments.map((a) => a.group_id) : [s.group_id];
+      enrolled.forEach((gid) => {
+        studentCountByGroup.set(gid, (studentCountByGroup.get(gid) ?? 0) + 1);
+      });
+    });
 
   const rootNodes: TreeNode[] = [];
   const seenFields = new Set<string>();
@@ -294,11 +312,17 @@ export function buildProfessorsTree(professors: Professor[], fields: Field[], le
     const fieldNode = rootNodes.find((n) => n.id === prof.field_id);
     if (!fieldNode) return;
 
-    const profLevels = levelByProf.get(prof.id) ?? [];
+    const profGroups = groupByProf.get(prof.id) ?? [];
+    const levelIds = new Set<string>();
+    profGroups.forEach((g) => {
+      const lid = g.professor?.field?.level?.id;
+      if (lid) levelIds.add(lid);
+    });
+
     let totalGroups = 0;
     let totalStudents = 0;
-    profLevels.forEach((level) => {
-      const levelGroups = groupByLevel.get(level.id) ?? [];
+    levelIds.forEach((levelId) => {
+      const levelGroups = profGroups;
       totalGroups += levelGroups.length;
       levelGroups.forEach((g) => {
         totalStudents += studentCountByGroup.get(g.id) ?? 0;
@@ -309,7 +333,7 @@ export function buildProfessorsTree(professors: Professor[], fields: Field[], le
       id: prof.id,
       name: prof.full_name,
       type: "professor",
-      meta: { phone: prof.phone, email: prof.email, is_active: prof.is_active, levels_count: profLevels.length, groups_count: totalGroups, students_count: totalStudents, field_id: prof.field_id },
+      meta: { phone: prof.phone, email: prof.email, is_active: prof.is_active, levels_count: levelIds.size, groups_count: totalGroups, students_count: totalStudents, field_id: prof.field_id },
       children: [],
     });
   });
@@ -321,32 +345,51 @@ export function buildLevelsTree(levels: Level[], professors: Professor[], fields
   const fieldMap = new Map<string, Field>();
   fields.forEach((f) => fieldMap.set(f.id, f));
 
-  const profMap = new Map<string, Professor>();
-  professors.forEach((p) => profMap.set(p.id, p));
+  const profByField = new Map<string, Professor[]>();
+  professors.forEach((p) => {
+    const arr = profByField.get(p.field_id) ?? [];
+    arr.push(p);
+    profByField.set(p.field_id, arr);
+  });
 
-  const groupByLevel = new Map<string, Group[]>();
+  const groupByProf = new Map<string, Group[]>();
   groups.forEach((g) => {
-    const arr = groupByLevel.get(g.level_id) ?? [];
+    const arr = groupByProf.get(g.prof_id) ?? [];
     arr.push(g);
-    groupByLevel.set(g.level_id, arr);
+    groupByProf.set(g.prof_id, arr);
   });
 
   const studentCountByGroup = new Map<string, number>();
-  students.forEach((s) => {
-    studentCountByGroup.set(s.group_id, (studentCountByGroup.get(s.group_id) ?? 0) + 1);
-  });
+  students
+    .filter((s) => s.status === "active")
+    .forEach((s) => {
+      // Roster = every enrollment, not the legacy primary group: a student in
+      // several groups counts toward each of them.
+      const enrolled = s.assignments?.length ? s.assignments.map((a) => a.group_id) : [s.group_id];
+      enrolled.forEach((gid) => {
+        studentCountByGroup.set(gid, (studentCountByGroup.get(gid) ?? 0) + 1);
+      });
+    });
 
   const rootNodes: TreeNode[] = [];
   const seenFields = new Set<string>();
 
+  const levelsByField = new Map<string, Level[]>();
   levels.forEach((level) => {
-    const prof = profMap.get(level.prof_id);
-    if (!prof) return;
-    if (!seenFields.has(prof.field_id)) {
-      seenFields.add(prof.field_id);
-      const field = fieldMap.get(prof.field_id);
+    const profsForLevel = professors.filter((p) => fieldMap.has(p.field_id));
+    if (profsForLevel.length === 0) return;
+    const fieldId = profsForLevel[0].field_id;
+    if (!levelsByField.has(fieldId)) levelsByField.set(fieldId, []);
+    const arr = levelsByField.get(fieldId)!;
+    if (!arr.some((l) => l.id === level.id)) arr.push(level);
+  });
+
+  levelsByField.forEach((fieldLevels, fieldId) => {
+    if (!seenFields.has(fieldId)) {
+      seenFields.add(fieldId);
+      const field = fieldMap.get(fieldId);
       rootNodes.push({
-        id: prof.field_id,
+        id: fieldId,
         name: field?.name ?? "Unknown Field",
         type: "field",
         children: [],
@@ -354,63 +397,89 @@ export function buildLevelsTree(levels: Level[], professors: Professor[], fields
     }
   });
 
+  const fieldProfsMap = new Map<string, Professor[]>();
+  professors.forEach((p) => {
+    if (fieldMap.has(p.field_id)) {
+      const arr = fieldProfsMap.get(p.field_id) ?? [];
+      arr.push(p);
+      fieldProfsMap.set(p.field_id, arr);
+    }
+  });
+
   levels.forEach((level) => {
-    const prof = profMap.get(level.prof_id);
-    if (!prof) return;
-    const fieldNode = rootNodes.find((n) => n.id === prof.field_id);
+    const firstProf = professors.find((p) => fieldMap.has(p.field_id));
+    if (!firstProf) return;
+    const fieldId = firstProf.field_id;
+    const fieldNode = rootNodes.find((n) => n.id === fieldId);
     if (!fieldNode) return;
 
-    let profNode = fieldNode.children!.find((n) => n.id === prof.id);
+    const fieldProfs = fieldProfsMap.get(fieldId) ?? [];
+    const primaryProf = fieldProfs[0];
+    if (!primaryProf) return;
+
+    let profNode = fieldNode.children!.find((n) => n.id === primaryProf.id);
     if (!profNode) {
       profNode = {
-        id: prof.id,
-        name: prof.full_name,
-        type: "professor",
-        meta: { phone: prof.phone, email: prof.email, is_active: prof.is_active, field_id: prof.field_id },
+        id: primaryProf.id,
+        name: primaryProf.full_name,
+        type: "professor" as const,
+        meta: { phone: primaryProf.phone, email: primaryProf.email, is_active: primaryProf.is_active, field_id: fieldId },
         children: [],
       };
       fieldNode.children!.push(profNode);
     }
 
-    const levelGroups = groupByLevel.get(level.id) ?? [];
+    const levelGroups = groupByProf.get(primaryProf.id) ?? [];
     let totalStudents = 0;
     levelGroups.forEach((g) => {
       totalStudents += studentCountByGroup.get(g.id) ?? 0;
     });
 
-    profNode.children!.push({
-      id: level.id,
-      name: level.name,
-      type: "level",
-      meta: { groups_count: levelGroups.length, students_count: totalStudents, field_id: prof.field_id, prof_id: prof.id },
-      children: [],
-    });
+    if (!profNode.children!.some((n) => n.id === level.id)) {
+      profNode.children!.push({
+        id: level.id,
+        name: level.name,
+        type: "level" as const,
+        meta: { groups_count: levelGroups.length, students_count: totalStudents, field_id: fieldId, prof_id: primaryProf.id },
+        children: [],
+      });
+    }
   });
 
   return rootNodes;
 }
 
-export function buildGroupsTree(groups: Group[], levels: Level[], professors: Professor[], fields: Field[], students: Student[]): TreeNode[] {
+export function buildGroupsTree(groups: Group[], professors: Professor[], fields: Field[], students: Student[]): TreeNode[] {
   const fieldMap = new Map<string, Field>();
   fields.forEach((f) => fieldMap.set(f.id, f));
 
   const profMap = new Map<string, Professor>();
   professors.forEach((p) => profMap.set(p.id, p));
 
-  const levelMap = new Map<string, Level>();
-  levels.forEach((l) => levelMap.set(l.id, l));
+  const groupByProf = new Map<string, Group[]>();
+  groups.forEach((g) => {
+    const arr = groupByProf.get(g.prof_id) ?? [];
+    arr.push(g);
+    groupByProf.set(g.prof_id, arr);
+  });
 
   const studentCountByGroup = new Map<string, number>();
-  students.forEach((s) => {
-    studentCountByGroup.set(s.group_id, (studentCountByGroup.get(s.group_id) ?? 0) + 1);
-  });
+  students
+    .filter((s) => s.status === "active")
+    .forEach((s) => {
+      // Roster = every enrollment, not the legacy primary group: a student in
+      // several groups counts toward each of them.
+      const enrolled = s.assignments?.length ? s.assignments.map((a) => a.group_id) : [s.group_id];
+      enrolled.forEach((gid) => {
+        studentCountByGroup.set(gid, (studentCountByGroup.get(gid) ?? 0) + 1);
+      });
+    });
 
   const rootNodes: TreeNode[] = [];
   const seenFields = new Set<string>();
 
   groups.forEach((group) => {
-    const level = levelMap.get(group.level_id);
-    const prof = level ? profMap.get(level.prof_id) : undefined;
+    const prof = profMap.get(group.prof_id);
     if (!prof) return;
     if (!seenFields.has(prof.field_id)) {
       seenFields.add(prof.field_id);
@@ -424,9 +493,21 @@ export function buildGroupsTree(groups: Group[], levels: Level[], professors: Pr
     }
   });
 
+  const groupsByLevel = new Map<string, { levelId: string; levelName: string; groups: Group[] }>();
   groups.forEach((group) => {
-    const level = levelMap.get(group.level_id);
-    const prof = level ? profMap.get(level.prof_id) : undefined;
+    const prof = profMap.get(group.prof_id);
+    if (!prof) return;
+    const levelId = prof.field?.level?.id;
+    const levelName = prof.field?.level?.name ?? "Level";
+    if (!levelId) return;
+    if (!groupsByLevel.has(levelId)) {
+      groupsByLevel.set(levelId, { levelId, levelName, groups: [] });
+    }
+    groupsByLevel.get(levelId)!.groups.push(group);
+  });
+
+  groups.forEach((group) => {
+    const prof = profMap.get(group.prof_id);
     if (!prof) return;
     const fieldNode = rootNodes.find((n) => n.id === prof.field_id);
     if (!fieldNode) return;
@@ -436,19 +517,23 @@ export function buildGroupsTree(groups: Group[], levels: Level[], professors: Pr
       profNode = {
         id: prof.id,
         name: prof.full_name,
-        type: "professor",
+        type: "professor" as const,
         meta: { phone: prof.phone, email: prof.email, is_active: prof.is_active, field_id: prof.field_id },
         children: [],
       };
       fieldNode.children!.push(profNode);
     }
 
-    let levelNode = profNode.children!.find((n) => n.id === level!.id);
+    const levelId = prof.field?.level?.id;
+    const levelName = prof.field?.level?.name ?? "Level";
+    if (!levelId) return;
+
+    let levelNode = profNode.children!.find((n) => n.id === levelId);
     if (!levelNode) {
       levelNode = {
-        id: level!.id,
-        name: level!.name,
-        type: "level",
+        id: levelId,
+        name: levelName,
+        type: "level" as const,
         meta: { field_id: prof.field_id, prof_id: prof.id },
         children: [],
       };
@@ -458,8 +543,8 @@ export function buildGroupsTree(groups: Group[], levels: Level[], professors: Pr
     levelNode.children!.push({
       id: group.id,
       name: group.name,
-      type: "group",
-      meta: { capacity: group.capacity, schedule_notes: group.schedule_notes, student_count: studentCountByGroup.get(group.id) ?? 0, field_id: prof.field_id, prof_id: prof.id, level_id: level!.id },
+      type: "group" as const,
+      meta: { capacity: group.capacity, schedule_notes: group.schedule_notes, student_count: studentCountByGroup.get(group.id) ?? 0, field_id: prof.field_id, prof_id: prof.id, level_id: levelId },
       children: [],
     });
   });

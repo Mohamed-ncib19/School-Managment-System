@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -18,37 +18,60 @@ import {
   UserCog,
   CircleDollarSign,
   Upload,
+  Layers,
+  Wallet,
+  TrendingUp,
+  FileText,
+  Receipt,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { useTranslation } from "@/lib/i18n/context";
+import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
+import { useFinancialSettings } from "@/hooks/use-financial";
+import { apiBaseUrl } from "@/lib/api/client";
+
+/** The brand mark: the uploaded academy logo when set, else the bundled one. */
+function useBrandLogo(): string {
+  const { data: settings } = useFinancialSettings();
+  if (settings?.logo_path) {
+    return `${apiBaseUrl()}/financial/settings/logo?v=${new Date(settings.updated_at).getTime()}`;
+  }
+  return "/images/logo.svg";
+}
 
 const MAIN_NAV_ITEMS = [
   { href: "/dashboard", label: "nav.dashboard", icon: LayoutDashboard },
-  { href: "/students", label: "nav.students", icon: Users },
-  { href: "/payments", label: "nav.payments", icon: CircleDollarSign },
-  { href: "/import", label: "nav.import", icon: Upload },
 ];
 
+// `href`s here must match the routes under app/(dashboard)/financial exactly.
+// The dashboard is the segment's index route and the payroll screen lives at
+// /financial/professors; pointing at /financial/dashboard or /financial/payroll
+// gave two 404s in the sidebar.
+const FINANCIAL_NAV_ITEMS = [
+  { href: "/financial", label: "nav.financialDashboard", icon: TrendingUp, exact: true },
+  { href: "/financial/payments", label: "nav.studentPayments", icon: Wallet },
+  { href: "/financial/professors", label: "nav.professorPayments", icon: CircleDollarSign },
+  { href: "/financial/analytics", label: "nav.revenueAnalytics", icon: TrendingUp },
+  { href: "/financial/reports", label: "nav.financialReports", icon: FileText },
+  { href: "/financial/transactions", label: "nav.transactionsHistory", icon: Receipt },
+  { href: "/financial/settings", label: "nav.financialSettings", icon: SlidersHorizontal },
+];
+
+// Trailing block: import data comes last, just before the admin screens.
 const ADMIN_NAV_ITEMS = [
+  { href: "/import", label: "nav.import", icon: Upload },
   { href: "/audit", label: "nav.audit", icon: UserCog },
   { href: "/settings", label: "nav.settings", icon: Settings },
 ];
 
-interface HierarchyItem {
-  href: string;
-  rootHref: string;
-  label: string;
-  icon: any;
-  pattern: RegExp;
-}
-
-const HIERARCHY_ITEMS: HierarchyItem[] = [
-  { href: "/fields", rootHref: "/fields", label: "fieldsHierarchy.breadcrumbFields", icon: BookOpen, pattern: /^\/fields\/?$/ },
-  { href: "/fields/{id}/professors", rootHref: "/professors", label: "fieldsHierarchy.breadcrumbProfessors", icon: UserCheck, pattern: /^\/fields\/[^/]+\/professors\/?$/ },
-  { href: "/fields/{id}/professors/{profId}/levels", rootHref: "/levels", label: "fieldsHierarchy.breadcrumbLevels", icon: BookOpen, pattern: /^\/fields\/[^/]+\/professors\/[^/]+\/levels\/?$/ },
-  { href: "/fields/{id}/professors/{profId}/levels/{levelId}/groups", rootHref: "/groups", label: "fieldsHierarchy.breadcrumbGroups", icon: Users, pattern: /^\/fields\/[^/]+\/professors\/[^/]+\/levels\/[^/]+\/groups\/?$/ },
-  { href: "/fields/{id}/professors/{profId}/levels/{levelId}/groups/{groupId}/students", rootHref: "/students", label: "fieldsHierarchy.breadcrumbStudents", icon: Users, pattern: /^\/fields\/[^/]+\/professors\/[^/]+\/levels\/[^/]+\/groups\/[^/]+\/students\/?$/ },
-];
+const ENTITY_ICONS: Record<HierarchyEntity, any> = {
+  level: Layers,
+  field: BookOpen,
+  professor: UserCheck,
+  group: Users,
+  student: Users,
+};
 
 interface SidebarProps {
   collapsed: boolean;
@@ -61,18 +84,39 @@ function MobileOverlay({ onClick }: { onClick: () => void }) {
   return <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={onClick} />;
 }
 
-function getHierarchyLevel(pathname: string): number {
-  if (/^\/(professors|levels|groups|students)$/.test(pathname)) {
-    const map: Record<string, number> = { professors: 1, levels: 2, groups: 3, students: 4 };
-    const match = pathname.match(/^\/(professors|levels|groups|students)$/);
-    if (match) return map[match[1]];
-  }
-  for (let i = HIERARCHY_ITEMS.length - 1; i >= 0; i--) {
-    if (HIERARCHY_ITEMS[i].pattern.test(pathname)) {
-      return i;
+/**
+ * Parse hierarchy URL segments into structured data.
+ * Returns an ordered list of { type, id, name } for each entity in the path.
+ */
+function parseHierarchyPath(
+  pathname: string,
+  entityOrder: HierarchyEntity[],
+): Array<{ type: HierarchyEntity; id?: string; isLast: boolean }> {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] !== "hierarchy" || segments.length < 2) return [];
+
+  const result: Array<{ type: HierarchyEntity; id?: string; isLast: boolean }> = [];
+  const validEntities: HierarchyEntity[] = ["level", "field", "professor", "group", "student"];
+
+  for (let i = 1; i < segments.length; i++) {
+    const seg = segments[i];
+    if (validEntities.includes(seg as HierarchyEntity)) {
+      const nextSeg = segments[i + 1];
+      const hasId = nextSeg && !validEntities.includes(nextSeg as HierarchyEntity);
+      result.push({
+        type: seg as HierarchyEntity,
+        id: hasId ? nextSeg : undefined,
+        isLast: false,
+      });
+      if (hasId) i++; // skip the id segment
     }
   }
-  return -1;
+
+  if (result.length > 0) {
+    result[result.length - 1].isLast = true;
+  }
+
+  return result;
 }
 
 export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile }: SidebarProps) {
@@ -80,76 +124,67 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const { t } = useTranslation();
+  const { entityOrder, getEntityLabel } = useHierarchyConfig();
+  const brandLogo = useBrandLogo();
   const [hierarchyOpen, setHierarchyOpen] = useState(false);
-  const [activeHierarchyLevel, setActiveHierarchyLevel] = useState<number>(-1);
+  const [financialOpen, setFinancialOpen] = useState(false);
+
+  // Auto-expand hierarchy section when on a hierarchy page
+  const isOnHierarchyPage = pathname.startsWith("/hierarchy");
+  const isOnFinancialPage = pathname.startsWith("/financial");
+  useEffect(() => {
+    if (isOnHierarchyPage) {
+      setHierarchyOpen(true);
+    }
+    if (isOnFinancialPage) {
+      setFinancialOpen(true);
+    }
+  }, [isOnHierarchyPage, isOnFinancialPage]);
 
   const handleLogout = async () => {
     logout();
     router.push("/login");
   };
 
-  const currentHierarchyLevel = getHierarchyLevel(pathname);
-  const isInHierarchy = currentHierarchyLevel >= 0;
-  const isFieldsActive = pathname === "/fields" || pathname.startsWith("/fields/") || /^\/(professors|levels|groups|students)$/.test(pathname);
+  const hierarchyPath = parseHierarchyPath(pathname, entityOrder);
 
-  useEffect(() => {
-    setActiveHierarchyLevel(currentHierarchyLevel);
-  }, [currentHierarchyLevel]);
-
-  const resolveHierarchyHref = (item: HierarchyItem): string => {
-    if (!isInHierarchy) {
-      return item.rootHref;
+  /**
+   * The catch-all route shows the NEXT entity after the last URL pair when
+   * that pair carries an id (/hierarchy/field/abc displays professors, not
+   * fields). Mirror that rule here so the highlighted item always matches
+   * the page being viewed.
+   */
+  const activeEntity = useMemo(() => {
+    if (hierarchyPath.length === 0) {
+      // The bare /hierarchy route renders the first entity's list (levels).
+      if (pathname === "/hierarchy") return entityOrder[0] ?? null;
+      return null;
     }
-
-    const fieldIdMatch = pathname.match(/^\/fields\/([^/]+)/);
-    const profIdMatch = pathname.match(/\/professors\/([^/]+)/);
-    const levelIdMatch = pathname.match(/\/levels\/([^/]+)/);
-    const groupIdMatch = pathname.match(/\/groups\/([^/]+)/);
-
-    const fieldId = fieldIdMatch?.[1];
-    const profId = profIdMatch?.[1];
-    const levelId = levelIdMatch?.[1];
-    const groupId = groupIdMatch?.[1];
-
-    if (item.href === "/fields") return "/fields";
-    if (item.href.includes("professors") && !item.href.includes("levels")) {
-      if (fieldId) return `/fields/${fieldId}/professors`;
-      return item.rootHref;
-    }
-    if (item.href.includes("levels") && !item.href.includes("groups")) {
-      if (fieldId && profId) return `/fields/${fieldId}/professors/${profId}/levels`;
-      return item.rootHref;
-    }
-    if (item.href.includes("groups") && !item.href.includes("students")) {
-      if (fieldId && profId && levelId) return `/fields/${fieldId}/professors/${profId}/levels/${levelId}/groups`;
-      return item.rootHref;
-    }
-    if (item.href.includes("students")) {
-      if (fieldId && profId && levelId && groupId) return `/fields/${fieldId}/professors/${profId}/levels/${levelId}/groups/${groupId}/students`;
-      return item.rootHref;
-    }
-
-    return item.href;
-  };
+    const last = hierarchyPath[hierarchyPath.length - 1];
+    if (!last.id) return last.type;
+    const idx = entityOrder.indexOf(last.type);
+    if (idx >= 0 && idx < entityOrder.length - 1) return entityOrder[idx + 1];
+    return last.type;
+  }, [hierarchyPath, entityOrder, pathname]);
 
   return (
     <>
       {mobileOpen && <MobileOverlay onClick={onCloseMobile} />}
       <aside
-                 className={`fixed top-0 left-0 z-50 h-screen bg-primary dark:bg-primary-900 text-white flex flex-col transition-all duration-150 ${
+        className={`fixed top-0 left-0 z-50 h-screen bg-primary dark:bg-primary-900 text-white flex flex-col transition-all duration-150 ${
           collapsed ? "w-[68px]" : "w-60"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         <div className="flex items-center justify-between h-16 px-4 border-b border-white/10">
           {!collapsed && (
             <Link href="/dashboard" className="flex items-center gap-2">
-              <img src="/images/logo.png" alt={t("app.name", "IQ Academy")} className="h-8 w-8 rounded-btn object-contain" />
+              <img src={brandLogo} alt={t("app.name", "IQ Academy")} className="h-8 w-8 rounded-btn object-contain" />
               <span className="font-bold text-sm tracking-tight">{t("app.name", "IQ Academy")}</span>
             </Link>
           )}
           {collapsed && (
             <Link href="/dashboard" className="mx-auto">
-              <img src="/images/logo.png" alt={t("app.name", "IQ Academy")} className="h-8 w-8 rounded-btn object-contain" />
+              <img src={brandLogo} alt={t("app.name", "IQ Academy")} className="h-8 w-8 rounded-btn object-contain" />
             </Link>
           )}
           <div className="flex items-center gap-1">
@@ -187,14 +222,94 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 {!collapsed && <span>{t(item.label)}</span>}
               </Link>
             );
-          })}
+          }          )}
 
+          {/* Financial Management section */}
+          {!collapsed ? (
+            <div>
+              <button
+                onClick={() => setFinancialOpen(!financialOpen)}
+                className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 w-full ${
+                  isOnFinancialPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <Wallet size={18} className="shrink-0" />
+                <span className="flex-1 text-left">{t("nav.financialManagement")}</span>
+                <ChevronDown size={14} className={`transition-transform duration-150 ${financialOpen ? "rotate-180" : ""}`} />
+              </button>
+              {financialOpen && (
+                <div className="ml-6 mt-1 space-y-1 border-l-2 border-white/10 pl-3">
+                  {FINANCIAL_NAV_ITEMS.map((item) => {
+                    // The dashboard sits at the segment root, so prefix matching
+                    // would light it up on every financial screen.
+                    const isActive = item.exact
+                      ? pathname === item.href
+                      : pathname === item.href || pathname.startsWith(item.href + "/");
+                    const Icon = item.icon;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={onCloseMobile}
+                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-all duration-150 hover:scale-[1.02] hover:shadow-sm ${
+                          isActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white hover:border-l-2 hover:border-gold/50"
+                        }`}
+                      >
+                        <Icon size={14} className="shrink-0" />
+                        <span>{t(item.label)}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Collapsed financial */
+            <div className="flex flex-col items-center">
+              <button
+                onClick={() => setFinancialOpen(!financialOpen)}
+                className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
+                  isOnFinancialPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                }`}
+                aria-label={t("nav.financialManagement")}
+              >
+                <Wallet size={18} />
+              </button>
+              {financialOpen && isOnFinancialPage && (
+                <div className="mt-2 space-y-1 w-full">
+                  {FINANCIAL_NAV_ITEMS.map((item) => {
+                    // The dashboard sits at the segment root, so prefix matching
+                    // would light it up on every financial screen.
+                    const isActive = item.exact
+                      ? pathname === item.href
+                      : pathname === item.href || pathname.startsWith(item.href + "/");
+                    const Icon = item.icon;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={onCloseMobile}
+                        className={`flex items-center justify-center w-full py-2 rounded-btn transition-all duration-150 hover:scale-105 hover:shadow-sm ${
+                          isActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white"
+                        }`}
+                        aria-label={t(item.label)}
+                      >
+                        <Icon size={14} className="shrink-0" />
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Hierarchy section */}
           {!collapsed ? (
             <div>
               <button
                 onClick={() => setHierarchyOpen(!hierarchyOpen)}
                 className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 w-full ${
-                  isFieldsActive ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                  isOnHierarchyPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
                 }`}
               >
                 <Network size={18} className="shrink-0" />
@@ -203,74 +318,55 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               </button>
               {hierarchyOpen && (
                 <div className="ml-6 mt-1 space-y-1 border-l-2 border-white/10 pl-3">
-                  {HIERARCHY_ITEMS.map((item, index) => {
-                    const isActive = activeHierarchyLevel === index;
-                    const Icon = item.icon;
-                    const resolvedHref = resolveHierarchyHref(item);
-                    const isBaseFields = index === 0;
+                  {entityOrder.map((entity) => {
+                    const isEntityActive = activeEntity === entity;
+                    const Icon = ENTITY_ICONS[entity];
+                    // Build root href for this entity type
+                    const rootHref = `/hierarchy/${entity}`;
                     return (
                       <Link
-                        key={item.href}
-                        href={resolvedHref}
+                        key={entity}
+                        href={rootHref}
                         onClick={onCloseMobile}
-                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-colors duration-150 ${
-                          isActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white"
+                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-all duration-150 hover:scale-[1.02] hover:shadow-sm ${
+                          isEntityActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white hover:border-l-2 hover:border-gold/50"
                         }`}
                       >
                         <Icon size={14} className="shrink-0" />
-                        <span>{t(item.label)}</span>
+                        <span>{getEntityLabel(entity)}</span>
                       </Link>
                     );
                   })}
 
-                  {isInHierarchy && (
-                    <div className="mt-3 p-2 rounded-card bg-white/5 border border-white/10">
-                      <p className="text-[10px] uppercase tracking-wider text-white/40 px-1 mb-2">{t("common.currentPosition", "Current Path")}</p>
-                      <div className="space-y-1.5">
-                        {HIERARCHY_ITEMS.slice(0, activeHierarchyLevel + 1).map((item, index) => {
-                          const isActive = index === activeHierarchyLevel;
-                          const Icon = item.icon;
-                          return (
-                            <div key={`path-${item.href}`} className="flex items-center gap-2">
-                              <div className={`h-1.5 w-1.5 rounded-full shrink-0 ${isActive ? "bg-gold" : "bg-white/30"}`} />
-                              <Icon size={12} className={`shrink-0 ${isActive ? "text-gold" : "text-white/40"}`} />
-                              <span className={`text-[11px] truncate ${isActive ? "text-white font-medium" : "text-white/50"}`}>
-                                {t(item.label)}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  </div>
               )}
             </div>
           ) : (
+            /* Collapsed hierarchy */
             <div className="flex flex-col items-center">
               <button
                 onClick={() => setHierarchyOpen(!hierarchyOpen)}
                 className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
-                  isFieldsActive ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                  isOnHierarchyPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
                 }`}
                 aria-label={t("nav.fields")}
               >
                 <Network size={18} className="shrink-0" />
               </button>
-              {hierarchyOpen && isInHierarchy && (
+              {hierarchyOpen && isOnHierarchyPage && (
                 <div className="mt-2 space-y-1 w-full">
-                  {HIERARCHY_ITEMS.map((item, index) => {
-                    const isActive = currentHierarchyLevel === index;
-                    const Icon = item.icon;
+                  {entityOrder.map((entity) => {
+                    const isEntityActive = activeEntity === entity;
+                    const Icon = ENTITY_ICONS[entity];
                     return (
                       <Link
-                        key={item.href}
-                        href={resolveHierarchyHref(item)}
+                        key={entity}
+                        href={`/hierarchy/${entity}`}
                         onClick={onCloseMobile}
-                        className={`flex items-center justify-center w-full py-2 rounded-btn transition-colors duration-150 ${
-                          isActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white"
+                        className={`flex items-center justify-center w-full py-2 rounded-btn transition-all duration-150 hover:scale-105 hover:shadow-sm ${
+                          isEntityActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white"
                         }`}
-                        aria-label={t(item.label)}
+                        aria-label={getEntityLabel(entity)}
                       >
                         <Icon size={14} className="shrink-0" />
                       </Link>

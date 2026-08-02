@@ -6,10 +6,12 @@ import {
   Put,
   Delete,
   Param,
+  Query,
   Req,
   UseGuards,
   ParseUUIDPipe,
 } from "@nestjs/common";
+import { ApiOperation } from "@nestjs/swagger";
 import { FieldsService } from "./fields.service";
 import { CreateFieldDto, UpdateFieldDto } from "./dto/field.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -22,8 +24,15 @@ export class FieldsController {
   constructor(private readonly fieldsService: FieldsService) {}
 
   @Get()
-  async findAll() {
-    return this.fieldsService.listFields();
+  async findAll(@Query("levelId") levelId?: string) {
+    return this.fieldsService.listFields(levelId);
+  }
+
+  // Declared before @Get(":id"): the literal "deleted" must win over the UUID param.
+  @Get("deleted")
+  @Roles("super_admin")
+  async findDeleted(@Query("levelId") levelId?: string) {
+    return this.fieldsService.listDeletedFields(levelId);
   }
 
   @Get(":id")
@@ -51,5 +60,18 @@ export class FieldsController {
   @Roles("super_admin")
   async remove(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
     return this.fieldsService.deleteField(id, req.user.id);
+  }
+
+  @Post(":id/restore")
+  @Roles("super_admin")
+  async restore(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.fieldsService.restoreField(id, req.user.id);
+  }
+
+  @Delete(":id/hard")
+  @Roles("super_admin")
+  @ApiOperation({ summary: "Permanently delete an archived field and everything beneath it" })
+  async hardDelete(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.fieldsService.hardDeleteField(id, req.user.id);
   }
 }

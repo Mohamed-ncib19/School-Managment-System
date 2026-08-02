@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, User, Phone, Mail, CalendarDays, DollarSign, UserCheck, Trash2 } from "lucide-react";
+import { X, User, Phone, Mail, CalendarDays, DollarSign, UserCheck, Trash2, Pencil } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import { ErrorState, describeError } from "@/components/shared/error-state";
 import { useToast } from "@/components/shared/toast";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { normalizeTunisianPhone, TUNISIA_PHONE_PLACEHOLDER } from "@/lib/utils/phone";
 import type { StudentStatus } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
 import Link from "next/link";
@@ -94,6 +95,57 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
     },
   });
 
+  /**
+   * The edit mode used to have no entry point: the fields rendered as inputs
+   * once `isEditing` was true, but nothing ever set it, so names, fee and —
+   * the important one — the enrollment status could never be changed.
+   */
+  const updateMutation = useMutation({
+    mutationFn: (data: any) => studentsApi.update(studentId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["student", studentId] });
+      qc.invalidateQueries({ queryKey: ["students"] });
+      qc.invalidateQueries({ queryKey: ["hierarchy-summary"] });
+      setIsEditing(false);
+      toast.success(
+        t("studentDetail.saveChanges", "Changes saved"),
+        t("common.saved", "Saved"),
+      );
+    },
+    onError: (err) => {
+      const { detail } = describeError(err);
+      toast.error(t("studentDetail.saveFailed", "Could not save"), detail);
+    },
+  });
+
+  const handleSave = () => {
+    if (!form.first_name.trim() || !form.last_name.trim() || !form.phone.trim()) {
+      toast.error(t("students.fillRequired", "Please fill in all required fields"));
+      return;
+    }
+    const phone = normalizeTunisianPhone(form.phone);
+    if (!phone) {
+      toast.error(t("students.phoneInvalidTitle", "Invalid phone number"), t("students.phoneInvalid", "Phone must be 8 digits, e.g. +216 22 123 456"));
+      return;
+    }
+    const parentPhone = form.parent_phone.trim() ? normalizeTunisianPhone(form.parent_phone) : null;
+    if (form.parent_phone.trim() && !parentPhone) {
+      toast.error(t("students.phoneInvalidTitle", "Invalid phone number"), t("students.parentPhoneInvalid", "Parent phone must be 8 digits, e.g. +216 22 123 456"));
+      return;
+    }
+    updateMutation.mutate({
+      first_name: form.first_name.trim(),
+      last_name: form.last_name.trim(),
+      phone,
+      parent_phone: parentPhone,
+      email: form.email.trim() || null,
+      monthly_fee: parseFloat(form.monthly_fee) || 0,
+      status: form.status,
+    });
+  };
+
+  const isSaving = updateMutation.isPending;
+
   if (!isOpen) return null;
 
   return (
@@ -104,9 +156,38 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
           <h2 className="text-h4 font-bold text-text-primary">
             {student ? `${student.first_name} ${student.last_name}` : t("studentDetail.loading")}
           </h2>
-          <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-btn hover:bg-background transition-colors" aria-label={t("common.close")}>
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            {student && isEditing ? (
+              <>
+                <button
+                  onClick={() => { if (!isSaving) { setIsEditing(false); } }}
+                  disabled={isSaving}
+                  className="btn btn-secondary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {t("studentDetail.cancel", "Cancel")}
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="btn btn-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSaving ? t("common.saving", "Saving…") : t("studentDetail.saveChanges", "Save Changes")}
+                </button>
+              </>
+            ) : (
+              student && (
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="btn btn-secondary px-3 py-1.5 text-xs"
+                >
+                  <Pencil size={13} className="inline-block" /> {t("common.edit", "Edit")}
+                </button>
+              )
+            )}
+            <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-btn hover:bg-background transition-colors" aria-label={t("common.close")}>
+              <X size={18} />
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           {isLoading ? (
@@ -148,7 +229,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       <div>
                         <label className="block text-xs font-medium text-text-secondary mb-1">{t("students.phone")}</label>
                         {isEditing ? (
-                          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="input w-full" />
+                          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="input w-full" placeholder={TUNISIA_PHONE_PLACEHOLDER} inputMode="tel" />
                         ) : (
                           <p className="text-sm text-text-primary font-medium flex items-center gap-1.5">
                             <Phone size={13} className="text-text-secondary" /> {student.phone}
@@ -158,7 +239,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       <div>
                         <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.parentPhone")}</label>
                         {isEditing ? (
-                          <input value={form.parent_phone} onChange={(e) => setForm({ ...form, parent_phone: e.target.value })} className="input w-full" />
+                          <input value={form.parent_phone} onChange={(e) => setForm({ ...form, parent_phone: e.target.value })} className="input w-full" placeholder={TUNISIA_PHONE_PLACEHOLDER} inputMode="tel" />
                         ) : (
                           <p className="text-sm text-text-primary font-medium">{student.parent_phone ?? "—"}</p>
                         )}
@@ -218,23 +299,45 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       <UserCheck size={18} className="text-primary" />
                       {t("studentDetail.currentAssignment")}
                     </h3>
-                    <div className="space-y-3 text-sm">
-                      <div>
-                        <p className="text-xs text-text-secondary">{t("studentDetail.field")}</p>
-                        <p className="font-medium text-text-primary">{student.group?.level?.professor?.field?.name ?? "—"}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-text-secondary">{t("studentDetail.professor")}</p>
-                        <p className="font-medium text-text-primary">{student.group?.level?.professor?.full_name ?? "—"}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-text-secondary">{t("studentDetail.level")}</p>
-                        <p className="font-medium text-text-primary">{student.group?.level?.name ?? "—"}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-text-secondary">{t("studentDetail.group")}</p>
-                        <p className="font-medium text-text-primary">{student.group?.name ?? "—"}</p>
-                      </div>
+                    <div className="space-y-4 text-sm">
+                      {(student.assignments?.length
+                        ? student.assignments
+                        : student.group
+                          ? [{ id: "primary", group: student.group }]
+                          : []
+                      ).map((a: any, i: number) => {
+                        const field = a.group?.professor?.field;
+                        const level = field?.level;
+                        const rows = [
+                          { label: t("studentDetail.level"), value: level?.name },
+                          { label: t("studentDetail.field"), value: field?.name },
+                          { label: t("studentDetail.professor"), value: a.group?.professor?.full_name },
+                          { label: t("studentDetail.group"), value: a.group?.name },
+                          {
+                            label: t("studentDetail.monthlyFee"),
+                            value: a.fee !== undefined
+                              ? formatCurrency(Number(a.fee))
+                              : formatCurrency(Number(student.monthly_fee)),
+                          },
+                        ];
+                        return (
+                          <div key={a.id ?? "primary"} className={i > 0 ? "pt-3 border-t border-border" : ""}>
+                            {i > 0 && (
+                              <p className="text-xs font-semibold text-text-secondary mb-2">
+                                {t("students.assignmentExtra", "Additional")} #{i + 1}
+                              </p>
+                            )}
+                            <div className="space-y-3">
+                              {rows.map((row) => (
+                                <div key={row.label}>
+                                  <p className="text-xs text-text-secondary">{row.label}</p>
+                                  <p className="font-medium text-text-primary">{row.value ?? "—"}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 

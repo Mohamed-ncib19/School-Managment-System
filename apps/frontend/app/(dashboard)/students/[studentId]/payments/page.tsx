@@ -1,16 +1,21 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, User, CircleDollarSign, Printer, Plus, TrendingUp, Clock, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
-import { useGeneratePaymentForStudent, useUpdatePaymentStatusesForStudent } from "@/hooks/use-payments";
-import { PaymentReceipt } from "@/components/shared/payment-receipt";
-import { PaymentStatusControl } from "@/components/shared/payment-status-control";
+import {
+  useGenerateInvoiceForStudent,
+  useRefreshPaymentStatuses,
+  useStudentPaymentHistory,
+} from "@/hooks/use-financial";
+import { useFields, useLevels } from "@/hooks/use-queries";
+import { openReceipt } from "@/lib/api/financial.api";
+import { StatusBadge } from "@/components/shared/status-badge";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
-import { RecordPaymentModal } from "@/components/forms/record-payment-modal";
+import { PaymentActionsModal } from "@/components/financial/payment-actions-modal";
 import { formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 import type { StudentPayment } from "@/types";
@@ -20,12 +25,17 @@ export default function StudentPaymentsPage() {
   const params = useParams();
   const router = useRouter();
   const studentId = params.studentId as string;
-  const queryClient = useQueryClient();
   const [selectedPayment, setSelectedPayment] = useState<StudentPayment | null>(null);
+  const [months, setMonths] = useState("0");
+  const [levelId, setLevelId] = useState("");
+  const [fieldId, setFieldId] = useState("");
+  const [groupId, setGroupId] = useState("");
   const hasAutoUpdated = useRef(false);
 
-  const generatePayment = useGeneratePaymentForStudent();
-  const updateStatuses = useUpdatePaymentStatusesForStudent();
+  const generatePayment = useGenerateInvoiceForStudent();
+  const refreshStatuses = useRefreshPaymentStatuses();
+  const { data: levels } = useLevels();
+  const { data: fields } = useFields();
 
   const { data: student } = useQuery({
     queryKey: ["student", studentId],
@@ -33,24 +43,63 @@ export default function StudentPaymentsPage() {
     enabled: !!studentId,
   });
 
-  const { data: payments, isLoading } = useQuery({
-    queryKey: ["studentPayments", studentId],
-    queryFn: () => studentsApi.getPayments(studentId),
-    enabled: !!studentId,
-  });
+  // Read through the financial module rather than the students endpoint: this
+  // is the shape carrying `remaining_balance` and the ledger the actions modal
+  // works from.
+  const { data: payments, isLoading } = useStudentPaymentHistory(studentId);
 
   useEffect(() => {
     if (!payments || !studentId || hasAutoUpdated.current) return;
     hasAutoUpdated.current = true;
-    updateStatuses.mutate(studentId);
-  }, [payments, studentId, updateStatuses]);
+    refreshStatuses.mutate(studentId);
+  }, [payments, studentId, refreshStatuses]);
 
+  // The modal mutates through the financial cache, so the row it is showing has
+  // to be re-read from the refreshed list or it keeps a stale balance.
   const monthlyFee = student?.monthly_fee ?? 0;
 
-  const stats = useMemo(() => {
-    if (!payments) return { totalDue: 0, totalPaid: 0, overdue: 0, dueSoon: 0, pending: 0, paid: 0 };
-    let totalDue = 0, totalPaid = 0, overdue = 0, dueSoon = 0, pending = 0, paid = 0;
+  /** The groups this student is actually billed for, scoped by the level/field filters. */
+  const groupOptions = useMemo(() => {
+    if (!payments) return [];
+    const seen = new Map<string, { id: string; name: string }>();
     payments.forEach((p) => {
+      const g = p.context.group;
+      if (!g) return;
+      if (levelId && p.context.level?.id !== levelId) return;
+      if (fieldId && p.context.field?.id !== fieldId) return;
+      if (!seen.has(g.id)) seen.set(g.id, { id: g.id, name: g.name });
+    });
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [payments, levelId, fieldId]);
+
+  const filteredPayments = useMemo(() => {
+    if (!payments) return payments;
+    return payments.filter(
+      (p) =>
+        (!levelId || p.context.level?.id === levelId) &&
+        (!fieldId || p.context.field?.id === fieldId) &&
+        (!groupId || p.context.group?.id === groupId),
+    );
+  }, [payments, levelId, fieldId, groupId]);
+
+  const hasFilters = !!levelId || !!fieldId || !!groupId;
+
+  // The modal mutates through the financial cache, so the row it is showing has
+  // to be re-read from the refreshed list or it keeps a stale balance.
+  const activePayment = selectedPayment
+    ? (filteredPayments?.find((p) => p.id === selectedPayment.id) ?? selectedPayment)
+    : null;
+
+  const clearFilters = () => {
+    setLevelId("");
+    setFieldId("");
+    setGroupId("");
+  };
+
+  const stats = useMemo(() => {
+    if (!filteredPayments) return { totalDue: 0, totalPaid: 0, overdue: 0, dueSoon: 0, pending: 0, paid: 0 };
+    let totalDue = 0, totalPaid = 0, overdue = 0, dueSoon = 0, pending = 0, paid = 0;
+    filteredPayments.forEach((p) => {
       totalDue += Number(p.amount_due);
       if (p.paid_amount) totalPaid += Number(p.paid_amount);
       if (p.status === "overdue") overdue++;
@@ -59,7 +108,7 @@ export default function StudentPaymentsPage() {
       else if (p.status === "paid") paid++;
     });
     return { totalDue, totalPaid, overdue, dueSoon, pending, paid };
-  }, [payments]);
+  }, [filteredPayments]);
 
   return (
     <div className="space-y-6">
@@ -75,18 +124,46 @@ export default function StudentPaymentsPage() {
             <div className="flex items-center gap-4 text-xs text-text-secondary mt-0.5">
               <span className="flex items-center gap-1"><User size={12} /> {student.phone}</span>
               <span>{student.email ?? t("studentPayments.dash")}</span>
-              <span className="flex items-center gap-1"><CircleDollarSign size={12} /> {t("studentDetail.monthlyFee")}: {formatCurrency(monthlyFee)}</span>
+              {student.assignments && student.assignments.length > 0 && (
+                <span className="flex items-center gap-1.5 flex-wrap">
+                  <CircleDollarSign size={12} />
+                  {student.assignments.map((a) => (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center gap-1 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs"
+                      title={a.group?.professor?.field?.name ?? a.group?.name}
+                    >
+                      <span className="font-medium text-text-primary">{a.group?.name}</span>
+                      <span className="text-text-secondary">{formatCurrency(Number(a.fee))}/mo</span>
+                    </span>
+                  ))}
+                </span>
+              )}
             </div>
           )}
         </div>
-        <button
-          onClick={() => generatePayment.mutate(studentId)}
-          disabled={generatePayment.isPending}
-          className="btn btn-primary"
-        >
-          {generatePayment.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />}
-          {t("payments.generateMonthly", "Generate Monthly Payment")}
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-text-secondary">
+            {t("payments.monthsAhead", "Months")}
+            <input
+              type="number"
+              min={0}
+              max={12}
+              value={months}
+              onChange={(e) => setMonths(e.target.value)}
+              className="input w-16 text-xs tabular-nums"
+              title={t("payments.monthsAhead", "Months")}
+            />
+          </label>
+          <button
+            onClick={() => generatePayment.mutate({ studentId, months: parseInt(months, 10) || 0 })}
+            disabled={generatePayment.isPending}
+            className="btn btn-primary"
+          >
+            {generatePayment.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />}
+            {t("payments.generateMonths", "Generate invoices")}
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -96,6 +173,52 @@ export default function StudentPaymentsPage() {
           ))}
         </div>
       ) : payments && payments.length > 0 ? (
+        <div className="card p-3 flex items-center gap-3 flex-wrap">
+          <select
+            aria-label={t("nav.levels", "Levels")}
+            value={levelId}
+            onChange={(e) => { setLevelId(e.target.value); setFieldId(""); setGroupId(""); }}
+            className="input w-auto min-w-[140px] text-xs"
+          >
+            <option value="">{t("students.allLevels", "All levels")}</option>
+            {levels?.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
+          </select>
+          <select
+            aria-label={t("nav.fields", "Fields")}
+            value={fieldId}
+            onChange={(e) => { setFieldId(e.target.value); setGroupId(""); }}
+            className="input w-auto min-w-[140px] text-xs"
+          >
+            <option value="">{t("students.allFields", "All fields")}</option>
+            {fields?.filter((f) => !levelId || f.level_id === levelId).map((field) => (
+              <option key={field.id} value={field.id}>{field.name}</option>
+            ))}
+          </select>
+          <select
+            aria-label={t("nav.groups", "Groups")}
+            value={groupId}
+            onChange={(e) => setGroupId(e.target.value)}
+            disabled={groupOptions.length === 0}
+            className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
+          >
+            <option value="">{t("students.allGroups", "All groups")}</option>
+            {groupOptions.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+          {hasFilters && (
+            <button type="button" onClick={clearFilters} className="btn btn-secondary text-xs">
+              {t("students.clearFilters", "Clear")}
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-24 bg-neutral-soft rounded-card animate-pulse" />
+          ))}
+        </div>
+      ) : filteredPayments && filteredPayments.length > 0 ? (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="card flex items-center gap-3">
             <div className="h-10 w-10 rounded-btn bg-primary-50 flex items-center justify-center text-primary shrink-0"><CircleDollarSign size={18} /></div>
@@ -130,6 +253,9 @@ export default function StudentPaymentsPage() {
             <thead>
               <tr className="bg-background">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.period")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.levels", "Level")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.field", "Field")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("payments.group", "Group")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.dueDate")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.amountDue")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("payments.paidAmount")}</th>
@@ -145,7 +271,7 @@ export default function StudentPaymentsPage() {
             </tbody>
           </table>
         </div>
-      ) : payments?.length === 0 ? (
+      ) : filteredPayments?.length === 0 ? (
         <EmptyState message={t("studentPayments.noRecords")} />
       ) : (
         <div className="overflow-hidden rounded-table border border-border shadow-card">
@@ -153,6 +279,9 @@ export default function StudentPaymentsPage() {
             <thead>
               <tr className="bg-background">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.period")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("nav.levels", "Level")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.field", "Field")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("payments.group", "Group")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.dueDate")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.amountDue")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("payments.paidAmount")}</th>
@@ -162,27 +291,43 @@ export default function StudentPaymentsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {payments?.map((p) => (
+              {filteredPayments?.map((p) => (
                 <tr key={p.id} className="hover:bg-background/50 transition-colors">
                   <td className="px-4 py-3 font-medium">{formatPeriod(p.period)}</td>
+                  <td className="px-4 py-3 text-text-secondary">{p.context.level?.name ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex items-center rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.field?.name ?? ""}>
+                      {p.context.field?.name ?? t("studentPayments.dash")}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex items-center rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.group?.name ?? ""}>
+                      {p.context.group?.name ?? t("studentPayments.dash")}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-text-secondary">{formatDate(p.due_date)}</td>
                   <td className="px-4 py-3">{formatCurrency(p.amount_due)}</td>
                   <td className="px-4 py-3">{p.paid_amount ? <span className="text-success-strong font-medium">{formatCurrency(p.paid_amount)}</span> : <span className="text-text-secondary">—</span>}</td>
                   <td className="px-4 py-3">
-                    <PaymentStatusControl
-                      paymentId={p.id}
-                      status={p.status}
-                      onRecordPayment={() => setSelectedPayment(p)}
-                    />
+                    {/* Status is derived from the ledger now — it is reported,
+                        not set. Changing it means recording money. */}
+                    <StatusBadge status={p.status} />
                   </td>
                   <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? t("studentPayments.dash")}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {p.status === "paid" && student && (
-                        <PaymentReceipt payment={p} studentName={`${student.first_name} ${student.last_name}`} groupName={student.group?.name ?? "—"} fieldName={student.group?.level?.professor?.field?.name ?? "—"} />
+                        <button
+                          type="button"
+                          onClick={() => openReceipt("payment", p.id).catch(() => {})}
+                          aria-label={t("financial.printReceipt", "Print receipt")}
+                          className="btn btn-secondary text-xs"
+                        >
+                          <Printer size={13} aria-hidden="true" />
+                        </button>
                       )}
                       <button onClick={() => setSelectedPayment(p)} className="btn btn-secondary text-xs">
-                        {p.status === "paid" ? t("payments.viewDetails", "Details") : t("payments.recordPayment")}
+                        {t("financial.manage", "Manage")}
                       </button>
                     </div>
                   </td>
@@ -193,12 +338,11 @@ export default function StudentPaymentsPage() {
         </div>
       )}
 
-      {selectedPayment && (
-        <RecordPaymentModal
-          payment={selectedPayment}
-          isOpen={!!selectedPayment}
+      {activePayment && (
+        <PaymentActionsModal
+          payment={activePayment}
+          isOpen={!!activePayment}
           onClose={() => setSelectedPayment(null)}
-          onSuccess={() => queryClient.invalidateQueries()}
         />
       )}
     </div>

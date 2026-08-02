@@ -4,14 +4,15 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronRight, Printer } from "lucide-react";
 import { groupsApi } from "@/lib/api/groups.api";
-import { useLevels, useProfessors, useFields, useStudents } from "@/hooks/use-queries";
+import { useProfessors, useFields, useStudents } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
-import type { Group, Level, Professor, Field, Student } from "@/types";
+import type { Group, Professor, Field, Student } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
+import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { ViewToggle } from "@/components/shared/view-toggle";
 import { TreeView, buildGroupsTree } from "@/components/shared/tree-view";
 import { useTranslation } from "@/lib/i18n/context";
@@ -20,7 +21,6 @@ export default function GroupsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const router = useRouter();
-  const { data: levels } = useLevels();
   const { data: professors } = useProfessors();
   const { data: fields } = useFields();
 
@@ -34,8 +34,8 @@ export default function GroupsPage() {
   const { viewMode, setViewMode } = useViewMode("list");
 
   const treeData = useMemo(
-    () => buildGroupsTree(groups ?? [], levels ?? [], professors ?? [], fields ?? [], students ?? []),
-    [groups, levels, professors, fields, students],
+    () => buildGroupsTree(groups ?? [], professors ?? [], fields ?? [], students ?? []),
+    [groups, professors, fields, students],
   );
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -43,14 +43,9 @@ export default function GroupsPage() {
   const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("");
   const [scheduleNotes, setScheduleNotes] = useState("");
-  const [levelId, setLevelId] = useState("");
+  const [profId, setProfId] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  const levelProfMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    levels?.forEach((l) => { map[l.id] = l.prof_id; });
-    return map;
-  }, [levels]);
+  const [deletedOpen, setDeletedOpen] = useState(false);
 
   const profFieldMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -64,15 +59,15 @@ export default function GroupsPage() {
     return map;
   }, [fields]);
 
-  const filteredLevels = useMemo(() => {
-    if (!levelId) return levels ?? [];
-    return (levels ?? []).filter((l) => l.id === levelId);
-  }, [levelId, levels]);
+  const filteredProfessors = useMemo(() => {
+    if (!profId) return professors ?? [];
+    return (professors ?? []).filter((p) => p.id === profId);
+  }, [profId, professors]);
 
-  const resetForm = () => { setName(""); setCapacity(""); setScheduleNotes(""); setLevelId(""); setEditingGroup(null); };
+  const resetForm = () => { setName(""); setCapacity(""); setScheduleNotes(""); setProfId(""); setEditingGroup(null); };
 
   const createMutation = useMutation({
-    mutationFn: (data: { level_id: string; name: string; capacity?: number; schedule_notes?: string }) => groupsApi.create(data),
+    mutationFn: (data: { prof_id: string; name: string; capacity?: number; schedule_notes?: string }) => groupsApi.create(data),
     onSuccess: () => { qc.invalidateQueries(); setCreateOpen(false); resetForm(); },
   });
 
@@ -91,11 +86,17 @@ export default function GroupsPage() {
     setName(group.name);
     setCapacity(group.capacity?.toString() ?? "");
     setScheduleNotes(group.schedule_notes ?? "");
-    setLevelId(group.level_id);
+    setProfId(group.professor?.id ?? "");
     setCreateOpen(true);
   };
 
   const openCreate = () => { resetForm(); setCreateOpen(true); };
+
+  const getFieldForGroup = (group: Group): Field | undefined => {
+    const prof = group.professor;
+    if (!prof) return undefined;
+    return fields?.find((f) => f.id === prof.field_id);
+  };
 
   return (
     <>
@@ -107,6 +108,9 @@ export default function GroupsPage() {
           </div>
           <div className="flex items-center gap-3">
             <ViewToggle value={viewMode} onChange={setViewMode} />
+            <button className="btn btn-secondary" onClick={() => setDeletedOpen(true)} title={t("deleted.title", "Deleted")}>
+              <Trash2 size={16} /> {t("deleted.title", "Deleted")}
+            </button>
             <button className="btn btn-primary" onClick={openCreate}>
               <Plus size={16} /> {t("fieldsHierarchy.newGroup")}
             </button>
@@ -123,35 +127,68 @@ export default function GroupsPage() {
           <EmptyState message={t("fieldsHierarchy.noGroupsYet")} actionLabel={t("fieldsHierarchy.createGroup")} onAction={openCreate} />
         ) : viewMode === "tree" ? (
           <TreeView data={treeData} onSelect={(node) => {
-            if (node.type === "field") router.push(`/fields/${node.id}/professors`);
-            if (node.type === "professor") router.push(`/fields/${node.meta?.field_id}/professors/${node.id}/levels`);
-            if (node.type === "level") router.push(`/fields/${node.meta?.field_id}/professors/${node.meta?.prof_id}/levels/${node.id}/groups`);
-            if (node.type === "group") router.push(`/fields/${node.meta?.field_id}/professors/${node.meta?.prof_id}/levels/${node.meta?.level_id}/groups/${node.id}/students`);
+            if (node.type === "field") router.push(`/hierarchy/field/${node.id}`);
+            if (node.type === "professor") router.push(`/hierarchy/field/${node.meta?.field_id}/professor/${node.id}`);
+            if (node.type === "level") {
+              const fId = node.meta?.field_id;
+              const pId = node.meta?.prof_id;
+              if (fId && pId) router.push(`/hierarchy/field/${fId}/professor/${pId}/level/${node.id}`);
+            }
+if (node.type === "group") {
+               const fId = node.meta?.field_id;
+               const pId = node.meta?.prof_id;
+               const lId = node.meta?.level_id;
+               if (fId && pId && lId) router.push(`/hierarchy/field/${fId}/professor/${pId}/level/${lId}/group/${node.id}`);
+             }
           }} />
         ) : viewMode === "cards" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {groups?.map((group) => {
-              const level = group.level;
-              const professor = level?.professor;
-              const field = professor?.field;
+              const prof = group.professor;
+              const field = prof ? fields?.find((f) => f.id === prof.field_id) : undefined;
+              const lvlId = prof?.field?.level?.id;
+              const studentsHref =
+                prof && field && lvlId
+                  ? `/hierarchy/field/${field.id}/professor/${prof.id}/level/${lvlId}/group/${group.id}`
+                  : null;
               return (
-                <div key={group.id} className="card hover:shadow-hover transition-shadow">
+                <div
+                  key={group.id}
+                  className="card group cursor-pointer hover:shadow-hover transition-shadow"
+                  onClick={() => studentsHref && router.push(studentsHref)}
+                >
                   <div className="flex items-start justify-between">
                     <div>
-                      <h3 className="font-semibold text-text-primary">{group.name}</h3>
-                      <p className="text-sm text-text-secondary">{level?.name ?? "—"}</p>
+                      <h3 className="font-semibold text-text-primary transition-colors group-hover:text-primary">{group.name}</h3>
+                      <p className="text-sm text-text-secondary">{prof?.full_name ?? "—"}</p>
                     </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteId(group.id); }}
+                      className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-danger hover:bg-red-50 transition-colors"
+                      aria-label={`${t("fieldsHierarchy.deleteGroup", "Delete group")} ${group.name}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                   <div className="mt-3 space-y-1 text-sm">
-                    <p className="text-text-secondary"><span className="font-medium">{t("students.level")}</span> {level?.name ?? "—"}</p>
-                    <p className="text-text-secondary"><span className="font-medium">{t("students.professor")}</span> {professor?.full_name ?? "—"}</p>
+                    <p className="text-text-secondary"><span className="font-medium">{t("students.professor")}</span> {prof?.full_name ?? "—"}</p>
                     <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.field")}</span> {field?.name ?? "—"}</p>
                     <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.capacity")}</span> {group.capacity ?? "—"}</p>
                   </div>
                   <div className="mt-4 flex gap-2">
-                    <button onClick={() => openEdit(group)} className="btn btn-secondary text-xs flex-1">{t("fieldsHierarchy.editGroup", "Edit")}</button>
-                    {field && professor && level && (
-                      <Link href={`/fields/${field.id}/professors/${professor.id}/levels/${level.id}/groups/${group.id}/students`} className="btn btn-primary text-xs flex-1">{t("students.students")}</Link>
+                    <button onClick={(e) => { e.stopPropagation(); openEdit(group); }} className="btn btn-secondary text-xs flex-1">{t("fieldsHierarchy.editGroup", "Edit")}</button>
+                    {prof && field && (
+                      <Link href={`/hierarchy/field/${field.id}/professor/${prof.id}`} onClick={(e) => e.stopPropagation()} className="btn btn-primary text-xs flex-1 text-center">{t("fieldsHierarchy.viewLevels")}</Link>
+                    )}
+                    {prof && field && lvlId && (
+                      <Link
+                        href={`/attendance-sheet/${group.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="btn btn-primary text-xs px-2"
+                        title={t("fieldsHierarchy.attendanceSheet", "Attendance")}
+                      >
+                        <Printer size={14} />
+                      </Link>
                     )}
                   </div>
                 </div>
@@ -166,7 +203,6 @@ export default function GroupsPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.name")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.capacity")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.scheduleNotes")}</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.level")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.professor")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.field")}</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.actions")}</th>
@@ -174,33 +210,23 @@ export default function GroupsPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {groups?.map((group) => {
-                  const level = group.level;
-                  const professor = level?.professor;
-                  const field = professor?.field;
+                  const prof = group.professor;
+                  const field = prof ? fields?.find((f) => f.id === prof.field_id) : undefined;
                   return (
                     <tr key={group.id} className="hover:bg-background/50 transition-colors">
                       <td
                         className="px-4 py-3 font-medium text-primary hover:underline cursor-pointer"
                       >
-                        <Link href={`/fields/${field?.id}/professors/${professor?.id}/levels/${level?.id}/groups/${group.id}/students`} className="hover:underline">
+                        <Link href={prof && field ? `/hierarchy/field/${field.id}/professor/${prof.id}` : "#"} className="hover:underline">
                           {group.name}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-text-secondary">{group.capacity ?? t("fieldsHierarchy.dash")}</td>
                       <td className="px-4 py-3 text-text-secondary">{group.schedule_notes ?? t("fieldsHierarchy.dash")}</td>
                       <td className="px-4 py-3 text-text-secondary">
-                        {level ? (
-                          <Link href={`/fields/${professor?.field_id}/professors/${professor?.id}/levels/${level.id}`} className="text-primary hover:underline">
-                            {level.name}
-                          </Link>
-                        ) : (
-                          <span className="text-text-secondary">{t("fieldsHierarchy.dash")}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-text-secondary">
-                        {professor ? (
-                          <Link href={`/fields/${professor.field_id}/professors/${professor.id}`} className="text-primary hover:underline">
-                            {professor.full_name}
+                        {prof ? (
+                          <Link href={`/hierarchy/field/${field?.id}/professor/${prof.id}`} className="text-primary hover:underline">
+                            {prof.full_name}
                           </Link>
                         ) : (
                           <span className="text-text-secondary">{t("fieldsHierarchy.dash")}</span>
@@ -208,7 +234,7 @@ export default function GroupsPage() {
                       </td>
                       <td className="px-4 py-3 text-text-secondary">
                         {field ? (
-                          <Link href={`/fields/${field.id}`} className="text-primary hover:underline">
+                          <Link href={`/hierarchy/field/${field.id}`} className="text-primary hover:underline">
                             {field.name}
                           </Link>
                         ) : (
@@ -217,6 +243,11 @@ export default function GroupsPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {prof && field && prof.field?.level?.id && (
+                            <Link href={`/attendance-sheet/${group.id}`} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors" aria-label="Generate attendance sheet" title="Generate Monthly Attendance Sheet">
+                              <Printer size={14} />
+                            </Link>
+                          )}
                           <button
                             onClick={() => openEdit(group)}
                             className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors"
@@ -246,27 +277,19 @@ export default function GroupsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setCreateOpen(false); resetForm(); }}>
           <div className="bg-surface rounded-modal shadow-hover p-6 w-full max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-h4 font-bold mb-4">{editingGroup ? t("fieldsHierarchy.editGroup", "Edit Group") : t("fieldsHierarchy.newGroup")}</h3>
-            <form onSubmit={(e) => { e.preventDefault(); if (name.trim() && levelId) {
+            <form onSubmit={(e) => { e.preventDefault(); if (name.trim() && profId) {
               const data = { name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, schedule_notes: scheduleNotes.trim() || undefined };
               if (editingGroup) {
                 updateMutation.mutate({ id: editingGroup.id, data });
               } else {
-                createMutation.mutate({ level_id: levelId, ...data });
+                createMutation.mutate({ prof_id: profId, ...data });
               }
             }}} className="space-y-3">
               <div>
-                <label className="block text-sm font-medium mb-1">{t("students.selectLevel", "Select level")} *</label>
-                <select value={levelId} onChange={(e) => setLevelId(e.target.value)} className="input" required disabled={!!editingGroup}>
-                  <option value="">{t("students.selectLevel", "Select level")}</option>
-                  {levels?.map((l) => {
-                    const prof = professors?.find((p) => p.id === l.prof_id);
-                    const field = prof ? fieldNameMap[prof.field_id] : "";
-                    return (
-                      <option key={l.id} value={l.id}>
-                        {l.name} — {prof?.full_name ?? ""} {field ? `(${field})` : ""}
-                      </option>
-                    );
-                  })}
+                <label className="block text-sm font-medium mb-1">{t("students.selectProfessor", "Select professor")} *</label>
+                <select value={profId} onChange={(e) => setProfId(e.target.value)} className="input" required disabled={!!editingGroup}>
+                  <option value="">{t("students.selectProfessor", "Select professor")}</option>
+                  {professors?.map((p) => <option key={p.id} value={p.id}>{p.full_name} — {fieldNameMap[p.field_id] ?? ""}</option>)}
                 </select>
               </div>
               <div>
@@ -295,7 +318,10 @@ export default function GroupsPage() {
         isOpen={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        message={t("deleted.confirm", "It will be archived and can be restored later.")}
       />
+
+      <DeletedEntities entityType="group" isOpen={deletedOpen} onClose={() => setDeletedOpen(false)} />
     </>
   );
 }

@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search, ChevronRight, Trash2, DollarSign, Eye, Plus } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
 import { useFields, useProfessors, useLevels, useGroups, useStudents } from "@/hooks/use-queries";
-import { useGeneratePaymentForStudent } from "@/hooks/use-payments";
+import { useGenerateInvoiceForStudent } from "@/hooks/use-financial";
 import { useViewMode } from "@/hooks/use-view-mode";
 import type { Student } from "@/types";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
@@ -18,7 +18,9 @@ import { TreeView, buildStudentTree } from "@/components/shared/tree-view";
 import { ConfirmDeleteDialog, FormButton } from "@/components/forms/form-helpers";
 import Tooltip from "@/components/shared/tooltip";
 import StudentDetailModal from "@/components/shared/student-detail-modal";
-import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { StudentAssignmentsCell, StudentFeeCell } from "@/components/shared/student-assignments";
+import { formatCurrency, formatDate, studentTotalFee } from "@/lib/utils/format";
+import { normalizeTunisianPhone, TUNISIA_PHONE_PLACEHOLDER } from "@/lib/utils/phone";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function StudentsPage() {
@@ -41,8 +43,8 @@ export default function StudentsPage() {
 
   const { data: fields } = useFields();
   const { data: professors } = useProfessors(fieldId || undefined);
-  const { data: levels } = useLevels(profId || undefined);
-  const { data: groups } = useGroups(levelId || undefined);
+  const { data: levels } = useLevels();
+  const { data: groups } = useGroups(profId || undefined);
   const { data: allStudents, isLoading } = useStudents();
 
   const [deleteError, setDeleteError] = useState("");
@@ -70,9 +72,9 @@ export default function StudentsPage() {
         student.phone.includes(search) ||
         (student.email?.toLowerCase().includes(search.toLowerCase()) ?? false);
 
-      const matchesField = !fieldId || student.group?.level?.professor?.field?.id === fieldId;
-      const matchesProf = !profId || student.group?.level?.professor?.id === profId;
-      const matchesLevel = !levelId || student.group?.level?.id === levelId;
+      const matchesField = !fieldId || student.group?.professor?.field?.id === fieldId;
+      const matchesProf = !profId || student.group?.professor?.id === profId;
+      const matchesLevel = !levelId || student.group?.professor?.field?.level?.id === levelId;
       const matchesGroup = !groupId || student.group?.id === groupId;
       const matchesStatus = statusFilter === "all" || student.status === statusFilter;
 
@@ -147,7 +149,7 @@ export default function StudentsPage() {
             <option value="">{t("students.allLevels")}</option>
             {levels?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
-          <select value={groupId} onChange={(e) => setGroupId(e.target.value)} disabled={!levelId} className="input w-auto min-w-[150px] disabled:opacity-50">
+           <select value={groupId} onChange={(e) => setGroupId(e.target.value)} disabled={!profId} className="input w-auto min-w-[150px] disabled:opacity-50">
             <option value="">{t("students.allGroups")}</option>
             {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
@@ -181,7 +183,7 @@ export default function StudentsPage() {
         <TreeView
           data={treeData}
           onSelect={(node) => {
-            if (node.type === "field") router.push(`/fields/${node.id}/professors`);
+            if (node.type === "field") router.push(`/hierarchy/field/${node.id}`);
             if (node.type === "professor") router.push(`/professors`);
             if (node.type === "level") router.push(`/levels`);
             if (node.type === "group") router.push(`/groups`);
@@ -200,9 +202,9 @@ export default function StudentsPage() {
                 <StatusBadge status={student.status} />
               </div>
               <div className="mt-3 space-y-1 text-sm">
-                <p className="text-text-secondary"><span className="font-medium">{t("students.groupLabel")}</span> {student.group?.name ?? "—"}</p>
-                <p className="text-text-secondary"><span className="font-medium">{t("students.fieldLabel")}</span> {student.group?.level?.professor?.field?.name ?? "—"}</p>
-                <p className="text-text-secondary"><span className="font-medium">{t("students.feeLabel")}</span> {formatCurrency(student.monthly_fee)}</p>
+                <p className="text-text-secondary"><span className="font-medium">{t("students.groupLabel")}</span> <StudentAssignmentsCell student={student} /></p>
+                 <p className="text-text-secondary"><span className="font-medium">{t("students.fieldLabel")}</span> {student.group?.professor?.field?.name ?? "—"}</p>
+                <p className="text-text-secondary"><span className="font-medium">{t("students.feeLabel")}</span> {formatCurrency(studentTotalFee(student))}</p>
               </div>
               <div className="mt-4 flex gap-2">
                 <button onClick={() => openStudent(student.id)} className="btn btn-secondary text-xs flex-1">{t("students.viewDetails")}</button>
@@ -232,9 +234,9 @@ export default function StudentsPage() {
                     <button onClick={() => openStudent(student.id)} className="text-primary hover:underline font-medium">{student.first_name} {student.last_name}</button>
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{student.phone}</td>
-                  <td className="px-4 py-3 text-text-secondary">{student.group?.name ?? "—"}</td>
-                  <td className="px-4 py-3 text-text-secondary">{student.group?.level?.professor?.field?.name ?? "—"}</td>
-                  <td className="px-4 py-3 text-text-secondary">{formatCurrency(student.monthly_fee)}</td>
+                  <td className="px-4 py-3"><StudentAssignmentsCell student={student} /></td>
+                  <td className="px-4 py-3 text-text-secondary">{student.group?.professor?.field?.name ?? "—"}</td>
+                  <td className="px-4 py-3"><StudentFeeCell student={student} /></td>
                   <td className="px-4 py-3"><StatusBadge status={student.status} /></td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
@@ -310,7 +312,7 @@ function AddStudentModal({
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const generatePayment = useGeneratePaymentForStudent();
+  const generatePayment = useGenerateInvoiceForStudent();
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -330,14 +332,14 @@ function AddStudentModal({
 
   const { data: fields } = useFields();
   const { data: professors } = useProfessors(fieldId || undefined);
-  const { data: levels } = useLevels(profId || undefined);
-  const { data: groups } = useGroups(levelId || undefined);
+  const { data: levels } = useLevels();
+  const { data: groups } = useGroups(profId || undefined);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => studentsApi.create(data),
     onSuccess: (student) => {
       queryClient.invalidateQueries();
-      generatePayment.mutate(student.id, {
+      generatePayment.mutate({ studentId: student.id, months: 0 }, {
         onSuccess: () => {
           onSuccess(student.id);
         },
@@ -357,11 +359,22 @@ function AddStudentModal({
       return;
     }
 
+    const phoneValue = normalizeTunisianPhone(phone);
+    if (!phoneValue) {
+      setError(t("students.phoneInvalid", "Phone must be 8 digits, e.g. +216 22 123 456"));
+      return;
+    }
+    const parentPhoneValue = parentPhone.trim() ? normalizeTunisianPhone(parentPhone) : null;
+    if (parentPhone.trim() && !parentPhoneValue) {
+      setError(t("students.parentPhoneInvalid", "Parent phone must be 8 digits, e.g. +216 22 123 456"));
+      return;
+    }
+
     createMutation.mutate({
       first_name: firstName.trim(),
       last_name: lastName.trim(),
-      phone: phone.trim(),
-      parent_phone: parentPhone.trim() || null,
+      phone: phoneValue,
+      parent_phone: parentPhoneValue,
       email: email.trim() || null,
       monthly_fee: parseFloat(monthlyFee),
       group_id: groupId,
@@ -419,7 +432,8 @@ function AddStudentModal({
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 className="input"
-                placeholder={t("students.phonePlaceholder", "Phone number")}
+                placeholder={TUNISIA_PHONE_PLACEHOLDER}
+                inputMode="tel"
               />
             </div>
             <div>
@@ -429,7 +443,8 @@ function AddStudentModal({
                 value={parentPhone}
                 onChange={(e) => setParentPhone(e.target.value)}
                 className="input"
-                placeholder={t("students.parentPhonePlaceholder", "Optional")}
+                placeholder={TUNISIA_PHONE_PLACEHOLDER}
+                inputMode="tel"
               />
             </div>
           </div>
@@ -460,7 +475,7 @@ function AddStudentModal({
                 <option value="">{t("students.selectLevel", "Select level")}</option>
                 {levels?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
-              <select value={groupId} onChange={(e) => setGroupId(e.target.value)} disabled={!levelId} className="input text-sm disabled:opacity-50">
+               <select value={groupId} onChange={(e) => setGroupId(e.target.value)} disabled={!profId} className="input text-sm disabled:opacity-50">
                 <option value="">{t("students.selectGroup", "Select group")}</option>
                 {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>

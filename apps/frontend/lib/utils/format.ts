@@ -6,11 +6,49 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+interface CurrencyConfig {
+  currency: string;
+  locale: string;
+}
+
+/**
+ * Money formatting follows the academy's configured currency (Financial
+ * Management > Settings), not a hard-coded TND. The config is a module-level
+ * value the CurrencyConfigProvider seeds once settings load, so every money
+ * cell in the app reformats on the next render without threading a hook
+ * through each caller.
+ */
+let currencyConfig: CurrencyConfig = { currency: "TND", locale: "fr-TN" };
+
+export function setCurrencyConfig(config: CurrencyConfig) {
+  currencyConfig = config;
+}
+
 export function formatCurrency(value: number | string): string {
   if (value === null || value === undefined) return "-";
   const num = typeof value === "string" ? parseFloat(value) : value;
   if (isNaN(num)) return "-";
-  return new Intl.NumberFormat("fr-TN", { style: "currency", currency: "TND" }).format(num);
+  return new Intl.NumberFormat(currencyConfig.locale, {
+    style: "currency",
+    currency: currencyConfig.currency,
+  }).format(num);
+}
+
+export interface FeeSource {
+  assignments?: Array<{ fee?: string | number | null }> | null;
+  monthly_fee?: string | number | null;
+}
+
+/**
+ * The student's monthly commitment: the sum of per-enrollment fees when the
+ * student has assignment rows, otherwise the legacy single monthly fee.
+ */
+export function studentTotalFee(student: FeeSource): number {
+  const fees = (student.assignments ?? [])
+    .map((a) => Number(a.fee))
+    .filter((n) => Number.isFinite(n));
+  if (fees.length) return fees.reduce((sum, n) => sum + n, 0);
+  return Number(student.monthly_fee ?? 0) || 0;
 }
 
 export function formatDate(date: string | Date): string {

@@ -8,11 +8,12 @@ import { ProfessorsModule } from "./professors/professors.module";
 import { LevelsModule } from "./levels/levels.module";
 import { GroupsModule } from "./groups/groups.module";
 import { StudentsModule } from "./students/students.module";
-import { PaymentsModule } from "./payments/payments.module";
+import { FinancialModule } from "./financial/financial.module";
 import { AuditModule } from "./audit/audit.module";
 import { ImportsModule } from "./imports/imports.module";
 import { BackupModule } from "./backup/backup.module";
 import { HierarchyModule } from "./hierarchy/hierarchy.module";
+import { HierarchyConfigModule } from "./hierarchy-config/hierarchy-config.module";
 
 @Module({
   imports: [
@@ -25,11 +26,12 @@ import { HierarchyModule } from "./hierarchy/hierarchy.module";
     LevelsModule,
     GroupsModule,
     StudentsModule,
-    PaymentsModule,
+    FinancialModule,
     AuditModule,
     ImportsModule,
     BackupModule,
     HierarchyModule,
+    HierarchyConfigModule,
   ],
 })
 export class AppModule {}

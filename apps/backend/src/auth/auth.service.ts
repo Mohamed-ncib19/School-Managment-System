@@ -3,14 +3,12 @@ import {
   UnauthorizedException,
   ConflictException,
   NotFoundException,
-  BadRequestException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { UserRole } from "@iq/shared";
 import { compare, hash } from "bcryptjs";
-import { randomBytes } from "crypto";
 import {
   JWT_SECRET,
   JWT_EXPIRES_IN,

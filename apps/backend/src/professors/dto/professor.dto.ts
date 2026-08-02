@@ -1,9 +1,11 @@
 import { IsBoolean, IsEmail, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from "class-validator";
 import { Transform } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { TUNISIA_PHONE_PATTERN } from "../../common/phone.util";
+import { ENTITY_COLOR_PATTERN, ENTITY_COLOR_MESSAGE } from "../../common/color.util";
 
-/** Digits, spaces and the usual separators - permissive enough for any locale. */
-const PHONE_PATTERN = /^[+()\d][\d\s\-().]{4,24}$/;
+const PHONE_PATTERN = TUNISIA_PHONE_PATTERN;
+const PHONE_MESSAGE = "Phone must be 8 digits with the +216 country code, e.g. +216 22 123 456";
 
 export class CreateProfessorDto {
   @ApiProperty({ format: "uuid" })
@@ -20,7 +22,7 @@ export class CreateProfessorDto {
   @ApiProperty()
   @IsString()
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
-  @Matches(PHONE_PATTERN, { message: "Phone number is not valid" })
+  @Matches(PHONE_PATTERN, { message: PHONE_MESSAGE })
   phone!: string;
 
   @ApiPropertyOptional()
@@ -33,6 +35,11 @@ export class CreateProfessorDto {
   @IsOptional()
   @IsUUID("4")
   user_id?: string;
+
+  @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
+  @IsOptional()
+  @Matches(ENTITY_COLOR_PATTERN, { message: ENTITY_COLOR_MESSAGE })
+  color?: string;
 }
 
 export class UpdateProfessorDto {
@@ -48,7 +55,7 @@ export class UpdateProfessorDto {
   @IsOptional()
   @IsString()
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
-  @Matches(PHONE_PATTERN, { message: "Phone number is not valid" })
+  @Matches(PHONE_PATTERN, { message: PHONE_MESSAGE })
   phone?: string;
 
   @ApiPropertyOptional()
@@ -61,6 +68,11 @@ export class UpdateProfessorDto {
   @IsOptional()
   @IsUUID("4")
   user_id?: string;
+
+  @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
+  @IsOptional()
+  @Matches(ENTITY_COLOR_PATTERN, { message: ENTITY_COLOR_MESSAGE })
+  color?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

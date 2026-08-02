@@ -11,6 +11,7 @@ import {
   UseGuards,
   ParseUUIDPipe,
 } from "@nestjs/common";
+import { ApiOperation } from "@nestjs/swagger";
 import { ProfessorsService } from "./professors.service";
 import { CreateProfessorDto, UpdateProfessorDto } from "./dto/professor.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -25,6 +26,13 @@ export class ProfessorsController {
   @Get()
   async findAll(@Query("fieldId") fieldId?: string) {
     return this.professorsService.listProfessors(fieldId);
+  }
+
+  // Declared before @Get(":id"): the literal "deleted" must win over the UUID param.
+  @Get("deleted")
+  @Roles("super_admin")
+  async findDeleted(@Query("fieldId") fieldId?: string) {
+    return this.professorsService.listDeletedProfessors(fieldId);
   }
 
   @Get(":id")
@@ -61,5 +69,12 @@ export class ProfessorsController {
   @Roles("super_admin")
   async restore(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
     return this.professorsService.restoreProfessor(id, req.user.id);
+  }
+
+  @Delete(":id/hard")
+  @Roles("super_admin")
+  @ApiOperation({ summary: "Permanently delete a deactivated professor and everything beneath them" })
+  async hardDelete(@Param("id", ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.professorsService.hardDeleteProfessor(id, req.user.id);
   }
 }

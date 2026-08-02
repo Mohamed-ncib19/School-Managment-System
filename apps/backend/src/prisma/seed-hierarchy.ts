@@ -5,9 +5,9 @@ const prisma = new PrismaClient();
 
 /**
  * Exact hierarchy seed:
- *   2 fields
- *     -> 2 professors each
- *        -> 2 levels each
+ *   2 levels
+ *     -> 2 fields each
+ *        -> 2 professors each
  *           -> 2 groups each
  *              -> 10 students each
  *                 -> 5 with 3 months of payment history
@@ -59,12 +59,13 @@ const pick = <T>(items: readonly T[]): T => items[Math.floor(rand() * items.leng
 const between = (min: number, max: number) => min + Math.floor(rand() * (max - min + 1));
 
 async function reset() {
+  // FK order: payments -> students -> groups -> professors -> fields -> levels.
   await prisma.student_payments.deleteMany({});
   await prisma.students.deleteMany({});
   await prisma.groups.deleteMany({});
-  await prisma.levels.deleteMany({});
   await prisma.professors.deleteMany({});
   await prisma.fields.deleteMany({});
+  await prisma.levels.deleteMany({});
   console.log("reset: hierarchy tables cleared");
 }
 
@@ -82,34 +83,35 @@ async function main() {
   const levelRows: any[] = [];
   const groupRows: any[] = [];
   const studentRows: any[] = [];
+  const assignmentRows: { student_id: string; group_id: string; fee: number }[] = [];
   const paymentRows: any[] = [];
 
-  for (const field of FIELDS) {
-    const fieldId = randomUUID();
-    fieldRows.push({
-      id: fieldId,
-      name: field.name,
-      description: field.description,
-      created_by: admin.id,
+  for (const levelName of LEVEL_NAMES) {
+    const levelId = randomUUID();
+    levelRows.push({
+      id: levelId,
+      name: levelName,
+      is_active: true,
     });
 
-    for (const profName of PROFESSOR_NAMES[field.name]) {
-      const profId = randomUUID();
-      profRows.push({
-        id: profId,
-        field_id: fieldId,
-        full_name: profName,
-        phone: `05${between(10, 99)}${between(100000, 999999)}`,
-        email: `${profName.toLowerCase().replace(/\s+/g, ".")}@iqacademy.com`,
-        is_active: true,
+    for (const field of FIELDS) {
+      const fieldId = randomUUID();
+      fieldRows.push({
+        id: fieldId,
+        level_id: levelId,
+        name: field.name,
+        description: field.description,
+        created_by: admin.id,
       });
 
-      for (const levelName of LEVEL_NAMES) {
-        const levelId = randomUUID();
-        levelRows.push({
-          id: levelId,
-          prof_id: profId,
-          name: levelName,
+      for (const profName of PROFESSOR_NAMES[field.name]) {
+        const profId = randomUUID();
+        profRows.push({
+          id: profId,
+          field_id: fieldId,
+          full_name: profName,
+          phone: `05${between(10, 99)}${between(100000, 999999)}`,
+          email: `${profName.toLowerCase().replace(/\s+/g, ".")}@iqacademy.com`,
           is_active: true,
         });
 
@@ -117,7 +119,7 @@ async function main() {
           const groupId = randomUUID();
           groupRows.push({
             id: groupId,
-            level_id: levelId,
+            prof_id: profId,
             name: `${levelName} ${suffix}`,
             capacity: 12,
             schedule_notes: pick(["Mon/Wed 17:00", "Tue/Thu 18:30", "Sat 09:00", "Sun 14:00"]),
@@ -144,6 +146,7 @@ async function main() {
               monthly_fee: monthlyFee,
               status: "active" as StudentStatus,
             });
+            assignmentRows.push({ student_id: studentId, group_id: groupId, fee: monthlyFee });
 
             if (i < 5) {
               for (let back = 2; back >= 0; back--) {
@@ -184,17 +187,18 @@ async function main() {
     }
   }
 
+  await prisma.levels.createMany({ data: levelRows });
   await prisma.fields.createMany({ data: fieldRows });
   await prisma.professors.createMany({ data: profRows });
-  await prisma.levels.createMany({ data: levelRows });
   await prisma.groups.createMany({ data: groupRows });
   await prisma.students.createMany({ data: studentRows });
+  await prisma.student_assignments.createMany({ data: assignmentRows });
   await prisma.student_payments.createMany({ data: paymentRows, skipDuplicates: true });
 
   const paid = paymentRows.filter((p) => p.status === "paid").length;
   console.log("Hierarchy seed complete:");
   console.log(
-    `  ${fieldRows.length} fields, ${profRows.length} professors, ${levelRows.length} levels, ${groupRows.length} groups`
+    `  ${levelRows.length} levels, ${fieldRows.length} fields, ${profRows.length} professors, ${groupRows.length} groups`
   );
   console.log(
     `  ${studentRows.length} students, ${paymentRows.length} payments (${paid} paid)`

@@ -2,10 +2,10 @@ import { StudentStatus } from "@iq/shared";
 
 /** Column headers of the flat student import sheet, in display order. */
 export const IMPORT_COLUMNS = [
+  "Level",
   "Field",
   "Professor",
   "Professor Phone",
-  "Level",
   "Group",
   "First Name",
   "Last Name",
@@ -21,10 +21,10 @@ export type ImportColumn = (typeof IMPORT_COLUMNS)[number];
 
 export interface ParsedRow {
   rowNumber: number;
+  level: string;
   field: string;
   professor: string;
   professorPhone: string;
-  level: string;
   group: string;
   firstName: string;
   lastName: string;
@@ -46,9 +46,9 @@ export interface ImportResult {
   skippedDuplicates: number;
   failed: number;
   created: {
+    levels: number;
     fields: number;
     professors: number;
-    levels: number;
     groups: number;
   };
   errors: RowError[];

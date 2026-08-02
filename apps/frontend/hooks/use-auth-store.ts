@@ -19,6 +19,7 @@ interface AuthState {
   setAuth: (token: string, user: AuthUser) => void;
   setHydrated: () => void;
   logout: () => Promise<void>;
+  clearSession: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -30,6 +31,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       setAuth: (token: string, user: AuthUser) => set({ token, user, isAuthenticated: true, hydrated: true }),
       setHydrated: () => set((s) => ({ hydrated: true, isAuthenticated: Boolean(s.token) })),
+      clearSession: () => set({ token: null, user: null, isAuthenticated: false, hydrated: true }),
       logout: async () => {
         try {
           await authApi.logout();

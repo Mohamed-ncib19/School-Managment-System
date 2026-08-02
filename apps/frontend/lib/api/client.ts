@@ -6,6 +6,11 @@ let apiClient: AxiosInstance | undefined;
 /** Backend mounts every route under `setGlobalPrefix("api")`. */
 const DEFAULT_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
+/** The API base, for building absolute asset URLs (logo, exports) at runtime. */
+export function apiBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_BASE_URL;
+}
+
 export function initApi(baseURL: string = DEFAULT_BASE_URL): AxiosInstance {
   apiClient = axios.create({ baseURL });
 
@@ -17,10 +22,19 @@ export function initApi(baseURL: string = DEFAULT_BASE_URL): AxiosInstance {
 
   apiClient.interceptors.response.use(
     (response) => response,
-    async (error: AxiosError) => {
-      if (error.response?.status === 401) {
-        useAuthStore.getState().logout();
-        window.location.href = "/login";
+    (error: AxiosError) => {
+      // The logout call itself 401s when the token is already invalid/expired;
+      // skipping it here prevents the redirect loop (logout 401 -> logout -> ...).
+      const skipAuthHandling = Boolean((error.config as any)?.skipAuthHandling);
+      if (error.response?.status === 401 && !skipAuthHandling) {
+        const { clearSession, logout } = useAuthStore.getState();
+        // Clear the session synchronously so the dead token cannot survive a
+        // page reload, then best-effort notify the backend.
+        clearSession();
+        void logout().catch(() => {});
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
       }
       return Promise.reject(error);
     },
@@ -50,9 +64,12 @@ const unwrap = <T>(body: any): T =>
   body && typeof body === "object" && "data" in body && "error" in body ? body.data : body;
 
 /** A paginated payload, with the envelope's `meta` preserved. */
-export interface Paginated<T> {
+export interface Paginated<
+  T,
+  M = { total: number; page: number; limit: number; totalPages: number },
+> {
   data: T[];
-  meta: { total: number; page: number; limit: number; totalPages: number };
+  meta: M;
 }
 
 /**
@@ -61,7 +78,10 @@ export interface Paginated<T> {
  * reading `result.data` / `result.meta` - as the audit history page did - gets
  * `undefined` and renders as permanently empty, however many rows exist.
  */
-const unwrapPaginated = <T>(body: any): Paginated<T> => {
+const unwrapPaginated = <
+  T,
+  M = { total: number; page: number; limit: number; totalPages: number },
+>(body: any): Paginated<T, M> => {
   const rows: T[] = Array.isArray(body?.data) ? body.data : Array.isArray(body) ? body : [];
   const meta = body?.meta ?? {};
   return {
@@ -71,14 +91,15 @@ const unwrapPaginated = <T>(body: any): Paginated<T> => {
       page: meta.page ?? 1,
       limit: meta.limit ?? rows.length,
       totalPages: meta.totalPages ?? 1,
-    },
+      ...meta,
+    } as M,
   };
 };
 
 export const ApiClient = {
   get: <T>(url: string, config = {}): Promise<T> => getApiClient().get(resolveUrl(url), config).then((r) => unwrap<T>(r.data)),
-  getPaginated: <T>(url: string, config = {}): Promise<Paginated<T>> =>
-    getApiClient().get(resolveUrl(url), config).then((r) => unwrapPaginated<T>(r.data)),
+  getPaginated: <T, M = Paginated<T>["meta"]>(url: string, config = {}): Promise<Paginated<T, M>> =>
+    getApiClient().get(resolveUrl(url), config).then((r) => unwrapPaginated<T, M>(r.data)),
   post: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().post(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
   put: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().put(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
   patch: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().patch(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
