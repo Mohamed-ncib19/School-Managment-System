@@ -149,8 +149,8 @@ const profileForm = useForm<ProfileForm>({
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Branding Section */}
-        <div className="xl:col-span-2">
+        <div className="xl:col-span-2 space-y-6">
+          {/* Branding Section */}
           <div className="card">
             <div className="flex items-center gap-3 mb-6">
               <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
@@ -222,10 +222,8 @@ const profileForm = useForm<ProfileForm>({
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Profile Section */}
-        <div className="xl:col-span-2 space-y-6">
+          {/* Profile Section */}
           <div className="card">
             <div className="flex items-center gap-3 mb-6">
               <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
