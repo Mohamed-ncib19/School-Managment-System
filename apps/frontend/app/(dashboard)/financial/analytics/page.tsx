@@ -13,6 +13,7 @@ import {
   useRevenueSeries,
 } from "@/hooks/use-financial";
 import { useHierarchyConfig } from "@/hooks/use-hierarchy-config";
+import { FinancialDashboardSkeleton } from "@/components/shared/skeletons";
 import type { FinancialFilters } from "@/lib/api/financial.api";
 import { SEQUENTIAL, SERIES } from "@/lib/charts/theme";
 import { cn, formatCurrency } from "@/lib/utils/format";

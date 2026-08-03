@@ -8,8 +8,9 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import { ErrorState, describeError } from "@/components/shared/error-state";
 import { useToast } from "@/components/shared/toast";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
-import { normalizeTunisianPhone, TUNISIA_PHONE_PLACEHOLDER } from "@/lib/utils/phone";
+import { normalizeTunisianPhone, stripTunisiaPrefix } from "@/lib/utils/phone";
 import type { StudentStatus } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
 import Link from "next/link";
@@ -53,8 +54,8 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
       setForm({
         first_name: student.first_name,
         last_name: student.last_name,
-        phone: student.phone,
-        parent_phone: student.parent_phone ?? "",
+        phone: stripTunisiaPrefix(student.phone),
+        parent_phone: stripTunisiaPrefix(student.parent_phone ?? ""),
         email: student.email ?? "",
         monthly_fee: String(student.monthly_fee),
         status: student.status,
@@ -229,7 +230,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       <div>
                         <label className="block text-xs font-medium text-text-secondary mb-1">{t("students.phone")}</label>
                         {isEditing ? (
-                          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="input w-full" placeholder={TUNISIA_PHONE_PLACEHOLDER} inputMode="tel" />
+                          <PhoneInput value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
                         ) : (
                           <p className="text-sm text-text-primary font-medium flex items-center gap-1.5">
                             <Phone size={13} className="text-text-secondary" /> {student.phone}
@@ -239,7 +240,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       <div>
                         <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.parentPhone")}</label>
                         {isEditing ? (
-                          <input value={form.parent_phone} onChange={(e) => setForm({ ...form, parent_phone: e.target.value })} className="input w-full" placeholder={TUNISIA_PHONE_PLACEHOLDER} inputMode="tel" />
+                          <PhoneInput value={form.parent_phone} onChange={(v) => setForm({ ...form, parent_phone: v })} />
                         ) : (
                           <p className="text-sm text-text-primary font-medium">{student.parent_phone ?? "—"}</p>
                         )}

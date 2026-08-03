@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { DashboardSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { RevenueChart } from "@/components/charts/revenue-chart";
 import { PaymentsByStatusChart } from "@/components/charts/payments-by-status-chart";
 import { StudentsByFieldChart } from "@/components/charts/students-by-field-chart";
@@ -104,11 +104,7 @@ export default function DashboardPage() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <LoadingSkeleton key={i} type="card" />
-          ))}
-        </div>
+        <PageLoader text={t("common.loading", "Loading…")} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           <StatCard icon={<Users size={20} />} title={t("dashboard.totalStudents")} value={students?.length ?? 0} />

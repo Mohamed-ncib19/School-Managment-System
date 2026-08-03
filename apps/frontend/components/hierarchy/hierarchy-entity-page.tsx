@@ -28,7 +28,7 @@ import { useGenerateInvoiceForStudent } from "@/hooks/use-financial";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { useViewMode } from "@/hooks/use-view-mode";
 import type { Level, Field, Professor, Group, Student, StudentStatus } from "@/types";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ViewToggle } from "@/components/shared/view-toggle";
@@ -37,7 +37,8 @@ import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { useTranslation } from "@/lib/i18n/context";
 import { formatDate } from "@/lib/utils/format";
 import { useToast } from "@/components/shared/toast";
-import { normalizeTunisianPhone, TUNISIA_PHONE_PLACEHOLDER } from "@/lib/utils/phone";
+import { normalizeTunisianPhone, stripTunisiaPrefix } from "@/lib/utils/phone";
+import { PhoneInput } from "@/components/ui/phone-input";
 import ColorPicker from "@/components/forms/color-picker";
 import Tooltip from "@/components/shared/tooltip";
 import { describeError } from "@/components/shared/error-state";
@@ -492,8 +493,8 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     if (entityType === "student") {
       setFirstName(entity.first_name);
       setLastName(entity.last_name);
-      setFormPhone(entity.phone ?? "");
-      setParentPhone(entity.parent_phone ?? "");
+      setFormPhone(stripTunisiaPrefix(entity.phone ?? ""));
+      setParentPhone(stripTunisiaPrefix(entity.parent_phone ?? ""));
       setFormEmail(entity.email ?? "");
       setEnrollmentDate(entity.enrollment_date?.split("T")[0] ?? new Date().toISOString().split("T")[0]);
       setFormStatus(entity.status ?? "active");
@@ -517,7 +518,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
       );
     } else if (entityType === "professor") {
       setFormName(entity.full_name);
-      setFormPhone(entity.phone ?? "");
+      setFormPhone(stripTunisiaPrefix(entity.phone ?? ""));
       setFormEmail(entity.email ?? "");
     } else if (entityType === "group") {
       setFormName(entity.name ?? "");
@@ -639,27 +640,26 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   };
 
   /** Children names for the assignment-style chips: group -> students, professor -> groups, field -> professors. */
-  const getChildrenNames = (entity: any): string[] => {
-    switch (entityType) {
-      case "group":
-        return entity.assignments
-          ?.map((a: any) => (a.student ? `${a.student.first_name} ${a.student.last_name}` : null))
-          .filter(Boolean) ?? [];
-      case "professor":
-        return entity.groups?.map((g: any) => g.name).filter(Boolean) ?? [];
-      case "field":
-        return entity.professors?.map((p: any) => p.full_name).filter(Boolean) ?? [];
-      default:
-        return [];
-    }
-  };
+const getChildrenNames = (entity: any): string[] => {
+  switch (entityType) {
+    case "group":
+      // Show the professor name for groups instead of students
+      return entity.professor ? [entity.professor.full_name] : [];
+    case "professor":
+      return entity.groups?.map((g: any) => g.name).filter(Boolean) ?? [];
+    case "field":
+      return entity.professors?.map((p: any) => p.full_name).filter(Boolean) ?? [];
+    default:
+      return [];
+  }
+};
 
   const showsChildrenChips = entityType === "group" || entityType === "professor" || entityType === "field";
-  const childrenLabel =
-    entityType === "group" ? t("nav.students", "Students")
-      : entityType === "professor" ? t("nav.groups", "Groups")
-        : entityType === "field" ? t("nav.professors", "Professors")
-          : "";
+const childrenLabel =
+  entityType === "group" ? t("students.professor", "Professor")
+    : entityType === "professor" ? t("nav.groups", "Groups")
+      : entityType === "field" ? t("nav.professors", "Professors")
+        : "";
 
   /** Search + sort applied to the current list, keeping the server order. */
   const items = useMemo(() => {
@@ -842,11 +842,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
 
         {/* Content */}
         {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <LoadingSkeleton key={i} type="table-row" />
-            ))}
-          </div>
+          <PageLoader text={t("common.loading", "Loading…")} />
         ) : !items.length ? (
           search ? (
             <p className="py-8 text-center text-sm text-text-secondary">
@@ -1222,24 +1218,11 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-sm font-medium mb-1">{t("students.phone")} *</label>
-                        <input
-                          value={formPhone}
-                          onChange={(e) => setFormPhone(e.target.value)}
-                          className="input"
-                          placeholder={TUNISIA_PHONE_PLACEHOLDER}
-                          inputMode="tel"
-                          required
-                        />
+                        <PhoneInput value={formPhone} onChange={setFormPhone} required />
                       </div>
                       <div>
                         <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.parentPhoneOptional")}</label>
-                        <input
-                          value={parentPhone}
-                          onChange={(e) => setParentPhone(e.target.value)}
-                          className="input"
-                          placeholder={TUNISIA_PHONE_PLACEHOLDER}
-                          inputMode="tel"
-                        />
+                        <PhoneInput value={parentPhone} onChange={setParentPhone} />
                       </div>
                     </div>
                     <div>
@@ -1307,13 +1290,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
                     <>
                       <div>
                         <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.phone")}</label>
-                        <input
-                          value={formPhone}
-                          onChange={(e) => setFormPhone(e.target.value)}
-                          className="input"
-                          placeholder={TUNISIA_PHONE_PLACEHOLDER}
-                          inputMode="tel"
-                        />
+                        <PhoneInput value={formPhone} onChange={setFormPhone} />
                       </div>
                       <div>
                         <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.emailOptional")}</label>

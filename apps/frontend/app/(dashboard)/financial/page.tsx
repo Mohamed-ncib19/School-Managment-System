@@ -14,6 +14,7 @@ import {
 import { KpiCard } from "@/components/financial/kpi-card";
 import { ChartCard } from "@/components/financial/chart-card";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
+import { PageLoader } from "@/components/shared/skeletons";
 import {
   BreakdownBarChart,
   StatusDonutChart,

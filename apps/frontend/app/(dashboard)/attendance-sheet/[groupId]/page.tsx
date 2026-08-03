@@ -2,16 +2,17 @@
 
 import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Printer, ChevronRight } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Printer, ChevronRight, Trash2 } from "lucide-react";
 import { groupsApi } from "@/lib/api/groups.api";
 import { studentsApi } from "@/lib/api/students.api";
+import { attendanceSheetsApi } from "@/lib/api/attendance-sheets.api";
 import { useProfessors } from "@/hooks/use-queries";
 import Link from "next/link";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { useTranslation } from "@/lib/i18n/context";
 import type { Group, Student } from "@/types";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { AttendanceSheetModal } from "@/components/shared/attendance-sheet-modal";
 import { formatDate } from "@/lib/utils/format";
 
@@ -47,6 +48,22 @@ export default function AttendanceSheetPage() {
   const { data: students, isLoading: studentsLoading } = useQuery({
     queryKey: ["students", groupId],
     queryFn: () => studentsApi.list(groupId),
+  });
+
+  // Every generated sheet is persisted, so a reprint shows the exact list that
+  // was handed out rather than whatever the group roster looks like today.
+  const { data: savedSheets } = useQuery({
+    queryKey: ["attendance-sheets", groupId],
+    queryFn: () => attendanceSheetsApi.listForGroup(groupId),
+    enabled: !!groupId,
+  });
+  const saveSheet = useMutation({
+    mutationFn: attendanceSheetsApi.save,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["attendance-sheets", groupId] }),
+  });
+  const deleteSheet = useMutation({
+    mutationFn: attendanceSheetsApi.remove,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["attendance-sheets", groupId] }),
   });
 
   const [modalOpen, setModalOpen] = useState(true);
@@ -89,6 +106,36 @@ export default function AttendanceSheetPage() {
       students: sortedStudents,
     });
     setModalOpen(false);
+
+    saveSheet.mutate({
+      group_id: group.id,
+      month: data.month,
+      year: data.year,
+      schedule: data.schedule || undefined,
+      teacher_id: data.teacherId || undefined,
+      teacher_name: teacherName,
+      level_name: level.name,
+      group_name: group.name,
+      students: sortedStudents,
+    });
+  };
+
+  const handleLoad = (sheet: { month: number; year: number; schedule: string | null; teacher_name: string; group_name: string; level_name: string; students: unknown[] }) => {
+    setPreviewData({
+      month: sheet.month,
+      year: sheet.year,
+      schedule: sheet.schedule ?? "",
+      teacherName: sheet.teacher_name,
+      groupName: sheet.group_name,
+      levelName: sheet.level_name,
+      students: (sheet.students ?? []) as Student[],
+    });
+    setModalOpen(false);
+  };
+
+  const handleDelete = (id: string) => {
+    if (!window.confirm(t("attendanceSheet.confirmDelete", "Delete this saved sheet?"))) return;
+    deleteSheet.mutate(id);
   };
 
   const handlePrint = () => {
@@ -284,7 +331,7 @@ export default function AttendanceSheetPage() {
             <p className="text-xs text-text-secondary">{t("common.loading", "Loading…")}</p>
           </div>
         </div>
-        <LoadingSkeleton type="table-row" />
+        <PageLoader text={t("common.loading", "Loading…")} />
       </div>
     );
   }
@@ -410,6 +457,61 @@ export default function AttendanceSheetPage() {
           <div className="card p-8 text-center text-text-secondary">
             <p className="mb-2">{t("attendanceSheet.noSheetYet")}</p>
             <p className="text-sm">{t("attendanceSheet.clickToGenerate")}</p>
+          </div>
+        )}
+
+        {savedSheets && savedSheets.length > 0 && (
+          <div className="card">
+            <h3 className="text-h4 font-bold mb-3">{t("attendanceSheet.savedSheets", "Saved sheets")}</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                      {t("attendanceSheet.month", "Month")}
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                      {t("attendanceSheet.teacher", "Teacher")}
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                      {t("attendanceSheet.studentsCount", "Students")}
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                      {t("attendanceSheet.generatedOn", "Generated on")}
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {savedSheets.map((sheet) => (
+                    <tr key={sheet.id} className="hover:bg-background/50">
+                      <td className="px-3 py-2 font-medium">
+                        {MONTH_NAMES_FR[sheet.month - 1]} {sheet.year}
+                      </td>
+                      <td className="px-3 py-2 text-text-secondary">{sheet.teacher_name}</td>
+                      <td className="px-3 py-2 text-text-secondary">{Array.isArray(sheet.students) ? sheet.students.length : 0}</td>
+                      <td className="px-3 py-2 text-text-secondary">{formatDate(sheet.generated_at)}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" onClick={() => handleLoad(sheet)} className="btn btn-secondary text-xs">
+                            {t("attendanceSheet.load", "Load")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(sheet.id)}
+                            disabled={deleteSheet.isPending}
+                            aria-label={t("common.delete", "Delete")}
+                            className="btn btn-secondary text-xs text-danger hover:text-danger"
+                          >
+                            <Trash2 size={13} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

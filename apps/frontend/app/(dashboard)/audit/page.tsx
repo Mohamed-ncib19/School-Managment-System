@@ -18,7 +18,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { auditApi, type AuditListParams } from "@/lib/api/audit.api";
-import { TableSkeleton } from "@/components/shared/skeletons";
+import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -362,7 +362,7 @@ export default function AuditLogPage() {
       </div>
 
       {isPending ? (
-        <TableSkeleton rows={8} columns={5} />
+        <PageLoader text={t("common.loading", "Loading…")} />
       ) : isError ? (
         <ErrorState error={error} onRetry={() => refetch()} isRetrying={isFetching} />
       ) : logs.length === 0 ? (

@@ -8,10 +8,11 @@ import {
   useGenerateMonthlyInvoices,
   useRefreshPaymentStatuses,
 } from "@/hooks/use-financial";
-import { useFields, useGroups, useLevels, useProfessors } from "@/hooks/use-queries";
+import { useFields, useGroups, useLevels, useProfessors, useStudentSearch } from "@/hooks/use-queries";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { PaymentActionsModal } from "@/components/financial/payment-actions-modal";
 import { EmptyState } from "@/components/shared/empty-state";
+import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { openReceipt } from "@/lib/api/financial.api";
 import { statusClasses } from "@/lib/charts/theme";
 import { cn, formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
@@ -82,6 +83,36 @@ export default function StudentPaymentsPage() {
 
   const debouncedSearch = useDebouncedValue(search, 300);
   const debouncedReceipt = useDebouncedValue(receiptNumber, 300);
+
+  /**
+   * While a student is being searched, every hierarchy dropdown below only
+   * offers the entities the matched students actually belong to — one field
+   * searched, one field in the list, and only its child groups selectable.
+   */
+  const { data: matchedStudents } = useStudentSearch(debouncedSearch);
+  const scoped = useMemo(() => {
+    const levels = new Set<string>();
+    const fields = new Set<string>();
+    const professors = new Set<string>();
+    const groups = new Set<string>();
+    for (const student of matchedStudents ?? []) {
+      const chains = student.group ? [student.group, ...(student.assignments ?? []).map((a) => a.group).filter(Boolean)] : [];
+      for (const chain of chains) {
+        if (!chain) continue;
+        groups.add(chain.id);
+        const professor = chain.professor;
+        if (professor) {
+          professors.add(professor.id);
+          const field = professor.field;
+          if (field) {
+            fields.add(field.id);
+            if (field.level) levels.add(field.level.id);
+          }
+        }
+      }
+    }
+    return { levels, fields, professors, groups };
+  }, [matchedStudents]);
 
   const query = useMemo(
     () => ({
@@ -225,7 +256,9 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[130px] text-xs"
           >
             <option value="">{t("students.allLevels", "All levels")}</option>
-            {levels?.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
+            {levels
+              ?.filter((level) => !scoped.levels.size || scoped.levels.has(level.id))
+              .map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
           </select>
           <select
             aria-label={t("nav.fields", "Fields")}
@@ -234,9 +267,11 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[130px] text-xs"
           >
             <option value="">{t("students.allFields", "All fields")}</option>
-            {fields?.filter((f) => !levelId || f.level_id === levelId).map((field) => (
-              <option key={field.id} value={field.id}>{field.name}</option>
-            ))}
+            {fields
+              ?.filter((f) => (!levelId || f.level_id === levelId) && (!scoped.fields.size || scoped.fields.has(f.id)))
+              .map((field) => (
+                <option key={field.id} value={field.id}>{field.name}</option>
+              ))}
           </select>
           <select
             aria-label={t("nav.professors", "Professors")}
@@ -246,9 +281,11 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
           >
             <option value="">{t("students.allProfessors", "All professors")}</option>
-            {professors?.map((professor) => (
-              <option key={professor.id} value={professor.id}>{professor.full_name}</option>
-            ))}
+            {professors
+              ?.filter((p) => !scoped.professors.size || scoped.professors.has(p.id))
+              .map((professor) => (
+                <option key={professor.id} value={professor.id}>{professor.full_name}</option>
+              ))}
           </select>
           <select
             aria-label={t("nav.groups", "Groups")}
@@ -258,7 +295,9 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[130px] text-xs disabled:opacity-50"
           >
             <option value="">{t("students.allGroups", "All groups")}</option>
-            {groups?.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+            {groups
+              ?.filter((g) => !scoped.groups.size || scoped.groups.has(g.id))
+              .map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
           </select>
 
           {QUICK.map((quick) => (
@@ -322,13 +361,7 @@ export default function StudentPaymentsPage() {
           </button>
         </div>
       ) : isLoading ? (
-        <div className="rounded-table border border-border overflow-hidden">
-          {Array.from({ length: 8 }).map((_, index) => (
-            <div key={index} className="h-11 border-b border-border last:border-b-0 flex items-center px-3">
-              <div className="h-4 w-full max-w-3xl rounded bg-neutral-soft dark:bg-white/10 animate-pulse" />
-            </div>
-          ))}
-        </div>
+        <PageLoader text={t("common.loading", "Loading…")} />
       ) : rows.length === 0 ? (
         <EmptyState message={t("payments.noPaymentsYet", "No payments match these filters.")} />
       ) : (
@@ -363,10 +396,45 @@ export default function StudentPaymentsPage() {
                         {payment.context.student_name ?? "—"}
                       </Link>
                     </td>
-                    <td className="px-3 py-2.5 text-text-secondary">{payment.context.level?.name ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-text-secondary">{payment.context.field?.name ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-text-secondary">{payment.context.professor?.name ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-text-secondary">{payment.context.group?.name ?? "—"}</td>
+                     <td className="px-3 py-2.5 text-text-secondary">
+                       <div className="flex flex-wrap gap-1">
+                         {(payment.context.levels?.length ? payment.context.levels : payment.context.level ? [payment.context.level] : []).map((lv) => (
+                           <span key={lv.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                             {lv.name}
+                           </span>
+                         ))}
+                       </div>
+                     </td>
+                     <td className="px-3 py-2.5 text-text-secondary">
+                       <div className="flex flex-wrap gap-1">
+                         {(payment.context.fields?.length ? payment.context.fields : payment.context.field ? [payment.context.field] : []).map((f) => (
+                           <span key={f.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                             {f.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: f.color }} />}
+                             {f.name}
+                           </span>
+                         ))}
+                       </div>
+                     </td>
+                     <td className="px-3 py-2.5 text-text-secondary">
+                       <div className="flex flex-wrap gap-1">
+                         {(payment.context.professors?.length ? payment.context.professors : payment.context.professor ? [payment.context.professor] : []).map((p) => (
+                           <span key={p.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                             {p.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />}
+                             {p.name}
+                           </span>
+                         ))}
+                       </div>
+                     </td>
+                     <td className="px-3 py-2.5 text-text-secondary">
+                       <div className="flex flex-wrap gap-1">
+                         {(payment.context.groups?.length ? payment.context.groups : payment.context.group ? [payment.context.group] : []).map((g) => (
+                           <span key={g.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                             {g.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: g.color }} />}
+                             {g.name}
+                           </span>
+                         ))}
+                       </div>
+                     </td>
                     <td className="px-3 py-2.5 text-text-secondary">{formatPeriod(payment.period)}</td>
                     <td className="px-3 py-2.5 text-text-secondary">{formatDate(payment.due_date)}</td>
                     <td className="px-3 py-2.5 text-text-secondary font-mono text-xs">

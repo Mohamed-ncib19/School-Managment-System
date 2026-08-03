@@ -13,7 +13,6 @@ import {
 import { useFields, useLevels } from "@/hooks/use-queries";
 import { openReceipt } from "@/lib/api/financial.api";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PaymentActionsModal } from "@/components/financial/payment-actions-modal";
 import { formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
@@ -58,19 +57,49 @@ export default function StudentPaymentsPage() {
   // to be re-read from the refreshed list or it keeps a stale balance.
   const monthlyFee = student?.monthly_fee ?? 0;
 
+  /**
+   * The entities this student actually belongs to, from their enrollment
+   * chains. The filters below only offer these — one field enrolled, one field
+   * in the list, and only its child groups selectable.
+   */
+  const scoped = useMemo(() => {
+    const levels = new Set<string>();
+    const fields = new Set<string>();
+    const groups = new Set<string>();
+    const chains = [student?.group, ...(student?.assignments ?? []).map((a) => a.group)];
+    for (const chain of chains) {
+      if (!chain) continue;
+      groups.add(chain.id);
+      const field = chain.professor?.field;
+      if (field) {
+        fields.add(field.id);
+        if (field.level) levels.add(field.level.id);
+      }
+    }
+    return { levels, fields, groups };
+  }, [student]);
+
   /** The groups this student is actually billed for, scoped by the level/field filters. */
   const groupOptions = useMemo(() => {
-    if (!payments) return [];
-    const seen = new Map<string, { id: string; name: string }>();
-    payments.forEach((p) => {
-      const g = p.context.group;
+    const seen = new Map<string, { id: string; name: string; color: string | null }>();
+    const add = (id: string, name: string, color: string | null) => {
+      if (!id || seen.has(id)) return;
+      seen.set(id, { id, name, color });
+    };
+    (student?.assignments ?? []).forEach((a) => {
+      const g = a.group;
       if (!g) return;
-      if (levelId && p.context.level?.id !== levelId) return;
+      if (fieldId && g.professor?.field?.id !== fieldId) return;
+      if (levelId && g.professor?.field?.level?.id !== levelId) return;
+      add(g.id, g.name, g.color);
+    });
+    (payments ?? []).forEach((p) => {
       if (fieldId && p.context.field?.id !== fieldId) return;
-      if (!seen.has(g.id)) seen.set(g.id, { id: g.id, name: g.name });
+      if (levelId && p.context.level?.id !== levelId) return;
+      if (p.context.group) add(p.context.group.id, p.context.group.name, p.context.group.color);
     });
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [payments, levelId, fieldId]);
+  }, [student, payments, fieldId]);
 
   const filteredPayments = useMemo(() => {
     if (!payments) return payments;
@@ -181,7 +210,9 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[140px] text-xs"
           >
             <option value="">{t("students.allLevels", "All levels")}</option>
-            {levels?.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
+            {levels
+              ?.filter((level) => !scoped.levels.size || scoped.levels.has(level.id))
+              .map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
           </select>
           <select
             aria-label={t("nav.fields", "Fields")}
@@ -190,9 +221,11 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[140px] text-xs"
           >
             <option value="">{t("students.allFields", "All fields")}</option>
-            {fields?.filter((f) => !levelId || f.level_id === levelId).map((field) => (
-              <option key={field.id} value={field.id}>{field.name}</option>
-            ))}
+            {fields
+              ?.filter((f) => (!levelId || f.level_id === levelId) && (!scoped.fields.size || scoped.fields.has(f.id)))
+              .map((field) => (
+                <option key={field.id} value={field.id}>{field.name}</option>
+              ))}
           </select>
           <select
             aria-label={t("nav.groups", "Groups")}
@@ -266,7 +299,13 @@ export default function StudentPaymentsPage() {
             </thead>
             <tbody>
               {Array.from({ length: 4 }).map((_, i) => (
-                <LoadingSkeleton key={i} type="table-row" />
+                <tr key={i} className="border-b border-border last:border-b-0">
+                  {Array.from({ length: 10 }).map((_, j) => (
+                    <td key={j} className="px-4 py-3">
+                      <div className="h-4 w-full max-w-24 rounded bg-neutral-soft animate-pulse" />
+                    </td>
+                  ))}
+                </tr>
               ))}
             </tbody>
           </table>
@@ -296,12 +335,18 @@ export default function StudentPaymentsPage() {
                   <td className="px-4 py-3 font-medium">{formatPeriod(p.period)}</td>
                   <td className="px-4 py-3 text-text-secondary">{p.context.level?.name ?? "—"}</td>
                   <td className="px-4 py-3">
-                    <span className="inline-flex items-center rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.field?.name ?? ""}>
+                    <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.field?.name ?? ""}>
+                      {p.context.field?.color && (
+                        <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.field.color }} />
+                      )}
                       {p.context.field?.name ?? t("studentPayments.dash")}
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="inline-flex items-center rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.group?.name ?? ""}>
+                    <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.group?.name ?? ""}>
+                      {p.context.group?.color && (
+                        <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.group.color }} />
+                      )}
                       {p.context.group?.name ?? t("studentPayments.dash")}
                     </span>
                   </td>

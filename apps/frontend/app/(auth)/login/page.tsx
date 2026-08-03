@@ -13,6 +13,7 @@ import { useAuthStore } from "@/hooks/use-auth-store";
 import { FormButton } from "@/components/forms/form-helpers";
 import { useTranslation } from "@/lib/i18n/context";
 import { useSystemSettings } from "@/hooks/use-system-settings";
+import { LoginSkeleton } from "@/components/shared/skeletons";
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
 
@@ -27,7 +28,7 @@ export default function LoginPage() {
     resolver: zodResolver(loginSchema),
   });
 
-  const { data: system } = useSystemSettings();
+  const { data: system, isLoading: systemLoading } = useSystemSettings();
   const systemName = system?.system_name?.trim() || t("app.name", "IQ Academy");
 
   const mutation = useMutation({
@@ -42,6 +43,10 @@ export default function LoginPage() {
   });
 
   const onSubmit = (data: z.infer<typeof loginSchema>) => mutation.mutate(data);
+
+  if (systemLoading) {
+    return <LoginSkeleton />;
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary via-primary-700 to-primary-900 p-4">

@@ -4,18 +4,19 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronRight, Search } from "lucide-react";
 import { professorsApi } from "@/lib/api/professors.api";
 import { useFields, useLevels, useGroups, useStudents } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
 import type { Professor, Field, Level, Group, Student } from "@/types";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { ViewToggle } from "@/components/shared/view-toggle";
 import { TreeView, buildProfessorsTree } from "@/components/shared/tree-view";
-import { normalizeTunisianPhone, TUNISIA_PHONE_PLACEHOLDER } from "@/lib/utils/phone";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { normalizeTunisianPhone } from "@/lib/utils/phone";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function ProfessorsPage() {
@@ -48,6 +49,27 @@ export default function ProfessorsPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
   const [deletedOpen, setDeletedOpen] = useState(false);
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [filterLevelId, setFilterLevelId] = useState("");
+  const [filterFieldId, setFilterFieldId] = useState("");
+
+  const filteredProfessors = useMemo(() => {
+    if (!professors) return [];
+    return professors.filter((prof) => {
+      if (search) {
+        const q = search.toLowerCase();
+        const matchName = prof.full_name.toLowerCase().includes(q);
+        const matchPhone = prof.phone.includes(q);
+        const matchEmail = prof.email?.toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchEmail) return false;
+      }
+      if (filterFieldId && prof.field_id !== filterFieldId) return false;
+      if (filterLevelId && prof.field?.level_id !== filterLevelId) return false;
+      return true;
+    });
+  }, [professors, search, filterLevelId, filterFieldId]);
 
   const resetForm = () => { setFullName(""); setPhone(""); setEmail(""); setFieldId(""); setEditingProf(null); };
 
@@ -97,23 +119,49 @@ export default function ProfessorsPage() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <LoadingSkeleton key={i} type="table-row" />
-            ))}
-          </div>
+          <PageLoader text={t("common.loading", "Loading…")} />
         ) : !professors?.length ? (
           <EmptyState message={t("fieldsHierarchy.noProfessorsYet")} actionLabel={t("fieldsHierarchy.addProfessor")} onAction={openCreate} />
-        ) : viewMode === "tree" ? (
-          <TreeView data={treeData} onSelect={(node) => {
-            if (node.type === "field") router.push(`/hierarchy/field/${node.id}`);
-            if (node.type === "professor") router.push(`/hierarchy/field/${node.meta?.field_id}/professor/${node.id}`);
-            if (node.type === "level") router.push(`/hierarchy/field/${node.meta?.field_id}/professor/${node.meta?.prof_id}/level/${node.id}`);
-            if (node.type === "group") router.push(`/hierarchy/field/${node.meta?.field_id}/professor/${node.meta?.prof_id}/level/${node.meta?.level_id}/group/${node.id}`);
-          }} />
-        ) : viewMode === "cards" ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {professors?.map((prof) => (
+        ) : (
+          <>
+            <div className="card">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" aria-hidden="true" />
+                  <input
+                    type="text"
+                    placeholder={t("fieldsHierarchy.searchProfessors", "Search by name, phone or email…")}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="input pl-9 w-full text-xs"
+                  />
+                </div>
+                <select
+                  aria-label={t("nav.levels", "Levels")}
+                  value={filterLevelId}
+                  onChange={(e) => { setFilterLevelId(e.target.value); setFilterFieldId(""); }}
+                  className="input w-auto min-w-[130px] text-xs"
+                >
+                  <option value="">{t("students.allLevels", "All levels")}</option>
+                  {levels?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+                <select
+                  aria-label={t("nav.fields", "Fields")}
+                  value={filterFieldId}
+                  onChange={(e) => setFilterFieldId(e.target.value)}
+                  className="input w-auto min-w-[130px] text-xs"
+                >
+                  <option value="">{t("students.allFields", "All fields")}</option>
+                  {fields?.filter((f) => !filterLevelId || f.level_id === filterLevelId).map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {viewMode === "cards" ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredProfessors.map((prof) => (
               <div
                 key={prof.id}
                 className="card group cursor-pointer hover:shadow-hover transition-shadow"
@@ -140,7 +188,11 @@ export default function ProfessorsPage() {
                   </div>
                 </div>
                 <div className="mt-3 space-y-1 text-sm">
-                  <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.field")}</span> {prof.field?.name ?? "—"}</p>
+                  <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
+                    <span className="font-medium text-text-primary">{prof.field?.level?.name ?? "—"}</span>
+                    <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                    <span>{prof.field?.name ?? "—"}</span>
+                  </div>
                   <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.email")}</span> {prof.email ?? "—"}</p>
                 </div>
                 <div className="mt-4 flex gap-2">
@@ -157,14 +209,13 @@ export default function ProfessorsPage() {
                 <tr className="bg-background">
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.name")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.phone")}</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.email")}</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.field")}</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.hierarchy", "Hierarchy")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.status")}</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.actions")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {professors?.map((prof) => (
+                {filteredProfessors.map((prof) => (
                   <tr
                     key={prof.id}
                     className="hover:bg-background/50 transition-colors"
@@ -175,15 +226,12 @@ export default function ProfessorsPage() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-text-secondary">{prof.phone}</td>
-                    <td className="px-4 py-3 text-text-secondary">{prof.email ?? t("fieldsHierarchy.dash")}</td>
-                    <td className="px-4 py-3 text-text-secondary">
-                      {prof.field ? (
-                        <Link href={`/hierarchy/field/${prof.field_id}`} className="text-primary hover:underline">
-                          {prof.field.name}
-                        </Link>
-                      ) : (
-                        <span className="text-text-secondary">{t("fieldsHierarchy.dash")}</span>
-                      )}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
+                        <span className="font-medium text-text-primary">{prof.field?.level?.name ?? "—"}</span>
+                        <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                        <span>{prof.field?.name ?? "—"}</span>
+                      </div>
                     </td>
                     <td className="px-4 py-3">{prof.is_active ? <span className="text-xs font-medium text-success-strong">Active</span> : <span className="text-xs font-medium text-text-secondary">Inactive</span>}</td>
                     <td className="px-4 py-3 text-right">
@@ -212,6 +260,8 @@ export default function ProfessorsPage() {
               </tbody>
             </table>
           </div>
+        )}
+          </>
         )}
       </div>
 
@@ -243,7 +293,7 @@ export default function ProfessorsPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.phone")} *</label>
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} className="input" placeholder={TUNISIA_PHONE_PLACEHOLDER} inputMode="tel" required />
+                <PhoneInput value={phone} onChange={setPhone} required />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.emailOptional")}</label>

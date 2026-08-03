@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download, FileSpreadsheet, FileText, Printer } from "lucide-react";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
 import { useReport } from "@/hooks/use-financial";
+import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { downloadReport, openReportDocument } from "@/lib/api/financial.api";
 import type { FinancialFilters } from "@/lib/api/financial.api";
 import { cn, formatCurrency } from "@/lib/utils/format";
@@ -124,11 +125,7 @@ export default function FinancialReportsPage() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 8 }).map((_, index) => (
-              <div key={index} className="h-9 rounded bg-neutral-soft dark:bg-white/10 animate-pulse" />
-            ))}
-          </div>
+          <PageLoader text={t("common.loading", "Loading…")} />
         ) : !report || report.rows.length === 0 ? (
           <div className="py-16 text-center">
             <FileText size={28} className="mx-auto text-text-secondary mb-3" aria-hidden="true" />

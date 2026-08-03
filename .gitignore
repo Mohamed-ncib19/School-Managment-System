@@ -14,6 +14,15 @@ coverage
 # Build artifacts
 *.tsbuildinfo
 
+# Logs (foreground log files, not just the logs/ directory)
+*.log
+
+# One-off local debug/scratch scripts
+apps/backend/check-data.js
+
+# WSL health-check diagnostics (environment-specific output)
+tools/scripts/wsl-result*.txt
+
 # Local operational data — never commit school records, logs, or the DB itself
 backups/
 logs/

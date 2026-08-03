@@ -1,9 +1,9 @@
 "use client";
 
-import { LayoutList, Network, LayoutGrid } from "lucide-react";
+import { LayoutList, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils/format";
 
-export type ViewMode = "list" | "tree" | "cards";
+export type ViewMode = "list" | "cards";
 
 interface ViewToggleProps {
   value: ViewMode;
@@ -13,7 +13,6 @@ interface ViewToggleProps {
 
 const VIEW_OPTIONS: { mode: ViewMode; icon: React.ReactNode; label: string }[] = [
   { mode: "list", icon: <LayoutList size={16} />, label: "List" },
-  { mode: "tree", icon: <Network size={16} />, label: "Tree" },
   { mode: "cards", icon: <LayoutGrid size={16} />, label: "Cards" },
 ];
 

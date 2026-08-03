@@ -1,5 +1,7 @@
 "use client";
 
+import { Component as LumaSpin } from "@/components/ui/luma-spin";
+
 /**
  * Shape-matched loading placeholders.
  *
@@ -221,5 +223,195 @@ export function PageHeaderSkeleton() {
         </div>
       </div>
     </SkeletonRegion>
+  );
+}
+
+/** Full dashboard skeleton: welcome header + 6 stat cards + 2 charts + 2 tables. */
+export function DashboardSkeleton() {
+  return (
+    <SkeletonRegion label="Loading dashboard">
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Shimmer className="h-7 w-48" />
+          <Shimmer className="h-4 w-72" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="card flex items-center gap-3">
+              <Shimmer className="h-10 w-10 rounded-btn shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Shimmer className="h-3 w-24" />
+                <Shimmer className="h-7 w-16" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="card space-y-4">
+            <Shimmer className="h-4 w-36" />
+            <Shimmer className="h-56 w-full rounded-card" />
+          </div>
+          <div className="card space-y-4">
+            <Shimmer className="h-4 w-36" />
+            <Shimmer className="h-56 w-full rounded-card" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="card">
+            <Shimmer className="h-4 w-40 mb-4" />
+            <TableSkeleton rows={5} columns={4} showHeader />
+          </div>
+          <div className="card">
+            <Shimmer className="h-4 w-40 mb-4" />
+            <TableSkeleton rows={5} columns={4} showHeader />
+          </div>
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/** Financial dashboard skeleton: filter bar + 8 KPI cards + 4 chart grids. */
+export function FinancialDashboardSkeleton() {
+  return (
+    <SkeletonRegion label="Loading financial dashboard">
+      <div className="space-y-6">
+        <div className="flex items-center gap-2 flex-wrap">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Shimmer key={i} className="h-9 rounded-btn" style={{ width: i === 0 ? 120 : i < 3 ? 100 : 80 }} />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="card flex items-center gap-3">
+              <Shimmer className="h-10 w-10 rounded-btn shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Shimmer className="h-3 w-24" />
+                <Shimmer className="h-7 w-20" />
+                <Shimmer className="h-3 w-32" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card space-y-4">
+              <Shimmer className="h-4 w-40" />
+              <Shimmer className="h-56 w-full rounded-card" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/** Filter bar + table skeleton for financial table pages. */
+export function FinancialTableSkeleton({ rows = 10, columns = 7 }: { rows?: number; columns?: number }) {
+  return (
+    <SkeletonRegion label="Loading financial data">
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Shimmer key={i} className="h-9 rounded-btn" style={{ width: i === 0 ? 140 : i < 3 ? 110 : 90 }} />
+          ))}
+        </div>
+        <div className="card overflow-hidden">
+          <TableSkeleton rows={rows} columns={columns} />
+        </div>
+        <div className="flex items-center justify-between">
+          <Shimmer className="h-4 w-32" />
+          <div className="flex gap-1">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Shimmer key={i} className="h-8 w-8 rounded-btn" />
+            ))}
+          </div>
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/** Settings page skeleton: left nav + right content cards. */
+export function SettingsSkeleton() {
+  return (
+    <SkeletonRegion label="Loading settings">
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Shimmer className="h-3 w-32" />
+          <Shimmer className="h-7 w-36" />
+          <Shimmer className="h-3 w-56" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-10 items-start">
+          <div className="card p-3 space-y-1.5">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <Shimmer key={i} className="h-11 w-full rounded-btn" />
+            ))}
+          </div>
+          <div className="space-y-6">
+            <div className="card space-y-4">
+              <div className="flex items-center gap-3">
+                <Shimmer className="h-10 w-10 rounded-card" />
+                <div className="space-y-2">
+                  <Shimmer className="h-5 w-32" />
+                  <Shimmer className="h-3 w-48" />
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="space-y-2">
+                    <Shimmer className="h-3 w-24" />
+                    <Shimmer className="h-10 w-full rounded-input" />
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <Shimmer className="h-9 w-32 rounded-btn" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/** Login page skeleton: centered form card. */
+export function LoginSkeleton() {
+  return (
+    <SkeletonRegion label="Loading login">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary via-primary-700 to-primary-900 p-4">
+        <div className="w-full max-w-sm">
+          <div className="bg-surface rounded-modal shadow-hover p-8 space-y-6">
+            <div className="flex flex-col items-center space-y-3">
+              <Shimmer className="h-14 w-14 rounded-card" />
+              <Shimmer className="h-7 w-32" />
+              <Shimmer className="h-4 w-40" />
+            </div>
+            <FormSkeleton fields={2} />
+          </div>
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/** Full-page centered spinner loader shown while primary data is loading. */
+export function PageLoader({ text }: { text?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4" role="status" aria-busy="true">
+      <LumaSpin />
+      {text && <p className="text-sm text-text-secondary">{text}</p>}
+    </div>
+  );
+}
+
+/** Full-page centered spinner with the page header preserved. */
+export function PageLoaderWithHeader() {
+  return (
+    <div className="space-y-6">
+      <PageHeaderSkeleton />
+      <PageLoader />
+    </div>
   );
 }

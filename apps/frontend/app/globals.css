@@ -55,6 +55,12 @@
     --chart-grid: #E5E7EB;
     --chart-axis: #9CA3AF;
     --chart-surface: #FFFFFF;
+
+    /* Shadows. */
+    --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06);
+    --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.08);
+    --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.12);
+    --shadow-dropdown: 0 8px 24px rgba(0, 0, 0, 0.10);
   }
 
   .dark {
@@ -64,26 +70,49 @@
     --color-text-primary: #F1F5F9;
     --color-text-secondary: #94A3B8;
 
+    /* Surface layers for elevation and interaction states. */
+    --color-surface-elevated: #263348;
+    --color-surface-hover: rgba(255, 255, 255, 0.04);
+    --color-surface-active: rgba(255, 255, 255, 0.08);
+    --color-surface-inset: #0B1222;
+
+    /* Semantic soft fills for badges, alerts and table row hover. */
+    --color-soft-success: rgba(34, 197, 94, 0.12);
+    --color-soft-warning: rgba(245, 158, 11, 0.12);
+    --color-soft-danger: rgba(239, 68, 68, 0.12);
+    --color-soft-info: rgba(59, 130, 246, 0.12);
+    --color-soft-primary: rgba(38, 78, 174, 0.18);
+
     --chart-1: #3987E5;
     --chart-2: #D95926;
     --chart-3: #199E70;
     --chart-4: #C98500;
     --chart-5: #9085E9;
 
+    /* Single-hue ramp for magnitude (breakdown bars, heat cells). */
     --chart-seq-100: #193066;
     --chart-seq-300: #4774D6;
     --chart-seq-500: #7597E0;
     --chart-seq-700: #A3B9EB;
 
+    /* Payment states. */
     --chart-paid: #4ADE80;
     --chart-partial: #FBBF24;
     --chart-pending: #94A3B8;
     --chart-overdue: #F87171;
     --chart-cancelled: #64748B;
 
-    --chart-grid: #334155;
+    /* Chart chrome. */
+    --chart-grid: #1E293B;
     --chart-axis: #64748B;
     --chart-surface: #1E293B;
+
+    /* Shadows carry a faint brand tint so elevation reads on dark surfaces. */
+    --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.45);
+    --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.55);
+    --shadow-dropdown: 0 8px 24px rgba(0, 0, 0, 0.45);
+    --shadow-glow-primary: 0 0 0 1px rgba(56, 135, 229, 0.25), 0 4px 16px rgba(56, 135, 229, 0.15);
   }
 
   * {
@@ -107,12 +136,20 @@
     @apply btn bg-primary text-white shadow-card hover:bg-primary-600 hover:shadow-hover;
   }
 
+  .dark .btn-primary {
+    @apply shadow-glow-primary;
+  }
+
   .btn-secondary {
     @apply btn bg-surface border border-primary text-primary hover:bg-primary-50;
   }
 
   .dark .btn-secondary {
-    @apply border-primary/40 hover:bg-primary/10;
+    @apply border-primary/40 hover:bg-primary/10 hover:border-primary/60;
+  }
+
+  .dark .btn-secondary:active {
+    @apply bg-primary/20 border-primary/70;
   }
 
   .btn-danger {
@@ -135,6 +172,11 @@
 
   .dark .input {
     @apply focus:ring-primary/30 disabled:bg-white/5;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+
+  .dark .input:focus {
+    @apply border-primary/60 shadow-glow-primary;
   }
 
   .input-error {
@@ -145,12 +187,28 @@
     @apply rounded-card bg-surface shadow-card p-6;
   }
 
+  .dark .card {
+    @apply shadow-glow-primary border border-white/10;
+  }
+
+  .dark .card:hover {
+    @apply border-primary/20;
+  }
+
   .table-container {
     @apply rounded-table overflow-hidden border border-border shadow-card;
   }
 
+  .dark .table-container {
+    @apply shadow-glow-primary;
+  }
+
   .stat-card {
     @apply card flex items-center gap-4;
+  }
+
+  .dark .stat-card {
+    @apply border-l-4 border-l-primary/50;
   }
 
   .status-badge {
@@ -166,7 +224,7 @@
   }
 
   .dark .modal-content {
-    @apply border border-border;
+    @apply border border-border shadow-glow-primary;
   }
 }
 
@@ -188,6 +246,26 @@
   }
   .dark .scrollbar-thin::-webkit-scrollbar-thumb {
     background-color: #475569;
+  }
+
+  /* Glass morphism for sidebar and navbar in dark mode. */
+  .glass {
+    background-color: rgba(30, 41, 59, 0.78);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+  }
+  .dark .glass {
+    border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+  }
+
+  /* Table row hover in dark mode. */
+  .dark .hover\:bg-background\/50:hover {
+    @apply bg-white/[0.03];
+  }
+
+  /* Custom shadow utilities that respond to dark mode via CSS variables. */
+  .shadow-glow-primary {
+    box-shadow: var(--shadow-glow-primary, 0 0 0 1px rgba(56, 135, 229, 0.25), 0 4px 16px rgba(56, 135, 229, 0.15));
   }
 }
 

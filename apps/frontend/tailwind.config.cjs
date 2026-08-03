@@ -16,6 +16,10 @@ module.exports = {
         },
         surface: {
           DEFAULT: "var(--color-surface)",
+          elevated: "var(--color-surface-elevated, #F8FAFC)",
+          hover: "var(--color-surface-hover, transparent)",
+          active: "var(--color-surface-active, transparent)",
+          inset: "var(--color-surface-inset, #F1F5F9)",
         },
         border: {
           DEFAULT: "var(--color-border)",
@@ -57,10 +61,10 @@ module.exports = {
         table: "12px",
       },
       boxShadow: {
-        card: "0 4px 16px rgba(0,0,0,0.06)",
-        hover: "0 8px 24px rgba(0,0,0,0.08)",
-        modal: "0 16px 48px rgba(0,0,0,0.12)",
-        dropdown: "0 8px 24px rgba(0,0,0,0.10)",
+        card: "var(--shadow-card, 0 4px 16px rgba(0,0,0,0.06))",
+        hover: "var(--shadow-hover, 0 8px 24px rgba(0,0,0,0.08))",
+        modal: "var(--shadow-modal, 0 16px 48px rgba(0,0,0,0.12))",
+        dropdown: "var(--shadow-dropdown, 0 8px 24px rgba(0,0,0,0.10))",
       },
       spacing: {
         1: "4px",

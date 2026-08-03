@@ -4,12 +4,12 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronRight, Search } from "lucide-react";
 import { levelsApi } from "@/lib/api/levels.api";
 import { useProfessors, useFields, useGroups, useStudents } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
 import type { Level, Professor, Field, Group, Student } from "@/types";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
@@ -66,6 +66,14 @@ export default function LevelsPage() {
   const [name, setName] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deletedOpen, setDeletedOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filteredLevels = useMemo(() => {
+    if (!levels) return [];
+    if (!search) return levels;
+    const q = search.toLowerCase();
+    return levels.filter((l) => l.name.toLowerCase().includes(q));
+  }, [levels, search]);
 
   const resetForm = () => { setName(""); setEditingId(null); };
 
@@ -121,68 +129,63 @@ export default function LevelsPage() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <LoadingSkeleton key={i} type="table-row" />
-            ))}
-          </div>
+          <PageLoader text={t("common.loading", "Loading…")} />
         ) : !levels?.length ? (
           <EmptyState message={t("fieldsHierarchy.noLevelsYet")} actionLabel={t("fieldsHierarchy.createLevel")} onAction={openCreate} />
-        ) : viewMode === "tree" ? (
-          <TreeView data={treeData} onSelect={(node) => {
-            if (node.type === "field") router.push(`/hierarchy/field/${node.id}`);
-            if (node.type === "professor") router.push(`/hierarchy/field/${node.meta?.field_id}/professor/${node.id}`);
-            if (node.type === "level") {
-              const fId = node.meta?.field_id;
-              const pId = node.meta?.prof_id;
-              if (fId && pId) router.push(`/hierarchy/field/${fId}/professor/${pId}/level/${node.id}`);
-            }
-            if (node.type === "group") {
-              const fId = node.meta?.field_id;
-              const pId = node.meta?.prof_id;
-              const lId = node.meta?.level_id;
-              if (fId && pId && lId) router.push(`/hierarchy/field/${fId}/professor/${pId}/level/${lId}/group/${node.id}`);
-            }
-          }} />
-        ) : viewMode === "cards" ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {levels?.map((level) => {
-              const fid = fieldIdForLevel(level);
-              const field = fields?.find((f) => f.id === fid);
-              const profsForField = professors?.filter((p) => p.field_id === fid);
-              return (
-                <div
-                  key={level.id}
-                  className="card group cursor-pointer hover:shadow-hover transition-shadow"
-                  onClick={() => fid && router.push(`/hierarchy/field/${fid}`)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold text-text-primary transition-colors group-hover:text-primary">{level.name}</h3>
-                      <p className="text-sm text-text-secondary">{field?.name ?? "—"}</p>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setDeleteId(level.id); }}
-                      className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-danger hover:bg-red-50 transition-colors"
-                      aria-label={t("fieldsHierarchy.deleteLevel", "Delete level")}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                  <div className="mt-3 space-y-1 text-sm">
-                    <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.field")}</span> {field?.name ?? "—"}</p>
-                  </div>
-                  <div className="mt-4 flex gap-2">
-                    <button onClick={(e) => { e.stopPropagation(); openEdit(level); }} className="btn btn-secondary text-xs flex-1">{t("fieldsHierarchy.editLevel")}</button>
-                    {fid && (
-                      <Link href={`/hierarchy/field/${fid}`} onClick={(e) => e.stopPropagation()} className="btn btn-primary text-xs flex-1 text-center">{t("fieldsHierarchy.viewProfessors")}</Link>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         ) : (
+          <>
+            <div className="card">
+              <div className="relative">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" aria-hidden="true" />
+                <input
+                  type="text"
+                  placeholder={t("fieldsHierarchy.searchLevels", "Search levels…")}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="input pl-9 w-full text-xs"
+                />
+              </div>
+            </div>
+
+            {viewMode === "cards" ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredLevels.map((level) => {
+                  const fid = fieldIdForLevel(level);
+                  const field = fields?.find((f) => f.id === fid);
+                  const profsForField = professors?.filter((p) => p.field_id === fid);
+                  return (
+                    <div
+                      key={level.id}
+                      className="card group cursor-pointer hover:shadow-hover transition-shadow"
+                      onClick={() => fid && router.push(`/hierarchy/field/${fid}`)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h3 className="font-semibold text-text-primary transition-colors group-hover:text-primary">{level.name}</h3>
+                          <p className="text-sm text-text-secondary">{field?.name ?? "—"}</p>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDeleteId(level.id); }}
+                          className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-danger hover:bg-red-50 transition-colors"
+                          aria-label={t("fieldsHierarchy.deleteLevel", "Delete level")}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div className="mt-3 space-y-1 text-sm">
+                        <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.field")}</span> {field?.name ?? "—"}</p>
+                      </div>
+                      <div className="mt-4 flex gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); openEdit(level); }} className="btn btn-secondary text-xs flex-1">{t("fieldsHierarchy.editLevel")}</button>
+                        {fid && (
+                          <Link href={`/hierarchy/field/${fid}`} onClick={(e) => e.stopPropagation()} className="btn btn-primary text-xs flex-1 text-center">{t("fieldsHierarchy.viewProfessors")}</Link>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
           <div className="overflow-hidden rounded-table border border-border shadow-card">
             <table className="min-w-full text-sm">
               <thead>
@@ -193,7 +196,7 @@ export default function LevelsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {levels?.map((level) => {
+                {filteredLevels.map((level) => {
                   const fid = fieldIdForLevel(level);
                   const field = fields?.find((f) => f.id === fid);
                   return (
@@ -262,6 +265,8 @@ export default function LevelsPage() {
               </tbody>
             </table>
           </div>
+          )}
+          </>
         )}
       </div>
 

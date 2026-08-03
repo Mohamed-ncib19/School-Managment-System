@@ -15,6 +15,8 @@ import { BackupModule } from "./backup/backup.module";
 import { HierarchyModule } from "./hierarchy/hierarchy.module";
 import { HierarchyConfigModule } from "./hierarchy-config/hierarchy-config.module";
 import { SystemSettingsModule } from "./system-settings/system-settings.module";
+import { AttendanceSheetsModule } from "./attendance-sheets/attendance-sheets.module";
+import { AiModule } from "./ai/ai.module";
 
 @Module({
   imports: [
@@ -34,6 +36,8 @@ import { SystemSettingsModule } from "./system-settings/system-settings.module";
     HierarchyModule,
     HierarchyConfigModule,
     SystemSettingsModule,
+    AttendanceSheetsModule,
+    AiModule,
   ],
 })
 export class AppModule {}

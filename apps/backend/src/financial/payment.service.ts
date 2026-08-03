@@ -26,6 +26,15 @@ const PAYMENT_INCLUDE = {
           professor: { include: { field: { include: { level: true } } } },
         },
       },
+      assignments: {
+        include: {
+          group: {
+            include: {
+              professor: { include: { field: { include: { level: true } } } },
+            },
+          },
+        },
+      },
     },
   },
   // Every invoice names the enrollment it covers; for a multi-group student
@@ -193,10 +202,41 @@ export class PaymentService {
   private present(payment: PaymentWithContext) {
     const due = money(payment.amount_due);
     const paid = money(payment.paid_amount);
-    // The invoice's own group is authoritative: a multi-group student's
-    // invoices each carry the chain of the enrollment they bill.
     const professor = payment.group?.professor ?? payment.student?.group?.professor ?? null;
     const field = professor?.field ?? null;
+
+    const allGroups = new Map<string, { id: string; name: string; color: string | null }>();
+    const allProfessors = new Map<string, { id: string; name: string; color: string | null }>();
+    const allFields = new Map<string, { id: string; name: string; color: string | null }>();
+    const allLevels = new Map<string, { id: string; name: string; color: string | null }>();
+
+    const addChain = (g?: { id: string; name: string; color: string | null } | null, p?: { id: string; full_name: string; color: string | null } | null, f?: { id: string; name: string; color: string | null } | null, l?: { id: string; name: string; color: string | null } | null) => {
+      if (g?.id) allGroups.set(g.id, g);
+      if (p?.id) allProfessors.set(p.id, { id: p.id, name: p.full_name, color: p.color });
+      if (f?.id) allFields.set(f.id, f);
+      if (l?.id) allLevels.set(l.id, l);
+    };
+
+    if (payment.group) {
+      const gp = payment.group.professor;
+      const gf = gp?.field;
+      const gl = gf?.level;
+      addChain(payment.group, gp, gf, gl);
+    }
+    if (payment.student?.group) {
+      const gp = payment.student.group.professor;
+      const gf = gp?.field;
+      const gl = gf?.level;
+      addChain(payment.student.group, gp, gf, gl);
+    }
+    for (const a of payment.student?.assignments ?? []) {
+      const g = a.group;
+      if (!g) continue;
+      const p = g.professor;
+      const f = p?.field;
+      const l = f?.level;
+      addChain(g, p, f, l);
+    }
 
     return {
       ...payment,
@@ -213,10 +253,14 @@ export class PaymentService {
       })),
       context: {
         student_name: payment.student ? `${payment.student.first_name} ${payment.student.last_name}` : null,
-        group: payment.group ? { id: payment.group.id, name: payment.group.name } : null,
-        professor: professor ? { id: professor.id, name: professor.full_name } : null,
-        field: field ? { id: field.id, name: field.name } : null,
-        level: field?.level ? { id: field.level.id, name: field.level.name } : null,
+        group: payment.group ? { id: payment.group.id, name: payment.group.name, color: payment.group.color } : null,
+        professor: professor ? { id: professor.id, name: professor.full_name, color: professor.color } : null,
+        field: field ? { id: field.id, name: field.name, color: field.color } : null,
+        level: field?.level ? { id: field.level.id, name: field.level.name, color: field.level.color } : null,
+        groups: Array.from(allGroups.values()),
+        professors: Array.from(allProfessors.values()),
+        fields: Array.from(allFields.values()),
+        levels: Array.from(allLevels.values()),
       },
     };
   }

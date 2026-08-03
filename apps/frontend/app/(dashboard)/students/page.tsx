@@ -10,7 +10,7 @@ import { useFields, useProfessors, useLevels, useGroups, useStudents } from "@/h
 import { useGenerateInvoiceForStudent } from "@/hooks/use-financial";
 import { useViewMode } from "@/hooks/use-view-mode";
 import type { Student } from "@/types";
-import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ViewToggle } from "@/components/shared/view-toggle";
@@ -19,8 +19,9 @@ import { ConfirmDeleteDialog, FormButton } from "@/components/forms/form-helpers
 import Tooltip from "@/components/shared/tooltip";
 import StudentDetailModal from "@/components/shared/student-detail-modal";
 import { StudentAssignmentsCell, StudentFeeCell } from "@/components/shared/student-assignments";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { formatCurrency, formatDate, studentTotalFee } from "@/lib/utils/format";
-import { normalizeTunisianPhone, TUNISIA_PHONE_PLACEHOLDER } from "@/lib/utils/phone";
+import { normalizeTunisianPhone } from "@/lib/utils/phone";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function StudentsPage() {
@@ -60,6 +61,14 @@ export default function StudentsPage() {
         err?.response?.data?.error?.message ??
           t("students.deleteFailed", "Could not delete this student"),
       );
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      studentsApi.update(id, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
     },
   });
 
@@ -168,27 +177,12 @@ export default function StudentsPage() {
       </div>
 
       {isLoading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <LoadingSkeleton key={i} type="table-row" />
-          ))}
-        </div>
+        <PageLoader text={t("common.loading", "Loading…")} />
       ) : filteredStudents.length === 0 ? (
         <EmptyState
           message={t("students.noStudentsFound")}
           actionLabel={hasFilters ? t("students.clearFilters") : t("students.addStudent", "Add Student")}
           onAction={hasFilters ? clearFilters : () => setAddModalOpen(true)}
-        />
-      ) : viewMode === "tree" ? (
-        <TreeView
-          data={treeData}
-          onSelect={(node) => {
-            if (node.type === "field") router.push(`/hierarchy/field/${node.id}`);
-            if (node.type === "professor") router.push(`/professors`);
-            if (node.type === "level") router.push(`/levels`);
-            if (node.type === "group") router.push(`/groups`);
-          }}
-          onStudentSelect={(student) => setTreeStudentId(student.id)}
         />
       ) : viewMode === "cards" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -202,8 +196,15 @@ export default function StudentsPage() {
                 <StatusBadge status={student.status} />
               </div>
               <div className="mt-3 space-y-1 text-sm">
-                <p className="text-text-secondary"><span className="font-medium">{t("students.groupLabel")}</span> <StudentAssignmentsCell student={student} /></p>
-                 <p className="text-text-secondary"><span className="font-medium">{t("students.fieldLabel")}</span> {student.group?.professor?.field?.name ?? "—"}</p>
+                <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
+                  <span className="font-medium text-text-primary">{student.group?.professor?.field?.level?.name ?? "—"}</span>
+                  <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                  <span>{student.group?.professor?.field?.name ?? "—"}</span>
+                  <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                  <span>{student.group?.professor?.full_name ?? "—"}</span>
+                  <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                  <span>{student.group?.name ?? "—"}</span>
+                </div>
                 <p className="text-text-secondary"><span className="font-medium">{t("students.feeLabel")}</span> {formatCurrency(studentTotalFee(student))}</p>
               </div>
               <div className="mt-4 flex gap-2">
@@ -220,8 +221,7 @@ export default function StudentsPage() {
               <tr className="bg-background">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.name")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.phone")}</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.group")}</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.field")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.hierarchy", "Hierarchy")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.fee")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("students.status")}</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("students.actions")}</th>
@@ -234,10 +234,35 @@ export default function StudentsPage() {
                     <button onClick={() => openStudent(student.id)} className="text-primary hover:underline font-medium">{student.first_name} {student.last_name}</button>
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{student.phone}</td>
-                  <td className="px-4 py-3"><StudentAssignmentsCell student={student} /></td>
-                  <td className="px-4 py-3 text-text-secondary">{student.group?.professor?.field?.name ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
+                      <span className="font-medium text-text-primary">{student.group?.professor?.field?.level?.name ?? "—"}</span>
+                      <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                      <span>{student.group?.professor?.field?.name ?? "—"}</span>
+                      <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                      <span>{student.group?.professor?.full_name ?? "—"}</span>
+                      <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
+                      <span>{student.group?.name ?? "—"}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3"><StudentFeeCell student={student} /></td>
-                  <td className="px-4 py-3"><StatusBadge status={student.status} /></td>
+                  <td className="px-4 py-3">
+                    <select
+                      value={student.status}
+                      onChange={(e) => statusMutation.mutate({ id: student.id, status: e.target.value })}
+                      className={`text-xs font-medium px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-primary ${
+                        student.status === "active"
+                          ? "bg-success-soft text-success-strong"
+                          : student.status === "paused"
+                          ? "bg-gold-50 text-gold-700"
+                          : "bg-danger-soft text-danger-strong"
+                      }`}
+                    >
+                      <option value="active">{t("students.active", "Active")}</option>
+                      <option value="paused">{t("students.paused", "Paused")}</option>
+                      <option value="withdrawn">{t("students.withdrawn", "Withdrawn")}</option>
+                    </select>
+                  </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <Tooltip text={t("students.viewDetails")}>
@@ -427,25 +452,11 @@ function AddStudentModal({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t("students.phone")} *</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="input"
-                placeholder={TUNISIA_PHONE_PLACEHOLDER}
-                inputMode="tel"
-              />
+              <PhoneInput value={phone} onChange={setPhone} />
             </div>
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t("students.parentPhone", "Parent Phone")}</label>
-              <input
-                type="tel"
-                value={parentPhone}
-                onChange={(e) => setParentPhone(e.target.value)}
-                className="input"
-                placeholder={TUNISIA_PHONE_PLACEHOLDER}
-                inputMode="tel"
-              />
+              <PhoneInput value={parentPhone} onChange={setParentPhone} />
             </div>
           </div>
 

@@ -19,3 +19,16 @@ export function normalizeTunisianPhone(value: string): string | null {
   if (!/^\d{8}$/.test(core)) return null;
   return `+216${core}`;
 }
+
+/**
+ * Reduces any stored/typed value to the bare 8 digits, dropping the +216/216/0
+ * prefix and separators. Used to load an entity's saved phone into the input,
+ * which always shows the country code separately.
+ */
+export function stripTunisiaPrefix(value: string): string {
+  let core = value.replace(/[\s().\-_]/g, "");
+  if (core.startsWith("+216")) core = core.slice(4);
+  else if (core.startsWith("216")) core = core.slice(3);
+  else if (core.startsWith("0")) core = core.slice(1);
+  return core.slice(0, 8);
+}

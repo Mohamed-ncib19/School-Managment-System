@@ -2,8 +2,10 @@ import { ApiClient } from "./client";
 import type { Student, StudentPayment } from "@/types";
 
 export const studentsApi = {
-  list: (groupId?: string) =>
-    ApiClient.get<Student[]>("/students", { params: groupId ? { groupId } : {} }),
+  list: (groupId?: string, search?: string) =>
+    ApiClient.get<Student[]>("/students", {
+      params: { ...(groupId ? { groupId } : {}), ...(search ? { search } : {}) },
+    }),
   get: (id: string) => ApiClient.get<Student>(`/students/${id}`),
   create: (data: any) => ApiClient.post<Student>("/students", data),
   update: (id: string, data: any) => ApiClient.put<Student>(`/students/${id}`, data),

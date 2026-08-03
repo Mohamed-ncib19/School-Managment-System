@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, History, Receipt, Search } from "lucide-react";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
 import { useFinancialActivity, useLedger } from "@/hooks/use-financial";
+import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { EmptyState } from "@/components/shared/empty-state";
 import type { FinancialFilters } from "@/lib/api/financial.api";
@@ -136,13 +137,7 @@ export default function TransactionsPage() {
       )}
 
       {isLoading ? (
-        <div className="rounded-table border border-border overflow-hidden">
-          {Array.from({ length: 8 }).map((_, index) => (
-            <div key={index} className="h-11 border-b border-border last:border-b-0 flex items-center px-3">
-              <div className="h-4 w-full max-w-2xl rounded bg-neutral-soft dark:bg-white/10 animate-pulse" />
-            </div>
-          ))}
-        </div>
+        <PageLoader text={t("common.loading", "Loading…")} />
       ) : tab === "ledger" ? (
         (ledger?.data.length ?? 0) === 0 ? (
           <EmptyState message={t("financial.noTransactions", "No transactions in this window.")} />

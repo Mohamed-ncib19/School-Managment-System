@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { PrismaService } from "../prisma/prisma.service";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { AuditService } from "../audit/audit.service";
-import { money, round2, toAmount } from "./money.util";
+import { PayrollDocumentService } from "./payroll-document.service";
+import { money, round2, toAmount, Money } from "./money.util";
+import { billingPeriods } from "./billing.util";
 
 /**
  * Printable quittances.
@@ -21,6 +23,7 @@ export class ReceiptService {
     private readonly prisma: PrismaService,
     private readonly settings: FinancialSettingsService,
     private readonly audit: AuditService,
+    private readonly payrollDocuments: PayrollDocumentService,
   ) {}
 
   /** A receipt for one invoice, listing every movement against it. */
@@ -129,6 +132,11 @@ export class ReceiptService {
     const settings = await this.settings.get();
     const fmt = this.formatters(settings.currency, settings.currency_locale);
 
+    // Fetch settlement for the period to get formula and per-group breakdown
+    const settlement = await this.payrollDocuments.settlementForPeriod(payout.prof_id, payout.period ?? undefined);
+    const formulaDesc = settlement.formula.description;
+    const groups = settlement.groups;
+
     if (userId) {
       await this.audit.record({
         action: "receipt.generated",
@@ -139,6 +147,12 @@ export class ReceiptService {
         meta: { prof_id: payout.prof_id, period: payout.period },
       });
     }
+
+    const groupRows: [string, string][] = groups.flatMap((g) => [
+      [`Groupe : ${g.group}`, `Étudiants : ${g.students}`],
+      [`Encaissements : ${fmt.currency(Number(g.revenue))}`, `Part professeur : ${fmt.currency(Number(g.professor_share))}`],
+      [`Part académie : ${fmt.currency(Number(g.school_share))}`, ""],
+    ]);
 
     return this.document({
       title: "Reçu de Paiement Professeur",
@@ -155,13 +169,48 @@ export class ReceiptService {
         ["Date de paiement", fmt.date(payout.paid_at)],
         ["Méthode de paiement", "Espèces"],
         ["Enregistré par", payout.recorder?.full_name ?? "—"],
-        ...(payout.notes ? ([["Notes", payout.notes]] as [string, string][]) : []),
+        ["Formule appliquée", formulaDesc],
+        ...(payout.notes ? [["Notes", payout.notes]] as [string, string][] : []),
+        ...groupRows,
       ],
       ledger: "",
       headlineLabel: "Montant versé",
       headlineValue: fmt.currency(Number(payout.amount)),
-      subline: "",
+      subline: groups.length > 1 ? `Répartition sur ${groups.length} groupes` : "",
     });
+  }
+
+  private formulaDescription(rule: {
+    model: string;
+    percentage: Money | null;
+    fixedAmount: Money | null;
+    customFormula: string | null;
+    isOverride: boolean;
+  }): string {
+    const pct = rule.percentage !== null ? `${toAmount(rule.percentage)}%` : null;
+    const fixed = rule.fixedAmount !== null ? toAmount(rule.fixedAmount) : null;
+
+    let base: string;
+    switch (rule.model) {
+      case "fixed_salary":
+        base = `Salaire fixe de ${fixed} / mois`;
+        break;
+      case "fixed_per_student":
+        base = `${fixed} par étudiant actif`;
+        break;
+      case "fixed_per_group":
+        base = `${fixed} par groupe actif`;
+        break;
+      case "hybrid":
+        base = `${pct} des encaissements + fixe ${fixed} / mois`;
+        break;
+      case "custom":
+        base = `Formule personnalisée : ${rule.customFormula ?? "—"}`;
+        break;
+      default:
+        base = `${pct} des encaissements`;
+    }
+    return rule.isOverride ? `${base} (arrangement individuel)` : `${base} (défaut académie)`;
   }
 
   private formatters(currency: string, locale: string) {

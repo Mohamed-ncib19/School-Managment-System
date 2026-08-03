@@ -96,6 +96,35 @@ export interface StudentAssignment {
   group?: Group & { professor?: Professor & { field?: Field & { level?: Level } } };
 }
 
+/**
+ * A generated monthly attendance sheet, persisted for reprinting.
+ *
+ * The academic context is a snapshot taken at generation time (teacher, group
+ * and level names plus the student roster), so a reprint shows the list that
+ * was actually handed out rather than whatever the hierarchy looks like today.
+ */
+export interface AttendanceSheet {
+  id: string;
+  group_id: string;
+  month: number;
+  year: number;
+  schedule: string | null;
+  teacher_id: string | null;
+  teacher_name: string;
+  level_name: string;
+  group_name: string;
+  students: Array<{
+    id?: string;
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    parent_phone?: string | null;
+    [key: string]: unknown;
+  }>;
+  generated_by: string | null;
+  generated_at: string;
+}
+
 export interface Student {
   id: string;
   group_id: string;
@@ -142,10 +171,14 @@ export interface PaymentTransaction {
 /** The academic context a payment row needs, resolved server-side. */
 export interface PaymentContext {
   student_name: string | null;
-  group: { id: string; name: string } | null;
-  professor: { id: string; name: string } | null;
-  field: { id: string; name: string } | null;
-  level: { id: string; name: string } | null;
+  group: { id: string; name: string; color: string | null } | null;
+  professor: { id: string; name: string; color: string | null } | null;
+  field: { id: string; name: string; color: string | null } | null;
+  level: { id: string; name: string; color: string | null } | null;
+  groups: { id: string; name: string; color: string | null }[];
+  professors: { id: string; name: string; color: string | null }[];
+  fields: { id: string; name: string; color: string | null }[];
+  levels: { id: string; name: string; color: string | null }[];
 }
 
 export interface StudentPayment {

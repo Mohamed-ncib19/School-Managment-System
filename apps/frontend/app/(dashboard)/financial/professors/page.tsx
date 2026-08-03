@@ -7,6 +7,7 @@ import { usePayroll } from "@/hooks/use-financial";
 import { useFields, useLevels } from "@/hooks/use-queries";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { EmptyState } from "@/components/shared/empty-state";
+import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { payrollStatusClasses } from "@/lib/charts/theme";
 import { cn, formatCurrency } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -121,13 +122,7 @@ export default function ProfessorPaymentsPage() {
       )}
 
       {isLoading ? (
-        <div className="rounded-table border border-border overflow-hidden">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className="h-11 border-b border-border last:border-b-0 flex items-center px-3">
-              <div className="h-4 w-full max-w-2xl rounded bg-neutral-soft dark:bg-white/10 animate-pulse" />
-            </div>
-          ))}
-        </div>
+        <PageLoader text={t("common.loading", "Loading…")} />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<Wallet size={24} />}

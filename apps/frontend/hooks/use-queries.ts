@@ -3,6 +3,7 @@
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
 import { ApiClient } from "@/lib/api/client";
 import { hierarchyApi, type HierarchySummary } from "@/lib/api/hierarchy.api";
+import { studentsApi } from "@/lib/api/students.api";
 import type { Field, Professor, Level, Group, Student } from "@/types";
 
 /**
@@ -64,6 +65,27 @@ export function useStudents(groupId?: string, options?: Omit<UseQueryOptions<Stu
       const params = groupId ? { groupId } : {};
       return ApiClient.get<Student[]>("/students", { params });
     },
+    ...options,
+  });
+}
+
+/**
+ * Students matching a name/phone term, with their full enrollment chain.
+ *
+ * The payments screen uses this to scope the hierarchy filters to the student
+ * being searched: every dropdown then only offers fields, professors and groups
+ * the matched students actually belong to.
+ */
+export function useStudentSearch(
+  search: string,
+  options?: Omit<UseQueryOptions<Student[]>, "queryKey" | "queryFn">,
+) {
+  const term = search.trim();
+  return useQuery({
+    queryKey: ["students", "search", term],
+    queryFn: async () => studentsApi.list(undefined, term),
+    enabled: term.length > 0,
+    staleTime: 30_000,
     ...options,
   });
 }

@@ -49,6 +49,7 @@ import { useBackups, useCreateBackup, useRestoreBackup } from "@/hooks/use-backu
 import { useFinancialSettings, useUploadLogo, useRemoveLogo } from "@/hooks/use-financial";
 import { useSystemSettings, useUpdateSystemSettings, isFeatureEnabled, FEATURE_KEYS, type FeatureKey } from "@/hooks/use-system-settings";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
+import { SettingsSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { apiBaseUrl } from "@/lib/api/client";
 import { cn } from "@/lib/utils/format";
 import type { LucideIcon } from "lucide-react";
@@ -329,6 +330,11 @@ export default function SettingsPage() {
             <p className="text-xs text-text-secondary mt-0.5">{t("settings.subtitle")}</p>
           </div>
         </div>
+
+        {!profile ? (
+          <PageLoader text={t("common.loading", "Loading…")} />
+        ) : (
+        <div>
 
         {success && (
           <div className="bg-success-soft dark:bg-success-dark-soft border border-success/30 dark:border-success-dark/30 text-success-strong dark:text-success-dark-strong text-sm rounded-input px-4 py-3 flex items-center gap-2 shadow-sm">
@@ -1130,6 +1136,8 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+           )}
+        </div>
         )}
       </div>
     </div>
