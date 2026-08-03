@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { PrismaService } from "../prisma/prisma.service";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { AuditService } from "../audit/audit.service";
@@ -80,7 +82,7 @@ export class ReceiptService {
     return this.document({
       title: "Quittance de Paiement",
       brand: settings.academy_name,
-      logoUrl,
+      logoUrl: await this.inlineLogo(logoUrl),
       receiptNumber: primaryReceipt,
       rows: [
         ["Numéro de quittance", primaryReceipt],
@@ -141,7 +143,7 @@ export class ReceiptService {
     return this.document({
       title: "Reçu de Paiement Professeur",
       brand: settings.academy_name,
-      logoUrl,
+      logoUrl: await this.inlineLogo(logoUrl),
       receiptNumber: payout.receipt_number ?? payout.id.slice(0, 8).toUpperCase(),
       rows: [
         ["Numéro de reçu", payout.receipt_number ?? payout.id.slice(0, 8).toUpperCase()],
@@ -216,6 +218,27 @@ export class ReceiptService {
       .replace(/"/g, "&quot;");
   }
 
+  /**
+   * The printed HTML opens in a bare tab, so a remote <img> can race or fail
+   * before the renderer grabs it. Read the file the URL points to and embed it
+   * as a data URI instead; fall back to the remote URL when the file is gone.
+   */
+  private async inlineLogo(logoUrl?: string | null): Promise<string | null> {
+    if (!logoUrl) return null;
+    try {
+      const pathname = new URL(logoUrl).pathname;
+      const data = await readFile(join(process.cwd(), pathname));
+      const mime = pathname.endsWith(".webp")
+        ? "image/webp"
+        : /\.jpe?g$/i.test(pathname)
+          ? "image/jpeg"
+          : "image/png";
+      return `data:${mime};base64,${data.toString("base64")}`;
+    } catch {
+      return logoUrl;
+    }
+  }
+
   /** The shared quittance shell, so both receipt kinds print identically. */
   private document(input: {
     title: string;
@@ -244,10 +267,11 @@ export class ReceiptService {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
     .receipt { max-width: 640px; margin: 0 auto; border: 1px solid #ddd; padding: 30px; }
-    .header { text-align: center; border-bottom: 2px solid #264EBE; padding-bottom: 20px; margin-bottom: 20px; }
-    .header .logo { height: 56px; width: auto; max-width: 60mm; object-fit: contain; margin-bottom: 8px; }
-    .header h1 { color: #264EBE; font-size: 24px; margin-bottom: 5px; }
-    .header p { color: #666; font-size: 14px; }
+    .header { display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #264EBE; padding-bottom: 20px; margin-bottom: 20px; text-align: left; }
+    .header .logo { height: 76px; width: auto; max-width: 55mm; object-fit: contain; flex-shrink: 0; }
+    .header .brand-text { flex: 1; min-width: 0; }
+    .header .brand-text h1 { color: #264EBE; font-size: 24px; margin-bottom: 5px; }
+    .header .brand-text p { color: #666; font-size: 14px; }
     .receipt-title { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #264EBE; }
     .details table { width: 100%; border-collapse: collapse; }
     .details td { padding: 8px 0; border-bottom: 1px solid #eee; }
@@ -271,8 +295,10 @@ export class ReceiptService {
   <div class="receipt">
     <div class="header">
       ${input.logoUrl ? `<img class="logo" src="${this.escape(input.logoUrl)}" alt="${brand}">` : ""}
-      <h1>${brand}</h1>
-      <p>Reçu de Paiement</p>
+      <div class="brand-text">
+        <h1>${brand}</h1>
+        <p>Reçu de Paiement</p>
+      </div>
     </div>
     <div class="receipt-title">${this.escape(input.title)}</div>
     <div class="details"><table>${details}</table></div>

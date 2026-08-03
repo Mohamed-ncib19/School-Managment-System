@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Download, FileSpreadsheet, FileText, Printer } from "lucide-react";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
 import { useReport } from "@/hooks/use-financial";
-import { downloadReport } from "@/lib/api/financial.api";
+import { downloadReport, openReportDocument } from "@/lib/api/financial.api";
 import type { FinancialFilters } from "@/lib/api/financial.api";
 import { cn, formatCurrency } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -42,7 +42,11 @@ export default function FinancialReportsPage() {
   const handleExport = async (format: "pdf" | "excel" | "csv") => {
     setExporting(format);
     try {
-      await downloadReport({ ...query, format });
+      if (format === "pdf") {
+        await openReportDocument(query);
+      } else {
+        await downloadReport({ ...query, format });
+      }
     } finally {
       setExporting(null);
     }
@@ -51,14 +55,20 @@ export default function FinancialReportsPage() {
   return (
     <div className="space-y-4">
       <div className="card">
-        <div className="flex items-center gap-2 flex-wrap">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+          {t("financial.reports.reportType", "Report type")}
+        </p>
+        <div className="flex flex-wrap gap-2">
           {REPORTS.map((option) => (
             <button
               key={option.value}
               type="button"
               onClick={() => setType(option.value)}
               aria-pressed={type === option.value}
-              className={cn("btn text-xs", type === option.value ? "btn-primary" : "btn-secondary")}
+              className={cn(
+                "btn text-xs min-w-[140px]",
+                type === option.value ? "btn-primary" : "btn-secondary",
+              )}
             >
               {t(option.label)}
             </button>

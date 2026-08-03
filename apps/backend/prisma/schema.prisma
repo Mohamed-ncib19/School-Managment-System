@@ -476,3 +476,22 @@ model hierarchy_configurations {
 
   @@map("hierarchy_configurations")
 }
+
+/// School-wide system configuration. Exactly one row, guarded by `singleton`.
+///
+/// `system_name` is the academy's name as shown in the browser tab, the login
+/// screen and the sidebar. `features` is a map of module toggles (fields,
+/// levels, students, professors, groups, attendance, financial.*, import,
+/// audit, backups) that lets each school hide the parts of the product it
+/// does not use, so the same build serves differently-shaped academies.
+model system_settings {
+  /// Always "global" - a CHECK constraint makes a second row impossible.
+  singleton   String   @id @default("global")
+  system_name String   @default("IQ Academy")
+  /// Module toggles: key -> boolean (absent means enabled).
+  features    Json     @default("{}")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("system_settings")
+}

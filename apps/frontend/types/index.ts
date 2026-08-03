@@ -456,6 +456,16 @@ export interface FinancialSettings {
   updated_at: string;
 }
 
+export interface SystemSettings {
+  singleton: string;
+  /** The school's display name: browser tab, login screen, sidebar. */
+  system_name: string;
+  /** Module toggles: key -> boolean (absent means enabled). */
+  features: Record<string, boolean>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AuditLog {
   id: string;
   /** Null for unauthenticated events such as a failed login. */

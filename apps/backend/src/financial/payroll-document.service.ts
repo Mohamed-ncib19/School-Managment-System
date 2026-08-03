@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { PayrollDocumentType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -506,8 +508,30 @@ export class PayrollDocumentService {
     if (!doc) throw new NotFoundException(`Settlement document ${docId} not found`);
 
     const snapshot = doc.data as unknown as SettlementSnapshot;
-    if (doc.type === "school_settlement") return this.schoolSettlementHtml(snapshot, logoUrl);
-    return this.professorReceiptHtml(snapshot, logoUrl);
+    const logo = await this.inlineLogo(logoUrl);
+    if (doc.type === "school_settlement") return this.schoolSettlementHtml(snapshot, logo);
+    return this.professorReceiptHtml(snapshot, logo);
+  }
+
+  /**
+   * The printed HTML opens in a bare tab, so a remote <img> can race or fail
+   * before the renderer grabs it. Read the file the URL points to and embed it
+   * as a data URI instead; fall back to the remote URL when the file is gone.
+   */
+  private async inlineLogo(logoUrl?: string | null): Promise<string | null> {
+    if (!logoUrl) return null;
+    try {
+      const pathname = new URL(logoUrl).pathname;
+      const data = await readFile(join(process.cwd(), pathname));
+      const mime = pathname.endsWith(".webp")
+        ? "image/webp"
+        : /\.jpe?g$/i.test(pathname)
+          ? "image/jpeg"
+          : "image/png";
+      return `data:${mime};base64,${data.toString("base64")}`;
+    } catch {
+      return logoUrl;
+    }
   }
 
   /** The professor's copy — the official payroll receipt handed to them. */
@@ -754,7 +778,7 @@ export class PayrollDocumentService {
     header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #264EBE; padding-bottom: 10px; margin-bottom: 14px; }
     .brand h1 { color: #264EBE; font-size: 22px; letter-spacing: .01em; }
     .brand .coords { color: #6b7280; font-size: 10px; margin-top: 3px; line-height: 1.5; }
-    .brand .logo { height: 44px; width: auto; max-width: 90mm; object-fit: contain; display: block; margin-bottom: 6px; }
+    .brand .logo { height: 76px; width: auto; max-width: 55mm; object-fit: contain; display: block; margin-bottom: 6px; }
     .doc-ref { text-align: right; font-size: 10px; color: #6b7280; }
     .doc-ref strong { display: block; color: #264EBE; font-size: 13px; margin-top: 2px; }
     h2.section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #264EBE; margin: 16px 0 8px; }

@@ -1,4 +1,6 @@
 import { Injectable } from "@nestjs/common";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Workbook } from "exceljs";
 import { FinancialSettingsService } from "./financial-settings.service";
 import type { ReportTable } from "./financial-report.service";
@@ -28,14 +30,46 @@ export class FinancialExportService {
   constructor(private readonly settings: FinancialSettingsService) {}
 
   async export(report: ReportTable, format: "csv" | "excel" | "pdf"): Promise<ExportedFile> {
+    // The academy's locale decides both the CSV delimiter and the number format
+    // exported — a file that opens as one long column is not a report.
+    const settings = await this.settings.get();
+    const locale = settings.currency_locale;
+    const csvDelimiter = locale.startsWith("fr") ? ";" : ",";
+    const currencySymbol =
+      new Intl.NumberFormat(locale, { style: "currency", currency: report.currency })
+        .formatToParts(0)
+        .find((p) => p.type === "currency")?.value ?? report.currency;
+    const brand = settings.academy_name || "IQ Academy";
+    const logo = await this.inlineLogo(settings.logo_path);
+
     switch (format) {
       case "csv":
-        return this.toCsv(report);
+        return this.toCsv(report, csvDelimiter);
       case "excel":
-        return this.toExcel(report);
+        return this.toExcel(report, currencySymbol);
       case "pdf":
       default:
-        return this.toPrintableHtml(report);
+        return this.toPrintableHtml(report, brand, logo);
+    }
+  }
+
+  /**
+   * The printed document opens in a bare tab, so a remote <img> can race or
+   * fail before the renderer grabs it. Read the logo file and embed it as a
+   * data URI instead; null when no logo is set.
+   */
+  private async inlineLogo(logoPath: string | null | undefined): Promise<string | null> {
+    if (!logoPath) return null;
+    try {
+      const data = await readFile(join(process.cwd(), logoPath));
+      const mime = logoPath.endsWith(".webp")
+        ? "image/webp"
+        : /\.jpe?g$/i.test(logoPath)
+          ? "image/jpeg"
+          : "image/png";
+      return `data:${mime};base64,${data.toString("base64")}`;
+    } catch {
+      return null;
     }
   }
 
@@ -45,31 +79,35 @@ export class FinancialExportService {
   }
 
   /**
-   * RFC 4180 quoting throughout.
+   * RFC 4180 quoting throughout, with a locale-aware separator.
    *
    * The BOM is deliberate: Excel on a French or Arabic Windows install opens a
    * BOM-less UTF-8 CSV in the system codepage, which turns every accented name
-   * in the academy's roster into mojibake.
+   * in the academy's roster into mojibake. The separator matters just as much:
+   * Excel uses the system's list separator, which is ";" on French regional
+   * settings — a comma-separated file opens there as one endless column.
    */
-  private toCsv(report: ReportTable): ExportedFile {
+  private toCsv(report: ReportTable, delimiter: string): ExportedFile {
     const escape = (value: unknown): string => {
       if (value === null || value === undefined) return "";
       const text = String(value);
-      return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      return new RegExp(`[",\\n\\r${delimiter}]`).test(text)
+        ? `"${text.replace(/"/g, '""')}"`
+        : text;
     };
 
     const lines: string[] = [];
     lines.push(escape(report.title));
-    lines.push(escape(`Generated ${report.generated_at} · ${report.range.from} to ${report.range.to}`));
+    lines.push(escape(`Généré le ${report.generated_at} · de ${report.range.from} à ${report.range.to}`));
     lines.push("");
-    lines.push(report.columns.map((c) => escape(c.label)).join(","));
+    lines.push(report.columns.map((c) => escape(c.label)).join(delimiter));
 
     for (const row of report.rows) {
-      lines.push(report.columns.map((c) => escape(row[c.key])).join(","));
+      lines.push(report.columns.map((c) => escape(row[c.key])).join(delimiter));
     }
 
     if (report.totals) {
-      lines.push(report.columns.map((c) => escape(report.totals?.[c.key])).join(","));
+      lines.push(report.columns.map((c) => escape(report.totals?.[c.key])).join(delimiter));
     }
 
     for (const note of report.footnotes) {
@@ -84,7 +122,7 @@ export class FinancialExportService {
     };
   }
 
-  private async toExcel(report: ReportTable): Promise<ExportedFile> {
+  private async toExcel(report: ReportTable, currencySymbol: string): Promise<ExportedFile> {
     const workbook = new Workbook();
     workbook.creator = "IQ Academy";
     workbook.created = new Date(report.generated_at);
@@ -99,8 +137,8 @@ export class FinancialExportService {
     sheet.mergeCells(1, 1, 1, Math.max(report.columns.length, 1));
 
     const metaRow = sheet.addRow([
-      `Generated ${new Date(report.generated_at).toLocaleString("fr-FR")} · ` +
-        `${report.range.from.slice(0, 10)} to ${report.range.to.slice(0, 10)} · ${report.currency}`,
+      `Généré le ${new Date(report.generated_at).toLocaleString("fr-FR")} · ` +
+        `${report.range.from.slice(0, 10)} au ${report.range.to.slice(0, 10)} · ${report.currency}`,
     ]);
     metaRow.font = { size: 9, italic: true, color: { argb: "FF6B7280" } };
     sheet.mergeCells(2, 1, 2, Math.max(report.columns.length, 1));
@@ -129,7 +167,11 @@ export class FinancialExportService {
 
       report.columns.forEach((column, index) => {
         if (column.numeric) {
-          added.getCell(index + 1).numFmt = "#,##0.00";
+          // The number format carries the currency symbol, like the cells on
+          // screen (the separator is the viewer's own regional setting, so the
+          // file renders as "1 500,00 DT" on a French Excel and "1,500.00 DT"
+          // on an English one).
+          added.getCell(index + 1).numFmt = `#,##0.00" ${currencySymbol}"`;
           added.getCell(index + 1).alignment = { horizontal: "right" };
         }
       });
@@ -146,11 +188,12 @@ export class FinancialExportService {
           return value ?? "";
         }),
       );
-      totals.font = { bold: true };
-      totals.border = { top: { style: "thin", color: { argb: "FF264EBE" } } };
+      totals.font = { bold: true, color: { argb: "FF264EAE" } };
+      totals.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8EEFB" } };
+      totals.border = { top: { style: "thin", color: { argb: "FF264EAE" } } };
       report.columns.forEach((column, index) => {
         if (column.numeric) {
-          totals.getCell(index + 1).numFmt = "#,##0.00";
+          totals.getCell(index + 1).numFmt = `#,##0.00" ${currencySymbol}"`;
           totals.getCell(index + 1).alignment = { horizontal: "right" };
         }
       });
@@ -181,7 +224,7 @@ export class FinancialExportService {
     };
   }
 
-  private toPrintableHtml(report: ReportTable): ExportedFile {
+  private toPrintableHtml(report: ReportTable, brand: string, logo: string | null): ExportedFile {
     const escape = (value: unknown): string =>
       String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -221,11 +264,11 @@ export class FinancialExportService {
       : "";
 
     const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escape(report.title)} — IQ Academy</title>
+<title>${escape(report.title)} — ${escape(brand)}</title>
 <style>
   @page { size: A4 landscape; margin: 12mm; }
   * { box-sizing: border-box; }
@@ -234,6 +277,7 @@ export class FinancialExportService {
   h1 { color: #264EBE; font-size: 20px; margin: 0 0 4px; }
   .meta { color: #6b7280; font-size: 11px; }
   .brand { text-align: right; font-weight: 700; color: #264EBE; font-size: 16px; }
+  .brand .logo { height: 60px; width: auto; max-width: 55mm; object-fit: contain; display: block; margin-left: auto; margin-bottom: 6px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
   th { background: #264EBE; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; }
@@ -256,16 +300,19 @@ export class FinancialExportService {
     <div>
       <h1>${escape(report.title)}</h1>
       <div class="meta">
-        ${escape(report.range.from.slice(0, 10))} &mdash; ${escape(report.range.to.slice(0, 10))}
+        du ${escape(report.range.from.slice(0, 10))} au ${escape(report.range.to.slice(0, 10))}
         &middot; ${escape(report.currency)}
-        &middot; generated ${escape(new Date(report.generated_at).toLocaleString("fr-FR"))}
+        &middot; généré le ${escape(new Date(report.generated_at).toLocaleString("fr-FR"))}
       </div>
     </div>
-    <div class="brand">IQ Academy</div>
+    <div class="brand">
+      ${logo ? `<img class="logo" src="${logo}" alt="${escape(brand)}">` : ""}
+      <div>${escape(brand)}</div>
+    </div>
   </header>
   ${
     report.rows.length === 0
-      ? `<div class="empty">No data for the selected filters.</div>`
+      ? `<div class="empty">Aucune donnée pour les filtres sélectionnés.</div>`
       : `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody>${totals}</table>`
   }
   ${notes}

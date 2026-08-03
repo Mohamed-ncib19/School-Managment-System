@@ -69,27 +69,32 @@ export function FinancialFilterBar({
 
   return (
     <div className="card space-y-3">
-      <div className="flex items-center gap-2 flex-wrap">
-        {QUICK_RANGES.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() =>
-              set({
-                range: value.range === option.value ? undefined : option.value,
-                from: undefined,
-                to: undefined,
-              })
-            }
-            aria-pressed={value.range === option.value}
-            className={cn(
-              "btn text-xs",
-              value.range === option.value ? "btn-primary" : "btn-secondary",
-            )}
-          >
-            {t(option.label)}
-          </button>
-        ))}
+      <div>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+          {t("financial.period", "Period")}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {QUICK_RANGES.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() =>
+                set({
+                  range: value.range === option.value ? undefined : option.value,
+                  from: undefined,
+                  to: undefined,
+                })
+              }
+              aria-pressed={value.range === option.value}
+              className={cn(
+                "btn text-xs min-w-[110px]",
+                value.range === option.value ? "btn-primary" : "btn-secondary",
+              )}
+            >
+              {t(option.label)}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">

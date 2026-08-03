@@ -8,6 +8,37 @@ import { AcademicFilter, paymentWhere, professorWhere, resolveRange, studentWher
 import { periodOfDate, type DateRange } from "./period.util";
 import type { ReportQueryDto, ReportType } from "./dto/analytics.dto";
 
+/** Exported reports are in French, whatever language the desk runs in. */
+const TRANSACTION_TYPE_LABELS: Record<string, string> = {
+  payment: "Paiement",
+  refund: "Remboursement",
+  correction: "Correction",
+};
+
+const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  paid: "Payé",
+  partially_paid: "Partiellement payé",
+  overdue: "En retard",
+  due_soon: "Échéance proche",
+  not_paid: "Non payé",
+  cancelled: "Annulé",
+};
+
+const PAYROLL_STATUS_LABELS: Record<string, string> = {
+  paid: "Versé",
+  partial: "Partiel",
+  unpaid: "Non payé",
+};
+
+const COMPENSATION_MODEL_LABELS: Record<string, string> = {
+  percentage: "Pourcentage",
+  fixed_salary: "Salaire fixe",
+  fixed_per_student: "Forfait par étudiant",
+  fixed_per_group: "Forfait par groupe",
+  hybrid: "Hybride",
+  custom: "Personnalisé",
+};
+
 /** A report rendered as a table: the exporters turn this into CSV, Excel or PDF. */
 export interface ReportTable {
   type: ReportType;
@@ -123,7 +154,7 @@ export class FinancialReportService {
       return {
         receipt_number: row.receipt_number,
         paid_at: row.paid_at.toISOString().slice(0, 10),
-        type: row.type,
+        type: TRANSACTION_TYPE_LABELS[row.type] ?? row.type,
         student: student ? `${student.first_name} ${student.last_name}` : "—",
         level: field?.level?.name ?? "—",
         field: field?.name ?? "—",
@@ -138,21 +169,21 @@ export class FinancialReportService {
     });
 
     return {
-      title: "Collection report",
+      title: "Rapport des encaissements",
       columns: [
-        { key: "receipt_number", label: "Receipt" },
+        { key: "receipt_number", label: "Reçu" },
         { key: "paid_at", label: "Date" },
         { key: "type", label: "Type" },
-        { key: "student", label: "Student" },
-        { key: "level", label: "Level" },
-        { key: "field", label: "Field" },
-        { key: "professor", label: "Professor" },
-        { key: "group", label: "Group" },
-        { key: "period", label: "Period" },
-        { key: "amount", label: "Amount", align: "right" as const, numeric: true },
-        { key: "professor_share", label: "Professor", align: "right" as const, numeric: true },
-        { key: "school_share", label: "School", align: "right" as const, numeric: true },
-        { key: "recorded_by", label: "Recorded by" },
+        { key: "student", label: "Étudiant" },
+        { key: "level", label: "Niveau" },
+        { key: "field", label: "Filière" },
+        { key: "professor", label: "Professeur" },
+        { key: "group", label: "Groupe" },
+        { key: "period", label: "Période" },
+        { key: "amount", label: "Montant", align: "right" as const, numeric: true },
+        { key: "professor_share", label: "Part professeur", align: "right" as const, numeric: true },
+        { key: "school_share", label: "Part académie", align: "right" as const, numeric: true },
+        { key: "recorded_by", label: "Enregistré par" },
       ],
       rows: data,
       totals: {
@@ -162,8 +193,8 @@ export class FinancialReportService {
         school_share: toAmount(round2(schoolTotal)),
       },
       footnotes: [
-        "Refunds appear as negative amounts and are already netted off the totals.",
-        "Shares are the figures apportioned when each payment was taken, not a recalculation at today's rates.",
+        "Les remboursements apparaissent en montants négatifs et sont déjà déduits des totaux.",
+        "Les parts sont les montants répartis lors de chaque encaissement, pas un recalcul aux taux actuels.",
       ],
     };
   }
@@ -204,7 +235,7 @@ export class FinancialReportService {
         days_overdue: row.due_date < today
           ? Math.floor((today.getTime() - row.due_date.getTime()) / 86_400_000)
           : 0,
-        status: row.status,
+        status: PAYMENT_STATUS_LABELS[row.status] ?? row.status,
         amount_due: toAmount(money(row.amount_due)),
         paid: toAmount(money(row.paid_amount)),
         balance: toAmount(balance),
@@ -212,27 +243,27 @@ export class FinancialReportService {
     });
 
     return {
-      title: "Outstanding payments",
+      title: "Paiements en souffrance",
       columns: [
-        { key: "student", label: "Student" },
-        { key: "phone", label: "Phone" },
-        { key: "level", label: "Level" },
-        { key: "field", label: "Field" },
-        { key: "professor", label: "Professor" },
-        { key: "group", label: "Group" },
-        { key: "period", label: "Period" },
-        { key: "due_date", label: "Due" },
-        { key: "days_overdue", label: "Days late", align: "right" as const, numeric: true },
-        { key: "status", label: "Status" },
-        { key: "amount_due", label: "Due", align: "right" as const, numeric: true },
-        { key: "paid", label: "Paid", align: "right" as const, numeric: true },
-        { key: "balance", label: "Balance", align: "right" as const, numeric: true },
+        { key: "student", label: "Étudiant" },
+        { key: "phone", label: "Téléphone" },
+        { key: "level", label: "Niveau" },
+        { key: "field", label: "Filière" },
+        { key: "professor", label: "Professeur" },
+        { key: "group", label: "Groupe" },
+        { key: "period", label: "Période" },
+        { key: "due_date", label: "Échéance" },
+        { key: "days_overdue", label: "Jours de retard", align: "right" as const, numeric: true },
+        { key: "status", label: "Statut" },
+        { key: "amount_due", label: "Dû", align: "right" as const, numeric: true },
+        { key: "paid", label: "Payé", align: "right" as const, numeric: true },
+        { key: "balance", label: "Solde", align: "right" as const, numeric: true },
       ],
       rows: data,
-      totals: { student: `${data.length} invoices`, balance: toAmount(round2(total)) },
+      totals: { student: `${data.length} factures`, balance: toAmount(round2(total)) },
       footnotes: [
-        "Cancelled invoices are excluded — they were voided rather than left unpaid.",
-        "Partially paid invoices appear at their remaining balance.",
+        "Les factures annulées sont exclues — elles ont été annulées plutôt que laissées impayées.",
+        "Les factures partiellement payées apparaissent au solde restant.",
       ],
     };
   }
@@ -249,8 +280,8 @@ export class FinancialReportService {
 
     if (professors.length === 0) {
       return {
-        title: `Professor payroll — ${targetPeriod}`,
-        columns: [{ key: "professor", label: "Professor" }],
+        title: `Masse salariale — ${targetPeriod}`,
+        columns: [{ key: "professor", label: "Professeur" }],
         rows: [],
         totals: null,
         footnotes: [],
@@ -287,7 +318,7 @@ export class FinancialReportService {
         professor: professor.full_name,
         level: professor.field?.level?.name ?? "—",
         field: professor.field?.name ?? "—",
-        model: entitlement?.model ?? "percentage",
+        model: COMPENSATION_MODEL_LABELS[entitlement?.model ?? "percentage"] ?? entitlement?.model ?? "Pourcentage",
         students: entitlement?.studentCount ?? 0,
         groups: entitlement?.groupCount ?? 0,
         from_collections: toAmount(entitlement?.fromCollections ?? ZERO),
@@ -295,36 +326,40 @@ export class FinancialReportService {
         earned: toAmount(earned),
         paid: toAmount(paid),
         balance: toAmount(balance),
-        status: paid.greaterThanOrEqualTo(earned) ? "paid" : paid.greaterThan(0) ? "partial" : "unpaid",
+        status: paid.greaterThanOrEqualTo(earned)
+          ? PAYROLL_STATUS_LABELS.paid
+          : paid.greaterThan(0)
+            ? PAYROLL_STATUS_LABELS.partial
+            : PAYROLL_STATUS_LABELS.unpaid,
       };
     });
 
     return {
-      title: `Professor payroll — ${targetPeriod}`,
+      title: `Masse salariale — ${targetPeriod}`,
       columns: [
-        { key: "professor", label: "Professor" },
-        { key: "level", label: "Level" },
-        { key: "field", label: "Field" },
-        { key: "model", label: "Model" },
-        { key: "students", label: "Students", align: "right" as const, numeric: true },
-        { key: "groups", label: "Groups", align: "right" as const, numeric: true },
-        { key: "from_collections", label: "From collections", align: "right" as const, numeric: true },
-        { key: "fixed", label: "Fixed", align: "right" as const, numeric: true },
-        { key: "earned", label: "Earned", align: "right" as const, numeric: true },
-        { key: "paid", label: "Paid", align: "right" as const, numeric: true },
-        { key: "balance", label: "Balance", align: "right" as const, numeric: true },
-        { key: "status", label: "Status" },
+        { key: "professor", label: "Professeur" },
+        { key: "level", label: "Niveau" },
+        { key: "field", label: "Filière" },
+        { key: "model", label: "Modèle" },
+        { key: "students", label: "Étudiants", align: "right" as const, numeric: true },
+        { key: "groups", label: "Groupes", align: "right" as const, numeric: true },
+        { key: "from_collections", label: "Part des encaissements", align: "right" as const, numeric: true },
+        { key: "fixed", label: "Forfait", align: "right" as const, numeric: true },
+        { key: "earned", label: "Acquis", align: "right" as const, numeric: true },
+        { key: "paid", label: "Versé", align: "right" as const, numeric: true },
+        { key: "balance", label: "Solde", align: "right" as const, numeric: true },
+        { key: "status", label: "Statut" },
       ],
       rows: data,
       totals: {
-        professor: `${data.length} professors`,
+        professor: `${data.length} professeurs`,
         earned: toAmount(round2(earnedTotal)),
         paid: toAmount(round2(paidTotal)),
         balance: toAmount(round2(balanceTotal)),
       },
       footnotes: [
-        "Percentage earnings are the shares apportioned at collection time, not a recalculation at today's rates.",
-        "Salary and per-head elements are evaluated against the professor's current roster.",
+        "Les parts en pourcentage sont les montants répartis lors de l'encaissement, pas un recalcul aux taux actuels.",
+        "Les éléments de salaire fixe et par étudiant sont évalués sur l'effectif actuel du professeur.",
       ],
     };
   }
@@ -353,25 +388,25 @@ export class FinancialReportService {
     });
 
     return {
-      title: "School revenue",
+      title: "Revenu école",
       columns: [
-        { key: "period", label: "Period" },
-        { key: "revenue", label: "Collected", align: "right" as const, numeric: true },
-        { key: "school_share", label: "School share", align: "right" as const, numeric: true },
-        { key: "payroll_paid", label: "Payroll paid", align: "right" as const, numeric: true },
+        { key: "period", label: "Période" },
+        { key: "revenue", label: "Encaissé", align: "right" as const, numeric: true },
+        { key: "school_share", label: "Part académie", align: "right" as const, numeric: true },
+        { key: "payroll_paid", label: "Paie versée", align: "right" as const, numeric: true },
         { key: "profit", label: "Net", align: "right" as const, numeric: true },
       ],
       rows: data,
       totals: {
-        period: `${data.length} periods`,
+        period: `${data.length} périodes`,
         revenue: toAmount(round2(revenueTotal)),
         school_share: toAmount(round2(schoolTotal)),
         payroll_paid: toAmount(round2(payrollTotal)),
         profit: toAmount(round2(profitTotal)),
       },
       footnotes: [
-        "Payroll is counted when it was handed over, not when it was earned.",
-        "Net is the school's share less payroll actually paid in the same bucket, so a month that settles the previous month's wages will show lower.",
+        "La paie est comptée au moment du versement, pas à celui de son acquisition.",
+        "Le net est la part de l'académie moins la paie réellement versée dans la même période ; un mois qui solde les salaires du mois précédent sera donc plus bas.",
       ],
     };
   }
@@ -396,20 +431,25 @@ export class FinancialReportService {
       };
     });
 
-    const label = dimension.charAt(0).toUpperCase() + dimension.slice(1);
+    const DIMENSION_LABELS: Record<string, { singular: string; plural: string }> = {
+      level: { singular: "Niveau", plural: "niveaux" },
+      professor: { singular: "Professeur", plural: "professeurs" },
+      group: { singular: "Groupe", plural: "groupes" },
+    };
+    const labels = DIMENSION_LABELS[dimension] ?? { singular: dimension, plural: dimension };
 
     return {
-      title: `Revenue by ${dimension}`,
+      title: `Revenus par ${labels.singular.toLowerCase()}`,
       columns: [
-        { key: "name", label },
-        { key: "revenue", label: "Collected", align: "right" as const, numeric: true },
-        { key: "school_share", label: "School", align: "right" as const, numeric: true },
-        { key: "professor_share", label: "Professor", align: "right" as const, numeric: true },
+        { key: "name", label: labels.singular },
+        { key: "revenue", label: "Encaissé", align: "right" as const, numeric: true },
+        { key: "school_share", label: "Part académie", align: "right" as const, numeric: true },
+        { key: "professor_share", label: "Part professeur", align: "right" as const, numeric: true },
         { key: "transactions", label: "Transactions", align: "right" as const, numeric: true },
       ],
       rows: data,
       totals: {
-        name: `${data.length} ${dimension}s`,
+        name: `${data.length} ${labels.plural}`,
         revenue: toAmount(round2(revenueTotal)),
         school_share: toAmount(round2(schoolTotal)),
         professor_share: toAmount(round2(professorTotal)),
@@ -471,24 +511,24 @@ export class FinancialReportService {
     });
 
     return {
-      title: "Revenue forecast",
+      title: "Prévision de revenus",
       columns: [
-        { key: "period", label: "Period" },
-        { key: "active_students", label: "Active students", align: "right" as const, numeric: true },
-        { key: "expected_billing", label: "Expected billing", align: "right" as const, numeric: true },
-        { key: "projected_collection", label: "Projected collection", align: "right" as const, numeric: true },
-        { key: "assumed_rate", label: "Assumed rate", align: "right" as const },
+        { key: "period", label: "Période" },
+        { key: "active_students", label: "Étudiants actifs", align: "right" as const, numeric: true },
+        { key: "expected_billing", label: "Facturation prévue", align: "right" as const, numeric: true },
+        { key: "projected_collection", label: "Encaissement prévu", align: "right" as const, numeric: true },
+        { key: "assumed_rate", label: "Taux estimé", align: "right" as const },
       ],
       rows: data,
       totals: {
-        period: "6 months",
+        period: "6 mois",
         expected_billing: toAmount(round2(monthlyBilling.times(6))),
         projected_collection: toAmount(round2(monthlyBilling.times(6).times(factor))),
       },
       footnotes: [
-        "A projection of the current roster, not a growth model: it assumes today's active students keep paying today's fees.",
-        `The collection rate of ${rate}% is what was actually achieved over the selected window.`,
-        "Enrolments, withdrawals and fee changes are not modelled.",
+        "Une projection de l'effectif actuel, pas un modèle de croissance : elle suppose que les étudiants actifs continuent de payer les frais actuels.",
+        `Le taux de recouvrement de ${rate}% est celui réellement atteint sur la période sélectionnée.`,
+        "Les inscriptions, les départs et les changements de frais ne sont pas modélisés.",
       ],
     };
   }

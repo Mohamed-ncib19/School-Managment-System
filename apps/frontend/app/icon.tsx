@@ -17,7 +17,7 @@ export default async function Icon(): Promise<Response> {
     const type = res.headers.get("content-type") ?? "";
     if (res.ok && type.startsWith("image/")) {
       return new Response(await res.arrayBuffer(), {
-        headers: { "content-type": type, "cache-control": "no-cache" },
+        headers: { "content-type": type, "cache-control": "no-store" },
       });
     }
   } catch {
@@ -26,6 +26,6 @@ export default async function Icon(): Promise<Response> {
 
   const svg = await readFile(join(process.cwd(), "public", "images", "logo.svg"));
   return new Response(new Blob([svg.toString()], { type: "image/svg+xml" }), {
-    headers: { "content-type": "image/svg+xml", "cache-control": "no-cache" },
+    headers: { "content-type": "image/svg+xml", "cache-control": "no-store" },
   });
 }

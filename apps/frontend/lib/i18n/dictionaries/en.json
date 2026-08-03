@@ -195,11 +195,103 @@
     "securityDescription": "Change your password",
     "systemTitle": "System Preferences",
     "systemDescription": "Configure language and display options",
+    "systemNameLabel": "System name",
+    "systemNamePlaceholder": "e.g. IQ Academy",
+    "systemNameHint": "Shown in the browser tab, the login screen and the sidebar.",
+    "featuresTitle": "Features",
+    "featuresDescription": "Choose which modules this school uses. Hidden modules disappear from the sidebar.",
+    "systemSaved": "System settings saved",
+    "featuresHidden": "Hidden from the sidebar",
+    "unsaved": "Unsaved changes",
+    "modulesEnabled": "modules enabled",
+    "enableAll": "Enable all",
+    "disableAll": "Disable all",
+    "previewTitle": "Sidebar preview",
+    "previewHint": "Live preview of the navigation with the current toggles",
+    "featuresHint": "Click a module to show or hide it — disabled modules disappear from the sidebar.",
+    "featureVisible": "Visible",
+    "features": {
+      "groupAcademics": "Academics",
+      "groupFinancial": "Financial management",
+      "groupAdministration": "Administration",
+      "fields": {
+        "title": "Fields",
+        "desc": "Academic fields, the top of the school structure"
+      },
+      "levels": {
+        "title": "Levels",
+        "desc": "Levels within each academic field"
+      },
+      "students": {
+        "title": "Students",
+        "desc": "Enrollment, student records and per-student pages"
+      },
+      "professors": {
+        "title": "Professors",
+        "desc": "Professor profiles and compensation"
+      },
+      "groups": {
+        "title": "Groups",
+        "desc": "Group and class management"
+      },
+      "attendance": {
+        "title": "Attendance",
+        "desc": "Monthly attendance sheets per group"
+      },
+      "financial": {
+        "dashboard": {
+          "title": "Financial dashboard",
+          "desc": "Overview of academy finances and collections"
+        },
+        "studentPayments": {
+          "title": "Student payments",
+          "desc": "Collect and track student fee payments"
+        },
+        "professorPayments": {
+          "title": "Professor payments",
+          "desc": "Payroll and settlement documents"
+        },
+        "analytics": {
+          "title": "Revenue analytics",
+          "desc": "Revenue, profit and collection trends"
+        },
+        "reports": {
+          "title": "Financial reports",
+          "desc": "Printable PDF, Excel and CSV reports"
+        },
+        "transactions": {
+          "title": "Transactions history",
+          "desc": "Full ledger of every transaction"
+        },
+        "settings": {
+          "title": "Financial settings",
+          "desc": "Currency, revenue split and receipt numbering"
+        }
+      },
+      "import": {
+        "title": "Data import",
+        "desc": "Bulk import students from spreadsheets"
+      },
+      "audit": {
+        "title": "Audit log",
+        "desc": "Trace of every system action"
+      },
+      "backups": {
+        "title": "Database backups",
+        "desc": "Create and restore versioned backups"
+      }
+    },
     "brandingTitle": "Branding",
     "brandingDescription": "Upload a logo used in printable documents, the sidebar, and as the browser favicon.",
+    "logoUploaded": "Logo uploaded",
+    "logoReplaceHint": "Drag a new file here or click to replace",
+    "logoDropTitle": "Drop your logo here",
+    "logoDropSubtitle": "or click to browse",
     "uploadLogo": "Upload logo",
     "uploading": "Uploading…",
     "removeLogo": "Remove",
+    "logoSaved": "Logo saved — it now appears on receipts, in the sidebar and as the browser favicon.",
+    "logoRemoved": "Logo removed — the default mark is used instead.",
     "logoFormat": "PNG, JPG or WebP — up to 2 MB. The file is served from the backend; the old one is deleted on replace.",
     "firstName": "First Name",
     "lastName": "Last Name",
@@ -629,12 +721,13 @@
       "academyName": "Name",
       "academyAddress": "Address",
       "academyPhone": "Phone",
-      "logoTitle": "Logo",
-      "logoHint": "Printed on the settlement documents and receipts (header), shown in the sidebar and as the browser-tab icon.",
-      "uploadLogo": "Upload logo",
-      "uploading": "Uploading…",
-      "removeLogo": "Remove",
-      "logoFormat": "PNG, JPG or WebP — up to 2 MB. The file is served from the backend; the old one is deleted on replace."
+      "currencyHint": "The unit and number format printed on every money figure.",
+      "receiptsHint": "How receipt and settlement numbers are built.",
+      "lateRulesHint": "When invoices are flagged late and what a late invoice costs.",
+      "academicYearHint": "The month a new academic year starts — it defines the periods used everywhere.",
+      "splitPreviewTitle": "Revenue split",
+      "splitPreviewHint": "How a 100 DT payment is split between the professor and the academy, at the current defaults.",
+      "unsaved": "Unsaved changes"
     },
     "title": "Financial Management",
     "subtitle": "Payments, payroll and revenue across the academy",
@@ -733,6 +826,28 @@
     "fromCollections": "From collections",
     "generatedOn": "Generated on",
     "granularity": "Granularity",
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+    "quarterly": "Quarterly",
+    "yearly": "Yearly",
+    "today": "Today",
+    "thisWeek": "This Week",
+    "thisMonth": "This Month",
+    "lastMonth": "Last Month",
+    "thisYear": "This Year",
+    "academicYear": "Academic Year",
+    "reports": {
+      "reportType": "Report type",
+      "collections": "Collections",
+      "outstanding": "Outstanding",
+      "payroll": "Payroll",
+      "schoolRevenue": "School Revenue",
+      "byLevel": "Revenue by Level",
+      "byProfessor": "Revenue by Professor",
+      "byGroup": "Revenue by Group",
+      "forecast": "Revenue Forecast"
+    },
     "invoiceCancelled": "This invoice is cancelled.",
     "invoices": "Invoices",
     "breakdownVerified": "Split verified",

@@ -322,3 +322,36 @@ export async function downloadReport(query: Record<string, unknown>): Promise<vo
   // Released on the next tick so the download has taken its reference.
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+/**
+ * The "PDF" export opened in a new tab with its own print dialogue — the same
+ * convention as the receipts. The server returns a print-ready A4 document;
+ * the browser's "Save as PDF" produces the file, so a download pipe can never
+ * hide a layout that the print dialogue shows.
+ */
+export async function openReportDocument(query: Record<string, unknown>): Promise<void> {
+  // The tab is opened inside the click gesture itself, before any await, so the
+  // popup blocker still sees a trusting gesture.
+  const tab = window.open("", "_blank");
+  if (!tab) throw new Error("popup-blocked");
+  tab.document.write(
+    "<!DOCTYPE html><html><body style='font-family:sans-serif;color:#666;padding:40px'>Chargement…</body></html>",
+  );
+
+  const html = await ApiClient.get<string>(`${BASE}/reports/export`, {
+    params: params({ ...query, format: "pdf" }),
+    responseType: "text",
+  });
+
+  // The server shell already raises the print dialogue on load; if it ever
+  // stops, raise it here after a beat so the tab can finish painting first.
+  const printTrigger =
+    "<script>window.addEventListener('load',function(){setTimeout(function(){window.print()},120)})</script>";
+  const printable = html.includes("window.print")
+    ? html
+    : html.replace("</body>", `${printTrigger}</body>`);
+
+  tab.document.open();
+  tab.document.write(printable);
+  tab.document.close();
+}

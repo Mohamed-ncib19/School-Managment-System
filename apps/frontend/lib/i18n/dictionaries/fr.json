@@ -195,11 +195,103 @@
     "securityDescription": "Changer le mot de passe",
     "systemTitle": "Préférences système",
     "systemDescription": "Configurer la langue et les options d'affichage",
+    "systemNameLabel": "Nom du système",
+    "systemNamePlaceholder": "ex. IQ Academy",
+    "systemNameHint": "Affiché dans l'onglet du navigateur, l'écran de connexion et la barre latérale.",
+    "featuresTitle": "Fonctionnalités",
+    "featuresDescription": "Choisissez les modules utilisés par cette école. Les modules masqués disparaissent de la barre latérale.",
+    "systemSaved": "Paramètres système enregistrés",
+    "featuresHidden": "Masqué de la barre latérale",
+    "unsaved": "Modifications non enregistrées",
+    "modulesEnabled": "modules actifs",
+    "enableAll": "Tout activer",
+    "disableAll": "Tout désactiver",
+    "previewTitle": "Aperçu de la barre latérale",
+    "previewHint": "Aperçu en direct de la navigation avec les réglages actuels",
+    "featuresHint": "Cliquez sur un module pour l'afficher ou le masquer — les modules désactivés disparaissent de la barre latérale.",
+    "featureVisible": "Visible",
+    "features": {
+      "groupAcademics": "Académique",
+      "groupFinancial": "Gestion financière",
+      "groupAdministration": "Administration",
+      "fields": {
+        "title": "Spécialités",
+        "desc": "Spécialités académiques, au sommet de la structure"
+      },
+      "levels": {
+        "title": "Niveaux",
+        "desc": "Niveaux au sein de chaque spécialité"
+      },
+      "students": {
+        "title": "Étudiants",
+        "desc": "Inscriptions, dossiers étudiants et pages par étudiant"
+      },
+      "professors": {
+        "title": "Professeurs",
+        "desc": "Profils des professeurs et rémunération"
+      },
+      "groups": {
+        "title": "Groupes",
+        "desc": "Gestion des groupes et des classes"
+      },
+      "attendance": {
+        "title": "Assiduité",
+        "desc": "Feuilles de présence mensuelles par groupe"
+      },
+      "financial": {
+        "dashboard": {
+          "title": "Tableau de bord financier",
+          "desc": "Vue d'ensemble des finances de l'académie"
+        },
+        "studentPayments": {
+          "title": "Paiements étudiants",
+          "desc": "Encaisser et suivre les frais étudiants"
+        },
+        "professorPayments": {
+          "title": "Paiements professeurs",
+          "desc": "Paie et documents de règlement"
+        },
+        "analytics": {
+          "title": "Analytique des revenus",
+          "desc": "Tendances des revenus, profits et encaissements"
+        },
+        "reports": {
+          "title": "Rapports financiers",
+          "desc": "Rapports PDF, Excel et CSV imprimables"
+        },
+        "transactions": {
+          "title": "Historique des transactions",
+          "desc": "Journal complet de chaque transaction"
+        },
+        "settings": {
+          "title": "Paramètres financiers",
+          "desc": "Devise, répartition des revenus et numérotation des reçus"
+        }
+      },
+      "import": {
+        "title": "Import de données",
+        "desc": "Import en masse des étudiants depuis des feuilles de calcul"
+      },
+      "audit": {
+        "title": "Journal d'audit",
+        "desc": "Trace de chaque action système"
+      },
+      "backups": {
+        "title": "Sauvegardes de la base",
+        "desc": "Créer et restaurer des sauvegardes versionnées"
+      }
+    },
     "brandingTitle": "Branding",
     "brandingDescription": "Téléchargez un logo utilisé dans les documents imprimables, la barre latérale et comme icône du navigateur.",
+    "logoUploaded": "Logo importé",
+    "logoReplaceHint": "Glissez un nouveau fichier ici ou cliquez pour remplacer",
+    "logoDropTitle": "Déposez votre logo ici",
+    "logoDropSubtitle": "ou cliquez pour parcourir",
     "uploadLogo": "Télécharger le logo",
     "uploading": "Téléchargement…",
     "removeLogo": "Supprimer",
+    "logoSaved": "Logo enregistré — il apparaît désormais sur les reçus, dans la barre latérale et comme icône du navigateur.",
+    "logoRemoved": "Logo supprimé — le logo par défaut est utilisé à la place.",
     "logoFormat": "PNG, JPG ou WebP — 2 Mo maximum. Le fichier est servi depuis le backend ; l'ancien est supprimé au remplacement.",
     "firstName": "Prénom",
     "lastName": "Nom",
@@ -629,12 +721,13 @@
       "academyName": "Nom",
       "academyAddress": "Adresse",
       "academyPhone": "Téléphone",
-      "logoTitle": "Logo",
-      "logoHint": "Imprimé sur les documents de règlement et les reçus (en-tête), affiché dans la barre latérale et comme icône de l'onglet du navigateur.",
-      "uploadLogo": "Importer le logo",
-      "uploading": "Importation…",
-      "removeLogo": "Supprimer",
-      "logoFormat": "PNG, JPG ou WebP — 2 Mo maximum. Le fichier est servi depuis le backend ; l'ancien est supprimé au remplacement."
+      "currencyHint": "L'unité et le format des nombres imprimés sur chaque montant.",
+      "receiptsHint": "Comment sont construits les numéros de quittances et de règlements.",
+      "lateRulesHint": "À partir de quand une facture est signalée en retard et ce qu'elle coûte.",
+      "academicYearHint": "Le mois de début de l'année académique — il définit les périodes utilisées partout.",
+      "splitPreviewTitle": "Répartition du revenu",
+      "splitPreviewHint": "Comment un paiement de 100 DT est réparti entre le professeur et l'académie, selon les valeurs par défaut actuelles.",
+      "unsaved": "Modifications non enregistrées"
     },
     "title": "Gestion financière",
     "subtitle": "Paiements, paie et revenus de l'académie",
@@ -733,6 +826,28 @@
     "fromCollections": "Sur encaissements",
     "generatedOn": "Généré le",
     "granularity": "Granularité",
+    "daily": "Quotidien",
+    "weekly": "Hebdomadaire",
+    "monthly": "Mensuel",
+    "quarterly": "Trimestriel",
+    "yearly": "Annuel",
+    "today": "Aujourd'hui",
+    "thisWeek": "Cette semaine",
+    "thisMonth": "Ce mois",
+    "lastMonth": "Mois dernier",
+    "thisYear": "Cette année",
+    "academicYear": "Année académique",
+    "reports": {
+      "reportType": "Type de rapport",
+      "collections": "Collections",
+      "outstanding": "Paiements en souffrance",
+      "payroll": "Masse salariale",
+      "schoolRevenue": "Revenu école",
+      "byLevel": "Revenus par niveau",
+      "byProfessor": "Revenus par professeur",
+      "byGroup": "Revenus par groupe",
+      "forecast": "Prévision de revenus"
+    },
     "invoiceCancelled": "Cette facture est annulée.",
     "breakdownVerified": "Répartition vérifiée",
     "breakdownMismatch": "Écart de répartition",

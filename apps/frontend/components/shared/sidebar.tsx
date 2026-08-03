@@ -29,6 +29,7 @@ import { useAuthStore } from "@/hooks/use-auth-store";
 import { useTranslation } from "@/lib/i18n/context";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { useFinancialSettings } from "@/hooks/use-financial";
+import { useSystemSettings, isFeatureEnabled, type FeatureKey } from "@/hooks/use-system-settings";
 import { apiBaseUrl } from "@/lib/api/client";
 
 /** The brand mark: the uploaded academy logo when set, else the bundled one. */
@@ -126,8 +127,43 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
   const { t } = useTranslation();
   const { entityOrder, getEntityLabel } = useHierarchyConfig();
   const brandLogo = useBrandLogo();
+  const { data: system } = useSystemSettings();
   const [hierarchyOpen, setHierarchyOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
+
+  const features = system?.features;
+  const systemName = system?.system_name?.trim() || t("app.name", "IQ Academy");
+
+  /** Hierarchy entities whose module is switched off, per feature toggle. */
+  const ENTITY_FEATURE: Partial<Record<HierarchyEntity, FeatureKey>> = {
+    level: "levels",
+    field: "fields",
+    professor: "professors",
+    group: "groups",
+    student: "students",
+  };
+  const visibleEntities = entityOrder.filter((entity) =>
+    ENTITY_FEATURE[entity] ? isFeatureEnabled(features, ENTITY_FEATURE[entity] as FeatureKey) : true,
+  );
+  /** Financial screens, mapped to their own feature toggle. */
+  const FINANCIAL_FEATURE: Record<string, FeatureKey> = {
+    "/financial": "financial.dashboard",
+    "/financial/payments": "financial.studentPayments",
+    "/financial/professors": "financial.professorPayments",
+    "/financial/analytics": "financial.analytics",
+    "/financial/reports": "financial.reports",
+    "/financial/transactions": "financial.transactions",
+    "/financial/settings": "financial.settings",
+  };
+  const financialItems = FINANCIAL_NAV_ITEMS.filter((item) =>
+    isFeatureEnabled(features, FINANCIAL_FEATURE[item.href]),
+  );
+  const financialEnabled = financialItems.length > 0;
+  const adminItems = ADMIN_NAV_ITEMS.filter((item) => {
+    if (item.href === "/import") return isFeatureEnabled(features, "import");
+    if (item.href === "/audit") return isFeatureEnabled(features, "audit");
+    return true;
+  });
 
   // Auto-expand hierarchy section when on a hierarchy page
   const isOnHierarchyPage = pathname.startsWith("/hierarchy");
@@ -178,13 +214,13 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
         <div className="flex items-center justify-between h-16 px-4 border-b border-white/10">
           {!collapsed && (
             <Link href="/dashboard" className="flex items-center gap-2">
-              <img src={brandLogo} alt={t("app.name", "IQ Academy")} className="h-8 w-8 rounded-btn object-contain" />
-              <span className="font-bold text-sm tracking-tight">{t("app.name", "IQ Academy")}</span>
+              <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
+              <span className="font-bold text-sm tracking-tight">{systemName}</span>
             </Link>
           )}
           {collapsed && (
             <Link href="/dashboard" className="mx-auto">
-              <img src={brandLogo} alt={t("app.name", "IQ Academy")} className="h-8 w-8 rounded-btn object-contain" />
+              <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
             </Link>
           )}
           <div className="flex items-center gap-1">
@@ -225,7 +261,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
           }          )}
 
           {/* Financial Management section */}
-          {!collapsed ? (
+          {financialEnabled && (
+            <>
+              {!collapsed ? (
             <div>
               <button
                 onClick={() => setFinancialOpen(!financialOpen)}
@@ -239,7 +277,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               </button>
               {financialOpen && (
                 <div className="ml-6 mt-1 space-y-1 border-l-2 border-white/10 pl-3">
-                  {FINANCIAL_NAV_ITEMS.map((item) => {
+                  {financialItems.map((item) => {
                     // The dashboard sits at the segment root, so prefix matching
                     // would light it up on every financial screen.
                     const isActive = item.exact
@@ -277,7 +315,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               </button>
               {financialOpen && isOnFinancialPage && (
                 <div className="mt-2 space-y-1 w-full">
-                  {FINANCIAL_NAV_ITEMS.map((item) => {
+                  {financialItems.map((item) => {
                     // The dashboard sits at the segment root, so prefix matching
                     // would light it up on every financial screen.
                     const isActive = item.exact
@@ -302,6 +340,8 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               )}
             </div>
           )}
+            </>
+          )}
 
           {/* Hierarchy section */}
           {!collapsed ? (
@@ -318,7 +358,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               </button>
               {hierarchyOpen && (
                 <div className="ml-6 mt-1 space-y-1 border-l-2 border-white/10 pl-3">
-                  {entityOrder.map((entity) => {
+                  {visibleEntities.map((entity) => {
                     const isEntityActive = activeEntity === entity;
                     const Icon = ENTITY_ICONS[entity];
                     // Build root href for this entity type
@@ -355,7 +395,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               </button>
               {hierarchyOpen && isOnHierarchyPage && (
                 <div className="mt-2 space-y-1 w-full">
-                  {entityOrder.map((entity) => {
+                  {visibleEntities.map((entity) => {
                     const isEntityActive = activeEntity === entity;
                     const Icon = ENTITY_ICONS[entity];
                     return (
@@ -379,7 +419,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
 
           <div className="!my-2 border-t border-white/10" />
 
-          {ADMIN_NAV_ITEMS.map((item) => {
+          {adminItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
             const Icon = item.icon;
             return (

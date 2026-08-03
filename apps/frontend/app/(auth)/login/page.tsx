@@ -12,6 +12,7 @@ import { authApi } from "@/lib/api/auth.api";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { FormButton } from "@/components/forms/form-helpers";
 import { useTranslation } from "@/lib/i18n/context";
+import { useSystemSettings } from "@/hooks/use-system-settings";
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
 
@@ -25,6 +26,9 @@ export default function LoginPage() {
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
   });
+
+  const { data: system } = useSystemSettings();
+  const systemName = system?.system_name?.trim() || t("app.name", "IQ Academy");
 
   const mutation = useMutation({
     mutationFn: authApi.login,
@@ -45,9 +49,9 @@ export default function LoginPage() {
         <div className="bg-surface rounded-modal shadow-hover p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="h-14 w-14 rounded-card bg-primary flex items-center justify-center mb-4 shadow-md">
-              <span className="text-white text-xl font-bold tracking-tight">{t("app.name", "IQ").split(" ").map(w => w[0]).join("").slice(0,2)}</span>
+              <span className="text-white text-xl font-bold tracking-tight">{systemName.split(" ").map(w => w[0]).join("").slice(0,2)}</span>
             </div>
-            <h1 className="text-h2 font-bold text-text-primary">{t("app.name")}</h1>
+            <h1 className="text-h2 font-bold text-text-primary">{systemName}</h1>
             <p className="text-sm text-text-secondary">{t("app.tagline")}</p>
           </div>
 

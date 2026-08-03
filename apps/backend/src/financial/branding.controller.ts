@@ -68,6 +68,9 @@ export class BrandingController {
     res.set({
       "Content-Type": types[ext] ?? "application/octet-stream",
       "Cache-Control": "public, max-age=3600",
+      // Lets the favicon metadata version the /icon URL so browsers refetch
+      // instead of serving their sticky favicon cache forever.
+      "X-Logo-Version": String(new Date(current.updated_at).getTime()),
     });
     res.sendFile(file);
   }
