@@ -96,12 +96,29 @@ export interface StudentAssignment {
   group?: Group & { professor?: Professor & { field?: Field & { level?: Level } } };
 }
 
+/** One teaching session (séance) of a monthly register. Number = index + 1. */
+export interface AttendanceSession {
+  id: string;
+  /** Reserved for future academies that track séance dates. */
+  date?: string;
+}
+
+/** The roster snapshot a register was generated from. */
+export interface AttendanceStudent {
+  id?: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string | null;
+  parent_phone?: string | null;
+}
+
 /**
  * A generated monthly attendance sheet, persisted for reprinting.
  *
- * The academic context is a snapshot taken at generation time (teacher, group
- * and level names plus the student roster), so a reprint shows the list that
- * was actually handed out rather than whatever the hierarchy looks like today.
+ * The academic context is a snapshot taken at generation time (professor,
+ * level, field and group names, the teaching sessions and the student roster),
+ * so a reprint shows the list that was actually handed out rather than
+ * whatever the hierarchy looks like today.
  */
 export interface AttendanceSheet {
   id: string;
@@ -112,17 +129,30 @@ export interface AttendanceSheet {
   teacher_id: string | null;
   teacher_name: string;
   level_name: string;
+  field_name: string | null;
   group_name: string;
-  students: Array<{
-    id?: string;
-    first_name?: string;
-    last_name?: string;
-    phone?: string;
-    parent_phone?: string | null;
-    [key: string]: unknown;
-  }>;
+  academic_year: string | null;
+  sessions: AttendanceSession[] | null;
+  students: AttendanceStudent[];
   generated_by: string | null;
   generated_at: string;
+}
+
+/** What `POST /attendance-sheets/generate` returns before anything is saved. */
+export interface AttendanceGeneration {
+  group_id: string;
+  group_name: string;
+  professor_id: string | null;
+  professor_name: string;
+  level_name: string;
+  field_name: string | null;
+  month: number;
+  year: number;
+  academic_year: string;
+  schedule: string | null;
+  weekly: { days: number[]; description: string } | null;
+  students: AttendanceStudent[];
+  sessions: AttendanceSession[];
 }
 
 export interface Student {

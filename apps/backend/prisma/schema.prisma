@@ -503,21 +503,27 @@ model system_settings {
 /// level names and the student roster), because a reprint must show the list
 /// that was actually handed out, not whatever the hierarchy looks like today.
 model attendance_sheets {
-  id           String   @id @default(uuid()) @db.Uuid
-  group_id     String   @db.Uuid
-  month        Int
-  year         Int
-  schedule     String?
-  teacher_id   String?  @db.Uuid
-  teacher_name String
-  level_name   String
-  group_name   String
-  students     Json
-  generated_by String?  @db.Uuid
-  generated_at DateTime @default(now()) @db.Timestamptz(6)
-  group        groups   @relation("GroupAttendanceSheets", fields: [group_id], references: [id], onDelete: Cascade)
+    id           String   @id @default(uuid()) @db.Uuid
+    group_id     String   @db.Uuid
+    month        Int
+    year         Int
+    schedule     String?
+    teacher_id   String?  @db.Uuid
+    teacher_name String
+    level_name   String
+    field_name   String?
+    group_name   String
+    /// The academic year the month belongs to, e.g. "2025/26" — snapshotted.
+    academic_year String?
+    /// The teaching sessions (séances) of the register: [{ id, date }].
+    sessions     Json?
+    /// The frozen roster handed out — a reprint never reflects later moves.
+    students     Json
+    generated_by String?  @db.Uuid
+    generated_at DateTime @default(now()) @db.Timestamptz(6)
+    group        groups   @relation("GroupAttendanceSheets", fields: [group_id], references: [id], onDelete: Cascade)
 
-  @@index([group_id])
-  @@index([generated_at])
-  @@map("attendance_sheets")
-}
+    @@index([group_id])
+    @@index([generated_at])
+    @@map("attendance_sheets")
+  }

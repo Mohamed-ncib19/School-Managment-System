@@ -2,9 +2,8 @@
 
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { Menu, Globe, Sun, Moon } from "lucide-react";
+import { Menu, Sun, Moon } from "lucide-react";
 import { useTheme, initTheme } from "@/hooks/use-theme";
-import { useTranslation } from "@/lib/i18n/context";
 
 interface NavbarProps {
   onToggleSidebar: () => void;
@@ -13,16 +12,11 @@ interface NavbarProps {
 }
 
 export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarProps) {
-  const { locale, setLocale, t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     initTheme();
   }, []);
-
-  const toggleLanguage = () => {
-    setLocale(locale === "en" ? "fr" : "en");
-  };
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-surface border-b border-border flex items-center justify-between px-4 lg:px-8 dark:glass">
@@ -51,16 +45,6 @@ export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarPro
             <Sun size={16} className="text-text-secondary" />
           )}
         </button>
-
-        <button
-          onClick={toggleLanguage}
-          className="hidden sm:flex h-9 px-3 items-center gap-2 rounded-btn bg-background border border-border hover:bg-neutral-soft dark:hover:bg-white/10 transition-colors"
-          aria-label="Toggle language"
-        >
-          <Globe size={14} className="text-text-secondary" />
-          <span className="text-xs font-medium text-text-primary uppercase">{locale}</span>
-        </button>
-
       </div>
     </header>
   );

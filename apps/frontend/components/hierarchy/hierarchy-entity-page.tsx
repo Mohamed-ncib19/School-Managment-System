@@ -734,6 +734,33 @@ const childrenLabel =
     return `/attendance-sheet/${entity.id}`;
   };
 
+  /**
+   * Parent entity labels for the create modal: instead of the generic
+   * "Parent", the field is labelled with the hierarchy layer the new entity
+   * hangs from (a field is created under a Niveau, a professor under a
+   * Filière, a group under a Professeur, a student under a Groupe).
+   */
+  const PARENT_LABEL_KEYS: Partial<Record<HierarchyEntity, string>> = {
+    level: "hierarchy.parentLevel",
+    field: "hierarchy.parentField",
+    professor: "hierarchy.parentProfessor",
+    group: "hierarchy.parentGroup",
+  };
+  const directParentType = parentLayers.length > 0 ? parentLayers[parentLayers.length - 1] : undefined;
+  const directParentName =
+    parentChain.length > 0
+      ? parentChain[parentChain.length - 1].name
+      : parentPath.length > 0
+        ? parentPath[parentPath.length - 1].name
+        : "";
+  const parentLabelKey = directParentType ? PARENT_LABEL_KEYS[directParentType] : undefined;
+  const parentInputLabel = parentLabelKey
+    ? t(parentLabelKey)
+    : t("hierarchy.parent", "Parent");
+  const parentInputLabelFull = directParentName
+    ? `${parentInputLabel} : ${directParentName}`
+    : parentInputLabel;
+
   return (
     <>
       <div className="space-y-6">
@@ -809,6 +836,15 @@ const childrenLabel =
               >
                 <Trash2 size={16} /> {t("deleted.title", "Deleted")}
               </button>
+            )}
+            {entityType === "student" && parentId && (
+              <Link
+                href={`/attendance-sheet/${parentId}`}
+                className="btn btn-secondary"
+                title={t("fieldsHierarchy.attendanceSheet", "Attendance sheet")}
+              >
+                <Printer size={16} /> {t("fieldsHierarchy.attendanceSheet", "Attendance sheet")}
+              </Link>
             )}
             <button className="btn btn-primary" onClick={() => { resetForm(); setCreateOpen(true); }}>
               <Plus size={16} /> {t("hierarchy.create", "Create")}
@@ -1090,7 +1126,7 @@ const childrenLabel =
               {entityType !== "level" && entityType !== "student" && (
                 <div>
                   <label className="block text-sm font-medium mb-1">
-                    {t("hierarchy.parent", "Parent")} {!editingId && "*"}
+                    {parentInputLabelFull} {!editingId && "*"}
                   </label>
                   {parentId || editingId ? (
                     <div

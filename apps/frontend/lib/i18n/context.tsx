@@ -1,22 +1,19 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-
-type Locale = "en" | "fr";
+import { createContext, useContext, useEffect, useCallback, type ReactNode } from "react";
 
 type Dictionary = Record<string, any>;
 
-import enDict from "@/lib/i18n/dictionaries/en.json";
 import frDict from "@/lib/i18n/dictionaries/fr.json";
 
-const DICTIONARIES: Record<Locale, Dictionary> = {
-  en: enDict as Dictionary,
-  fr: frDict as Dictionary,
-};
+/**
+ * The product is French-only (locked with the client): the interface always
+ * resolves to the French dictionary, whatever was stored on the device.
+ */
+const DICTIONARY: Dictionary = frDict as Dictionary;
 
 interface I18nContextValue {
-  locale: Locale;
-  setLocale: (locale: Locale) => void;
+  locale: "fr";
   t: (key: string, fallback?: string) => string;
 }
 
@@ -27,41 +24,21 @@ function getNestedValue(obj: any, path: string): string | undefined {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
-
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem("iq-locale") : null;
-    if (stored === "fr") {
-      setLocaleState(stored);
-    }
+  const t = useCallback((key: string, fallback?: string): string => {
+    const value = getNestedValue(DICTIONARY, key);
+    if (typeof value === "string") return value;
+    if (fallback) return fallback;
+    return key;
   }, []);
-
-  const setLocale = useCallback((next: Locale) => {
-    setLocaleState(next);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("iq-locale", next);
-    }
-  }, []);
-
-  const t = useCallback(
-    (key: string, fallback?: string): string => {
-      const dict = DICTIONARIES[locale];
-      const value = getNestedValue(dict, key);
-      if (typeof value === "string") return value;
-      if (fallback) return fallback;
-      return key;
-    },
-    [locale],
-  );
 
   useEffect(() => {
     if (typeof document !== "undefined") {
-      document.documentElement.lang = locale;
+      document.documentElement.lang = "fr";
     }
-  }, [locale]);
+  }, []);
 
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
+    <I18nContext.Provider value={{ locale: "fr", t }}>
       {children}
     </I18nContext.Provider>
   );

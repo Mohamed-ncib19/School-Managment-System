@@ -752,6 +752,10 @@ export class PayrollDocumentService {
    * The one layout both documents share — the modular part the academy can
    * customise (logo, header, footer, colours) without touching the settlement
    * arithmetic above.
+   *
+   * Sized for an 80mm thermal roll (~72mm printable strip): monochrome,
+   * compact, tabular — no colour fills or floats, so the same layout prints
+   * cleanly on a school receipt printer as on a laser A4 sheet.
    */
   private shell(
     s: SettlementSnapshot,
@@ -768,63 +772,79 @@ export class PayrollDocumentService {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title} — ${brand}</title>
+  <title>${title}</title>
   <style>
-    @page { size: A4; margin: 12mm; }
+    @page { size: 80mm auto; margin: 2mm 3mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, Helvetica, sans-serif; color: #1f2937; font-size: 12px; }
-    .page { max-width: 186mm; margin: 0 auto; position: relative; }
+    html, body { width: 80mm; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11px; line-height: 1.35; }
+    .page { width: 80mm; margin: 0 auto; padding: 1mm 1.5mm; }
     .no-print { display: none; }
-    header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #264EBE; padding-bottom: 10px; margin-bottom: 14px; }
-    .brand h1 { color: #264EBE; font-size: 22px; letter-spacing: .01em; }
-    .brand .coords { color: #6b7280; font-size: 10px; margin-top: 3px; line-height: 1.5; }
-    .brand .logo { height: 76px; width: auto; max-width: 55mm; object-fit: contain; display: block; margin-bottom: 6px; }
-    .doc-ref { text-align: right; font-size: 10px; color: #6b7280; }
-    .doc-ref strong { display: block; color: #264EBE; font-size: 13px; margin-top: 2px; }
-    h2.section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #264EBE; margin: 16px 0 8px; }
-    .details { margin-bottom: 4px; }
+
+    header { text-align: center; }
+    .brand .logo { max-width: 56mm; max-height: 24mm; object-fit: contain; }
+    .brand h1 { font-size: 13px; letter-spacing: .02em; margin-top: .5mm; }
+    .brand .coords { font-size: 9px; color: #555; margin-top: .5mm; }
+
+    .ruled { border-top: 1px dashed #999; margin: 2mm 0; }
+
+    .title { text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .doc-ref { text-align: center; font-size: 11px; font-weight: 700; margin-top: .5mm; }
+    .doc-ref strong { display: block; font-weight: 700; }
+
+    h2.section { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; margin: 2.5mm 0 1mm; border-bottom: 1px solid #333; padding-bottom: .6mm; }
+
     table.kv { width: 100%; border-collapse: collapse; }
-    .kv td { padding: 4px 0; border-bottom: 1px solid #eef1f6; vertical-align: top; }
-    .kv td:first-child { width: 34%; color: #6b7280; font-size: 11px; }
-    table.data { width: 100%; border-collapse: collapse; margin-top: 4px; }
-    .data th, .data td { padding: 5px 7px; border-bottom: 1px solid #e5e7eb; text-align: left; }
-    .data th { background: #264EBE; color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: .02em; }
-    .data tfoot td { font-weight: 700; border-top: 2px solid #264EBE; background: #f0f4ff; }
-    .right { text-align: right; font-variant-numeric: tabular-nums; }
-    .check { font-size: 10px; }
-    .check.ok td { color: #15803d; background: #f0fdf4; }
-    .check.bad td { color: #b91c1c; background: #fef2f2; font-weight: 700; }
-    .empty { text-align: center; color: #9ca3af; padding: 18px; }
-    .amount-due { text-align: center; margin: 18px 0 0; padding: 12px; background: #f0f4ff; border-radius: 8px; }
-    .amount-due .label { font-size: 11px; color: #6b7280; }
-    .amount-due .value { font-size: 22px; font-weight: 700; color: #264EBE; margin: 2px 0; }
-    .amount-due .subline { font-size: 10px; color: #6b7280; }
-    .settled { display: flex; gap: 10px; margin-top: 14px; }
-    .settled-box { flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; text-align: center; }
-    .settled-box .label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; }
-    .settled-box .value { font-size: 18px; font-weight: 700; color: #264EBE; margin: 3px 0; }
-    .settled-box .date { font-size: 10px; color: #6b7280; }
-    .negative { color: #b91c1c !important; }
-    .breakdown { margin-top: 14px; }
-    .breakdown-bar { height: 10px; border-radius: 6px; background: #e0e7ff; overflow: hidden; }
-    .breakdown-bar-fill { height: 100%; background: #264EBE; }
-    .breakdown-legend { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10px; color: #6b7280; }
-    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: baseline; }
-    .dot.prof { background: #264EBE; }
-    .dot.school { background: #e0e7ff; }
-    .dot.total { background: #6b7280; }
-    .signatures { display: flex; gap: 40px; margin-top: 42px; }
+    .kv td { padding: .6mm 0; border-bottom: 1px dotted #ccc; vertical-align: top; }
+    .kv td:first-child { width: 44%; color: #444; }
+    .kv td:last-child { text-align: right; font-weight: 700; word-break: break-word; }
+
+    table.data { width: 100%; border-collapse: collapse; font-size: 9px; font-variant-numeric: tabular-nums; }
+    .data th { text-align: left; border-bottom: 1px solid #333; font-size: 8px; text-transform: uppercase; padding: .6mm 0; }
+    .data td { padding: .7mm 0; border-bottom: 1px dotted #ddd; }
+    .data tfoot td { font-weight: 700; border-top: 1.5px solid #111; }
+    .right { text-align: right !important; font-variant-numeric: tabular-nums; }
+    .check { font-size: 9px; }
+    .check.ok td, .check.bad td { font-weight: 700; }
+    .empty { text-align: center; color: #666; padding: 3mm; }
+
+    .breakdown { margin: 2mm 0 0; }
+    .breakdown-bar { height: 2mm; background: #eee; border: 1px solid #333; overflow: hidden; }
+    .breakdown-bar-fill { height: 100%; background: #111; }
+    .breakdown-legend { display: flex; justify-content: space-between; margin-top: 1mm; font-size: 8.5px; color: #333; }
+    .dot { display: inline-block; width: 6px; height: 6px; border: 1px solid #111; margin-right: 2px; vertical-align: baseline; }
+    .dot.prof { background: #111; }
+    .dot.school { background: #fff; }
+    .dot.total { background: #888; }
+
+    .amount-due { text-align: center; margin: 3mm 0 0; border-top: 1.5px solid #111; border-bottom: 1.5px solid #111; padding: 2mm 0; }
+    .amount-due .label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .amount .value { font-size: 16px; font-weight: 700; margin: .8mm 0; }
+    .amount .subline { font-size: 9.5px; }
+
+    .settled { display: flex; gap: 2mm; margin-top: 2.5mm; }
+    .settled-box { flex: 1; border: 1px solid #111; padding: 1.8mm 1mm; text-align: center; }
+    .settled-box .label { font-size: 8px; text-transform: uppercase; letter-spacing: .03em; color: #444; }
+    .settled-box .value { font-size: 12.5px; font-weight: 700; margin: .5mm 0; }
+    .settled-box .date { font-size: 8.5px; color: #444; }
+    .negative { font-weight: 700; }
+
+    .signatures { display: flex; gap: 4mm; margin-top: 4mm; }
     .sig { flex: 1; text-align: center; }
-    .sig .line { border-bottom: 1px solid #1f2937; height: 44px; }
-    .sig .label { font-size: 10px; color: #6b7280; margin-top: 5px; }
-    .internal-note { margin-top: 18px; font-size: 9px; color: #b91c1c; border: 1px dashed #b91c1c; border-radius: 6px; padding: 6px 8px; }
-    footer { margin-top: 22px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; font-size: 9px; color: #9ca3af; }
-    .watermark { position: absolute; top: 40%; left: 0; right: 0; transform: rotate(-28deg); text-align: center; font-size: 44px; font-weight: 700; color: rgba(185, 28, 28, .07); letter-spacing: .12em; pointer-events: none; }
+    .sig .line { border-bottom: 1px solid #111; height: 12mm; }
+    .sig .label { font-size: 9px; color: #444; margin-top: 1mm; }
+
+    .internal-note { margin-top: 2.5mm; font-size: 9px; font-weight: 700; border: 1px dashed #111; padding: 1.5mm 2mm; text-align: center; }
+    .watermark { text-align: center; font-size: 10px; font-weight: 700; letter-spacing: .12em; border: 1px solid #111; margin: 2mm 0 0; padding: 1mm; }
+
+    footer { margin-top: 3mm; padding-top: 1mm; border-top: 1px solid #333; text-align: center; font-size: 8.5px; color: #555; }
+    .cut { text-align: center; margin-top: 2.5mm; color: #666; font-size: 9px; letter-spacing: .12em; }
+
     @media screen {
-      body { background: #eef1f6; padding: 20px; }
-      .page { background: #fff; padding: 14mm; box-shadow: 0 2px 14px rgba(0,0,0,.12); }
-      .no-print { display: flex; gap: 8px; margin-bottom: 10px; }
-      .no-print button { background: #264EBE; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 12px; cursor: pointer; }
+      body { background: #eef1f6; padding: 12px; }
+      .page { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.15); }
+      .no-print { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
+      .no-print button { background: #111; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 12px; cursor: pointer; }
     }
     @media print {
       body { padding: 0; }
@@ -834,29 +854,27 @@ export class PayrollDocumentService {
 </head>
 <body>
   <div class="no-print">
-    <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
+    <button onclick="window.print()">Imprimer</button>
   </div>
   <div class="page">
-    ${input.watermark ? `<div class="watermark">DOCUMENT INTERNE</div>` : ""}
     <header>
       <div class="brand">
         ${input.logoUrl ? `<img class="logo" src="${this.escape(input.logoUrl)}" alt="${brand}">` : ""}
         <h1>${brand}</h1>
         <div class="coords">
           ${address ? `${this.escape(address)}<br>` : ""}${phone ? `${phone}<br>` : ""}
-          ${brand} — Gestion des règlements
         </div>
       </div>
-      <div class="doc-ref">
-        ${title}
-        <strong>${no}</strong>
-      </div>
     </header>
+    <div class="ruled"></div>
+    <div class="title">${title}</div>
+    <div class="doc-ref"><strong>${no}</strong></div>
+    ${input.watermark ? `<div class="watermark">DOCUMENT INTERNE</div>` : ""}
     ${input.body}
     <footer>
-      <div>${brand} — document généré le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(new Date(s.document.generated_at))}</div>
-      <div>${this.escape(s.document.no)}</div>
+      <div>${brand} — document généré le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(new Date(s.document.generated_at))} · ${no}</div>
     </footer>
+    <div class="cut">&bull;&bull;&bull; CUT &bull;&bull;&bull;</div>
   </div>
 </body>
 </html>`;

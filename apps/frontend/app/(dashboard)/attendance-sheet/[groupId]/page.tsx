@@ -1,25 +1,59 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Printer, ChevronRight, Trash2 } from "lucide-react";
-import { groupsApi } from "@/lib/api/groups.api";
-import { studentsApi } from "@/lib/api/students.api";
-import { attendanceSheetsApi } from "@/lib/api/attendance-sheets.api";
-import { useProfessors } from "@/hooks/use-queries";
+import {
+  ArrowLeft,
+  ArrowDown,
+  ArrowUp,
+  CalendarPlus,
+  ChevronRight,
+  Download,
+  Loader2,
+  Printer,
+  RotateCcw,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react";
 import Link from "next/link";
+import { groupsApi } from "@/lib/api/groups.api";
+import {
+  attendanceSheetsApi,
+  downloadAttendanceExcel,
+  openAttendancePrint,
+} from "@/lib/api/attendance-sheets.api";
+import { useProfessors } from "@/hooks/use-queries";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { useTranslation } from "@/lib/i18n/context";
-import type { Group, Student } from "@/types";
-import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
-import { AttendanceSheetModal } from "@/components/shared/attendance-sheet-modal";
+import type { AttendanceSession, AttendanceStudent } from "@/types";
+import { PageLoader } from "@/components/shared/skeletons";
 import { formatDate } from "@/lib/utils/format";
 
-const MONTH_NAMES_FR = [
+const MONTHS_FR = [
   "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
   "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
 ];
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
+
+/** A register being prepared: context + sessions the user may still edit. */
+interface Draft {
+  month: number;
+  year: number;
+  academicYear: string;
+  schedule: string | null;
+  teacherId: string | null;
+  teacherName: string;
+  levelName: string;
+  fieldName: string | null;
+  groupName: string;
+  students: AttendanceStudent[];
+  sessions: AttendanceSession[];
+}
+
+const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 export default function AttendanceSheetPage() {
   const { t } = useTranslation();
@@ -30,6 +64,13 @@ export default function AttendanceSheetPage() {
 
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.role === "super_admin";
+
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [teacherId, setTeacherId] = useState("");
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draftSheetId, setDraftSheetId] = useState<string | null>(null);
 
   const { data: group, isLoading: groupLoading } = useQuery({
     queryKey: ["group", groupId],
@@ -45,12 +86,8 @@ export default function AttendanceSheetPage() {
   const level = group?.professor?.field?.level ?? null;
 
   const { data: professors } = useProfessors(fieldId, { enabled: !!fieldId });
-  const { data: students, isLoading: studentsLoading } = useQuery({
-    queryKey: ["students", groupId],
-    queryFn: () => studentsApi.list(groupId),
-  });
 
-  // Every generated sheet is persisted, so a reprint shows the exact list that
+  // Every printed sheet is persisted, so a reprint shows the exact list that
   // was handed out rather than whatever the group roster looks like today.
   const { data: savedSheets } = useQuery({
     queryKey: ["attendance-sheets", groupId],
@@ -65,72 +102,85 @@ export default function AttendanceSheetPage() {
     mutationFn: attendanceSheetsApi.remove,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["attendance-sheets", groupId] }),
   });
+  const generate = useMutation({
+    mutationFn: attendanceSheetsApi.generate,
+  });
 
-  const [modalOpen, setModalOpen] = useState(true);
-  const [previewData, setPreviewData] = useState<{
-    month: number;
-    year: number;
-    schedule: string;
-    teacherName: string;
-    groupName: string;
-    levelName: string;
-    students: Student[];
-  } | null>(null);
-
-  const isLoading = groupLoading || studentsLoading;
-
-  const handleGenerate = (data: {
-    month: number;
-    year: number;
-    schedule: string;
-    teacherId: string;
-  }) => {
-    const selectedTeacher = professors?.find((p) => p.id === data.teacherId) ?? professor;
-    const teacherName = selectedTeacher?.full_name ?? professor?.full_name ?? "Inconnu";
-
-    if (!group || !level) return;
-
-    const sortedStudents = [...(students ?? [])].sort((a, b) => {
-      const nameA = `${a.last_name} ${a.first_name}`.toLowerCase();
-      const nameB = `${b.last_name} ${b.first_name}`.toLowerCase();
-      return nameA.localeCompare(nameB);
-    });
-
-    setPreviewData({
-      month: data.month,
-      year: data.year,
-      schedule: data.schedule,
+  const handleGenerate = async () => {
+    const result = await generate.mutateAsync({ group_id: groupId, month, year });
+    const selected = professors?.find((p) => p.id === teacherId);
+    const teacherName = selected?.full_name ?? result.professor_name ?? "—";
+    setDraft({
+      month: result.month,
+      year: result.year,
+      academicYear: result.academic_year,
+      schedule: result.schedule,
+      teacherId: teacherId || result.professor_id,
       teacherName,
-      groupName: group.name,
-      levelName: level.name,
-      students: sortedStudents,
+      levelName: result.level_name,
+      fieldName: result.field_name,
+      groupName: result.group_name,
+      students: result.students,
+      sessions: result.sessions,
     });
-    setModalOpen(false);
-
-    saveSheet.mutate({
-      group_id: group.id,
-      month: data.month,
-      year: data.year,
-      schedule: data.schedule || undefined,
-      teacher_id: data.teacherId || undefined,
-      teacher_name: teacherName,
-      level_name: level.name,
-      group_name: group.name,
-      students: sortedStudents,
-    });
+    setDraftSheetId(null);
   };
 
-  const handleLoad = (sheet: { month: number; year: number; schedule: string | null; teacher_name: string; group_name: string; level_name: string; students: unknown[] }) => {
-    setPreviewData({
+  const removeSession = (id: string) =>
+    setDraft((d) => (d ? { ...d, sessions: d.sessions.filter((s) => s.id !== id) } : d));
+
+  const moveSession = (index: number, dir: -1 | 1) =>
+    setDraft((d) => {
+      if (!d) return d;
+      const target = index + dir;
+      if (target < 0 || target >= d.sessions.length) return d;
+      const sessions = [...d.sessions];
+      [sessions[index], sessions[target]] = [sessions[target], sessions[index]];
+      return { ...d, sessions };
+    });
+
+  const addSession = () => {
+    setDraft((d) => (d ? { ...d, sessions: [...d.sessions, { id: uid() }] } : d));
+  };
+
+  /** Re-generates the default 8 sessions (any count) from the group schedule. */
+  const resetSessions = async () => {
+    if (!draft) return;
+    const result = await generate.mutateAsync({ group_id: groupId, month: draft.month, year: draft.year });
+    setDraft({ ...draft, sessions: result.sessions });
+  };
+
+  const handleLoad = (sheet: {
+    id: string;
+    month: number;
+    year: number;
+    schedule: string | null;
+    teacher_name: string;
+    teacher_id: string | null;
+    level_name: string;
+    field_name: string | null;
+    group_name: string;
+    academic_year: string | null;
+    students: unknown[];
+    sessions: AttendanceSession[] | null;
+  }) => {
+    const legacy = Array.from({ length: 8 }, (_, i) => ({
+      id: `legacy-${i + 1}`,
+    }));
+    setDraft({
       month: sheet.month,
       year: sheet.year,
-      schedule: sheet.schedule ?? "",
+      academicYear: sheet.academic_year ?? "",
+      schedule: sheet.schedule,
+      teacherId: sheet.teacher_id,
       teacherName: sheet.teacher_name,
-      groupName: sheet.group_name,
       levelName: sheet.level_name,
-      students: (sheet.students ?? []) as Student[],
+      fieldName: sheet.field_name,
+      groupName: sheet.group_name,
+      students: (sheet.students ?? []) as AttendanceStudent[],
+      sessions: sheet.sessions ?? legacy,
     });
-    setModalOpen(false);
+    setDraftSheetId(sheet.id);
   };
 
   const handleDelete = (id: string) => {
@@ -138,179 +188,59 @@ export default function AttendanceSheetPage() {
     deleteSheet.mutate(id);
   };
 
-  const handlePrint = () => {
-    if (!previewData) return;
-
-    const daysInMonth = new Date(previewData.year, previewData.month, 0).getDate();
-    const monthName = MONTH_NAMES_FR[previewData.month - 1];
-    const generatedOn = formatDate(new Date());
-
-    const dayHeaders = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-    const dayCells = dayHeaders.map((d) => `<td class="day-col">&nbsp;</td>`).join("");
-
-    const studentRows = previewData.students
-      .map(
-        (s) => `
-      <tr>
-        <td class="student-name">${s.last_name} ${s.first_name}</td>
-        <td class="student-phone">${s.phone || s.parent_phone || ""}</td>
-        ${dayCells}
-      </tr>
-    `,
-      )
-      .join("");
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Feuille de Présence - ${previewData.groupName} - ${monthName} ${previewData.year}</title>
-          <style>
-            @page { size: A4 portrait; margin: 12mm; }
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-              font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-              font-size: 10px;
-              color: #000;
-              line-height: 1.3;
-            }
-            .sheet { width: 100%; }
-            .header {
-              text-align: center;
-              border-bottom: 2px solid #000;
-              padding-bottom: 8px;
-              margin-bottom: 10px;
-            }
-            .logo {
-              font-size: 20px;
-              font-weight: 800;
-              letter-spacing: 2px;
-              text-transform: uppercase;
-            }
-            .title {
-              font-size: 14px;
-              font-weight: 700;
-              margin-top: 4px;
-              text-transform: uppercase;
-            }
-            .meta {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 3px 16px;
-              margin-top: 8px;
-              text-align: left;
-            }
-            .meta-item { font-size: 10px; }
-            .meta-label { font-weight: 700; }
-            .schedule {
-              margin-top: 6px;
-              font-size: 10px;
-              text-align: left;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 10px;
-            }
-            th, td {
-              border: 1px solid #000;
-              padding: 3px 4px;
-              text-align: center;
-              vertical-align: middle;
-            }
-            th {
-              font-weight: 700;
-              background: #e5e5e5;
-            }
-            thead { display: table-header-group; }
-            tr { page-break-inside: avoid; }
-            .student-name {
-              text-align: left;
-              width: 55mm;
-              font-weight: 500;
-            }
-            .student-phone {
-              text-align: left;
-              width: 35mm;
-            }
-            .day-col {
-              width: 4.2mm;
-              min-width: 4.2mm;
-              height: 8mm;
-            }
-            .footer {
-              margin-top: 14px;
-              display: flex;
-              justify-content: space-between;
-              align-items: flex-end;
-            }
-            .signature-box {
-              text-align: center;
-            }
-            .signature-line {
-              border-top: 1px solid #000;
-              width: 120px;
-              margin: 0 auto;
-              padding-top: 4px;
-              font-size: 10px;
-            }
-            .generated {
-              font-size: 9px;
-              color: #444;
-              margin-top: 4px;
-            }
-            @media print {
-              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="sheet">
-            <div class="header">
-              <div class="logo">IQ ACADEMY</div>
-              <div class="title">Feuille de Présence Mensuelle</div>
-            </div>
-            <div class="meta">
-              <div class="meta-item"><span class="meta-label">Enseignant :</span> ${previewData.teacherName}</div>
-              <div class="meta-item"><span class="meta-label">Niveau :</span> ${previewData.levelName}</div>
-              <div class="meta-item"><span class="meta-label">Groupe :</span> ${previewData.groupName}</div>
-              <div class="meta-item"><span class="meta-label">Mois :</span> ${monthName} ${previewData.year}</div>
-            </div>
-            ${previewData.schedule ? `<div class="schedule"><span class="meta-label">Emploi du temps :</span> ${previewData.schedule.replace(/\n/g, "<br>")}</div>` : ""}
-            <table>
-              <thead>
-                <tr>
-                  <th class="student-name">Nom de l'étudiant</th>
-                  <th class="student-phone">Téléphone</th>
-                  ${dayHeaders.map((d) => `<th class="day-col">${d}</th>`).join("")}
-                </tr>
-              </thead>
-              <tbody>
-                ${studentRows || "<tr><td colspan='2' style='text-align:center;padding:12px;'>Aucun étudiant dans ce groupe</td>" + dayCells + "</tr>"}
-              </tbody>
-            </table>
-            <div class="footer">
-              <div class="signature-box">
-                <div class="signature-line">Signature de l'enseignant</div>
-              </div>
-              <div class="signature-box">
-                <div class="signature-line">Généré le : ${generatedOn}</div>
-              </div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
-
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.print();
+  const buildSavePayload = () => {
+    if (!draft) return null;
+    return {
+      group_id: groupId,
+      month: draft.month,
+      year: draft.year,
+      schedule: draft.schedule ?? undefined,
+      teacher_id: draft.teacherId ?? undefined,
+      teacher_name: draft.teacherName,
+      level_name: draft.levelName,
+      field_name: draft.fieldName ?? undefined,
+      group_name: draft.groupName,
+      academic_year: draft.academicYear || undefined,
+      sessions: draft.sessions,
+      students: draft.students,
+    };
   };
 
-  // The group list sits one level above the group: /hierarchy/.../level/{lId}.
+  /** Saves the current draft as a new snapshot, returning the row id. */
+  const ensureSaved = async (): Promise<string> => {
+    const payload = buildSavePayload();
+    if (!payload) throw new Error("nothing-to-save");
+    if (draftSheetId) return draftSheetId;
+    const saved = await saveSheet.mutateAsync(payload);
+    setDraftSheetId(saved.id);
+    return saved.id;
+  };
+
+  const handlePrint = async () => {
+    if (!draft) return;
+    try {
+      const id = await ensureSaved();
+      await openAttendancePrint(id);
+    } catch {
+      // popup blocked or save failed — the buttons simply had no effect
+    }
+  };
+
+  const handleExcel = async () => {
+    if (!draft) return;
+    try {
+      const id = await ensureSaved();
+      await downloadAttendanceExcel(id);
+    } catch {
+      // download failed — nothing to do here
+    }
+  };
+
+  const handleSave = async () => {
+    if (!draft) return;
+    await ensureSaved();
+  };
+
   const handleBack = () => {
     if (fieldId && profId && levelId) {
       router.push(`/hierarchy/field/${fieldId}/professor/${profId}/level/${levelId}`);
@@ -318,6 +248,8 @@ export default function AttendanceSheetPage() {
       router.push("/hierarchy");
     }
   };
+
+  const isLoading = groupLoading;
 
   if (isLoading) {
     return (
@@ -378,82 +310,247 @@ export default function AttendanceSheetPage() {
             <h2 className="text-h4 font-bold text-text-primary">{t("attendanceSheet.title")}</h2>
             <p className="text-xs text-text-secondary">{group.name} - {level?.name}</p>
           </div>
-          {previewData && (
-            <button className="btn btn-primary" onClick={handlePrint}>
-              <Printer size={16} /> {t("attendanceSheet.printButton")}
-            </button>
-          )}
-          {!previewData && (
-            <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
-              {t("attendanceSheet.generateButton")}
-            </button>
+          {draft && (
+            <div className="flex items-center gap-2">
+              <button className="btn btn-secondary" onClick={handleSave} disabled={saveSheet.isPending}>
+                {saveSheet.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                {t("attendanceSheet.save", "Save")}
+              </button>
+              <button className="btn btn-secondary" onClick={handleExcel} disabled={saveSheet.isPending}>
+                <Download size={16} />
+                {t("attendanceSheet.excel", "Excel")}
+              </button>
+              <button className="btn btn-primary" onClick={handlePrint} disabled={saveSheet.isPending}>
+                <Printer size={16} />
+                {t("attendanceSheet.printButton")}
+              </button>
+            </div>
           )}
         </div>
 
-        {previewData && (
-          <div className="card p-6">
-            <h3 className="text-h4 font-bold mb-4">{t("attendanceSheet.preview")}</h3>
-            <div className="border border-border rounded-lg p-4 bg-white dark:bg-neutral-900">
-              <div className="text-center border-b-2 border-black pb-2 mb-3">
-                <div className="text-lg font-extrabold tracking-widest uppercase">IQ ACADEMY</div>
-                <div className="text-sm font-bold uppercase mt-1">{t("attendanceSheet.title")}</div>
+        {/* Generate card: month / year / teacher, always visible so the user
+            can switch month and regenerate sessions. */}
+        <div className="card p-5">
+          <h3 className="text-h4 font-bold mb-4">{t("attendanceSheet.generateButton")}</h3>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">{t("attendanceSheet.month")} *</label>
+              <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="input">
+                {MONTHS_FR.map((name, idx) => (
+                  <option key={idx} value={idx + 1}>{name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">{t("attendanceSheet.year")} *</label>
+              <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="input">
+                {YEAR_OPTIONS.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            {isSuperAdmin && (
+              <div>
+                <label className="block text-sm font-medium mb-1">{t("attendanceSheet.teacher")}</label>
+                <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} className="input">
+                  <option value="">{professor?.full_name ?? t("attendanceSheet.selectTeacher")}</option>
+                  {professors?.filter((p) => p.id !== professor?.id).map((p) => (
+                    <option key={p.id} value={p.id}>{p.full_name}</option>
+                  ))}
+                </select>
               </div>
-              <div className="grid grid-cols-2 gap-2 mb-2 text-sm">
-                <div><span className="font-bold">{t("attendanceSheet.teacher")} :</span> {previewData.teacherName}</div>
-                <div><span className="font-bold">{t("attendanceSheet.level")} :</span> {previewData.levelName}</div>
-                <div><span className="font-bold">{t("attendanceSheet.group")} :</span> {previewData.groupName}</div>
-                <div><span className="font-bold">{t("attendanceSheet.month")} :</span> {MONTH_NAMES_FR[previewData.month - 1]} {previewData.year}</div>
-              </div>
-              {previewData.schedule && (
-                <div className="text-sm mb-3">
-                  <span className="font-bold">{t("attendanceSheet.schedule")} :</span> {previewData.schedule}
+            )}
+            <button
+              className="btn btn-primary"
+              onClick={handleGenerate}
+              disabled={generate.isPending}
+            >
+              {generate.isPending ? <Loader2 size={16} className="animate-spin" /> : <CalendarPlus size={16} />}
+              {draft ? t("attendanceSheet.regenerate", "Regenerate sessions") : t("attendanceSheet.generate", "Generate")}
+            </button>
+          </div>
+          <p className="text-xs text-text-secondary mt-3">
+            {t("attendanceSheet.generateHint", "Sessions are laid out from the group schedule (8 séances by default) — add or remove séances below as needed.")}
+          </p>
+        </div>
+
+        {draft && (
+          <>
+            {/* Session editor */}
+            <div className="card p-5">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                <div>
+                  <h3 className="text-h4 font-bold">
+                    {t("attendanceSheet.sessions", "Sessions")}
+                    <span className="ml-2 text-xs font-semibold text-primary bg-primary-50 px-2 py-0.5 rounded-full">
+                      {draft.sessions.length}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {t("attendanceSheet.sessionsHint", "Add or remove séances, reorder them — the printed register follows exactly.")}
+                  </p>
                 </div>
-              )}
-              <div className="overflow-x-auto border border-black">
-                <table className="w-full border-collapse text-xs">
-                  <thead>
-                    <tr>
-                      <th className="border border-black px-2 py-1 text-left w-48">{t("attendanceSheet.studentName")}</th>
-                      <th className="border border-black px-2 py-1 text-left w-28">{t("attendanceSheet.phone")}</th>
-                      {Array.from({ length: new Date(previewData.year, previewData.month, 0).getDate() }, (_, i) => (
-                        <th key={i} className="border border-black px-1 py-1 w-6 text-center">{i + 1}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewData.students.length === 0 ? (
+                <button className="btn btn-secondary text-xs" onClick={resetSessions} disabled={generate.isPending}>
+                  <RotateCcw size={13} />
+                  {t("attendanceSheet.resetSessions", "Reset to default")}
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {draft.sessions.map((s, i) => (
+                  <div key={s.id} className="flex items-center gap-1.5 border border-border rounded-btn p-2 bg-white dark:bg-neutral-900">
+                    <span className="text-xs font-bold text-primary flex-1">{t("attendanceSheet.seance", "S")}{i + 1}</span>
+                    <div className="flex flex-col shrink-0">
+                      <button type="button" className="p-0.5 text-text-secondary hover:text-primary" onClick={() => moveSession(i, -1)} disabled={i === 0} aria-label={t("attendanceSheet.moveUp", "Move up")}>
+                        <ArrowUp size={12} />
+                      </button>
+                      <button type="button" className="p-0.5 text-text-secondary hover:text-primary" onClick={() => moveSession(i, 1)} disabled={i === draft.sessions.length - 1} aria-label={t("attendanceSheet.moveDown", "Move down")}>
+                        <ArrowDown size={12} />
+                      </button>
+                    </div>
+                    <button type="button" className="p-1 text-text-secondary hover:text-danger shrink-0" onClick={() => removeSession(s.id)} aria-label={t("attendanceSheet.removeSession", "Remove session")}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="flex items-center justify-center gap-1.5 border border-dashed border-primary/40 rounded-btn p-2 bg-primary-50 text-primary text-xs font-semibold hover:bg-primary-100" onClick={addSession}>
+                  <CalendarPlus size={13} />
+                  {t("attendanceSheet.addSession", "Add")}
+                </button>
+              </div>
+            </div>
+
+            {/* Print-ready preview */}
+            <div className="card p-6">
+              <h3 className="text-h4 font-bold mb-4">{t("attendanceSheet.preview")}</h3>
+              <div className="border border-primary-200 rounded-lg p-5 bg-white shadow-sm overflow-x-auto">
+                <div className="min-w-[640px]">
+                  {/* Header */}
+                  <div className="flex items-end justify-between gap-4 border-b-[2.5px] border-primary pb-2">
+                    <div>
+                      <div className="text-primary font-bold text-lg leading-tight">{draft.groupName}</div>
+                      <div className="text-[10px] text-text-secondary">{t("attendanceSheet.academyLabel", "Monthly attendance register")}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-primary font-semibold uppercase tracking-wide text-sm">
+                        {t("attendanceSheet.title")}
+                      </div>
+                      {draft.academicYear && (
+                        <div className="text-[10px] text-text-secondary">
+                          {t("attendanceSheet.academicYear", "Academic year")} : {draft.academicYear}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Info panel */}
+                  <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 border border-primary rounded-md overflow-hidden">
+                    {[
+                      [t("attendanceSheet.teacher"), draft.teacherName],
+                      [t("attendanceSheet.month"), `${MONTHS_FR[draft.month - 1]} ${draft.year}`],
+                      [t("attendanceSheet.level"), draft.levelName],
+                      [t("attendanceSheet.field", "Field"), draft.fieldName ?? "—"],
+                      [t("attendanceSheet.group"), draft.groupName],
+                      [t("attendanceSheet.sessions"), String(draft.sessions.length)],
+                    ].map(([k, v], i) => (
+                      <div key={i} className="bg-[#F8E8A5] border-r border-primary/40 px-2.5 py-1.5 last:border-r-0">
+                        <div className="text-[8px] font-semibold uppercase tracking-wider text-primary">{k}</div>
+                        <div className="text-[11px] font-semibold text-gray-800 truncate">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Schedule banner */}
+                  {draft.schedule && (
+                    <div className="mt-2 bg-[#DCEEFF] border border-primary rounded-md px-3 py-1.5 flex items-center gap-2">
+                      <span className="text-[8.5px] font-bold uppercase tracking-wider text-primary whitespace-nowrap">
+                        {t("attendanceSheet.schedule")}
+                      </span>
+                      <span className="text-[10.5px] font-semibold text-gray-800 whitespace-pre-wrap">
+                        {draft.schedule}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Register table */}
+                  <table className="w-full mt-2 border-2 border-primary border-collapse table-fixed text-[10px]">
+                    <thead>
                       <tr>
-                        <td colSpan={2 + new Date(previewData.year, previewData.month, 0).getDate()} className="border border-black px-2 py-3 text-center">
-                          {t("attendanceSheet.noStudents")}
-                        </td>
+                        <th className="w-7 bg-primary text-white border border-primary py-1 font-semibold">#</th>
+                        <th className="w-36 bg-primary text-white border border-primary py-1 font-semibold text-left px-1.5">
+                          {t("attendanceSheet.studentName")}
+                        </th>
+                        <th className="w-20 bg-primary text-white border border-primary py-1 font-semibold text-left px-1.5">
+                          {t("attendanceSheet.phone")}
+                        </th>
+                        {draft.sessions.map((s, i) => (
+                          <th key={s.id} className="bg-primary text-white border border-primary py-1 font-semibold px-0.5">
+                            {t("attendanceSheet.seance", "S")}{i + 1}
+                          </th>
+                        ))}
+                        <th className="w-24 bg-white text-primary border border-primary py-1 font-semibold">
+                          {t("attendanceSheet.presence", "Presence")}
+                        </th>
                       </tr>
-                    ) : (
-                      previewData.students.map((s) => (
-                        <tr key={s.id}>
-                          <td className="border border-black px-2 py-1 text-left">{s.last_name} {s.first_name}</td>
-                          <td className="border border-black px-2 py-1 text-left">{s.phone || s.parent_phone || ""}</td>
-                          {Array.from({ length: new Date(previewData.year, previewData.month, 0).getDate() }, () => (
-                            <td key={Math.random()} className="border border-black px-1 py-1 w-6">&nbsp;</td>
-                          ))}
+                    </thead>
+                    <tbody>
+                      {draft.students.length === 0 ? (
+                        <tr>
+                          <td colSpan={3 + draft.sessions.length + 1} className="border border-primary py-4 text-center text-text-secondary">
+                            {t("attendanceSheet.noStudents")}
+                          </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-between mt-4 text-sm">
-                <div className="text-center">
-                  <div className="border-t border-black w-32 pt-1">{t("attendanceSheet.teacherSignature")}</div>
-                </div>
-                <div className="text-center">
-                  <div className="border-t border-black w-32 pt-1">{t("attendanceSheet.generatedOn")} : {formatDate(new Date())}</div>
+                      ) : (
+                        draft.students.map((s, i) => (
+                          <tr key={s.id ?? i} className="break-inside-avoid">
+                            <td className="border border-primary text-center py-1.5 font-semibold text-gray-500">{i + 1}</td>
+                            <td className="border border-primary text-left px-1.5 py-1.5 font-medium text-gray-800">
+                              {s.last_name} {s.first_name}
+                            </td>
+                            <td className="border border-primary text-left px-1.5 py-1.5 text-gray-600">
+                              {s.phone?.trim() || ""}
+                            </td>
+                            {draft.sessions.map((ses) => (
+                              <td key={ses.id} className="border border-primary" />
+                            ))}
+                            <td className="border border-primary" />
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+
+                  {/* Signatures */}
+                  <div className="flex justify-between gap-8 mt-8">
+                    <div className="flex-1 text-center">
+                      <div className="border-b-[1.2px] border-primary h-10" />
+                      <div className="text-[10px] font-medium text-gray-700 mt-1.5">
+                        {t("attendanceSheet.teacherSignature")}
+                      </div>
+                    </div>
+                    <div className="flex-1 text-center">
+                      <div className="border-b-[1.2px] border-primary h-10" />
+                      <div className="text-[10px] font-medium text-gray-700 mt-1.5">
+                        {t("attendanceSheet.adminSignature", "Administrator signature")}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between mt-4 pt-2 border-t border-primary-100 text-[9px] text-text-secondary">
+                    <span>
+                      {t("attendanceSheet.generatedOn")} : {formatDate(new Date())}
+                      {isSuperAdmin ? ` · ${t("attendanceSheet.generatedBy", "Generated by")} : ${user?.full_name}` : ""}
+                    </span>
+                    <span className="font-semibold text-primary">
+                      {t("attendanceSheet.page", "Page")} 1 / {draft.students.length > 24 ? 2 : 1}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </>
         )}
 
-        {!previewData && (
+        {!draft && (
           <div className="card p-8 text-center text-text-secondary">
             <p className="mb-2">{t("attendanceSheet.noSheetYet")}</p>
             <p className="text-sm">{t("attendanceSheet.clickToGenerate")}</p>
@@ -477,6 +574,9 @@ export default function AttendanceSheetPage() {
                       {t("attendanceSheet.studentsCount", "Students")}
                     </th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                      {t("attendanceSheet.sessions", "Sessions")}
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
                       {t("attendanceSheet.generatedOn", "Generated on")}
                     </th>
                     <th className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase" />
@@ -486,10 +586,13 @@ export default function AttendanceSheetPage() {
                   {savedSheets.map((sheet) => (
                     <tr key={sheet.id} className="hover:bg-background/50">
                       <td className="px-3 py-2 font-medium">
-                        {MONTH_NAMES_FR[sheet.month - 1]} {sheet.year}
+                        {MONTHS_FR[sheet.month - 1]} {sheet.year}
                       </td>
                       <td className="px-3 py-2 text-text-secondary">{sheet.teacher_name}</td>
                       <td className="px-3 py-2 text-text-secondary">{Array.isArray(sheet.students) ? sheet.students.length : 0}</td>
+                      <td className="px-3 py-2 text-text-secondary">
+                        {Array.isArray(sheet.sessions) ? sheet.sessions.length : 8}
+                      </td>
                       <td className="px-3 py-2 text-text-secondary">{formatDate(sheet.generated_at)}</td>
                       <td className="px-3 py-2">
                         <div className="flex items-center justify-end gap-1.5">
@@ -515,17 +618,6 @@ export default function AttendanceSheetPage() {
           </div>
         )}
       </div>
-
-      <AttendanceSheetModal
-        isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onGenerate={handleGenerate}
-        group={group as Group}
-        professor={professor}
-        level={level}
-        professors={professors ?? []}
-        isSuperAdmin={isSuperAdmin}
-      />
     </>
   );
 }

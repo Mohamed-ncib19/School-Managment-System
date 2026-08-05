@@ -310,54 +310,88 @@ export class ReceiptService {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${this.escape(input.title)} - ${brand}</title>
+  <title>${this.escape(input.title)}</title>
   <style>
-    @page { size: A4; margin: 14mm; }
+    /* 80mm thermal roll: the printable strip is ~72mm after the printer's
+       own side margins, so the sheet is sized to the paper, not the paper
+       to the sheet. Monochrome, compact, tabular — no colour fills, no
+       floats, nothing a thermal head renders as a smudge. */
+    @page { size: 80mm auto; margin: 2mm 3mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
-    .receipt { max-width: 640px; margin: 0 auto; border: 1px solid #ddd; padding: 30px; }
-    .header { display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #264EBE; padding-bottom: 20px; margin-bottom: 20px; text-align: left; }
-    .header .logo { height: 76px; width: auto; max-width: 55mm; object-fit: contain; flex-shrink: 0; }
-    .header .brand-text { flex: 1; min-width: 0; }
-    .header .brand-text h1 { color: #264EBE; font-size: 24px; margin-bottom: 5px; }
-    .header .brand-text p { color: #666; font-size: 14px; }
-    .receipt-title { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #264EBE; }
-    .details table { width: 100%; border-collapse: collapse; }
-    .details td { padding: 8px 0; border-bottom: 1px solid #eee; }
-    .details td:first-child { font-weight: bold; width: 42%; color: #555; }
-    .ledger { margin-top: 22px; }
-    .ledger h3 { font-size: 13px; color: #264EBE; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .03em; }
-    .ledger-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .ledger-table th { background: #f0f4ff; color: #264EBE; text-align: left; padding: 6px 8px; font-size: 11px; text-transform: uppercase; }
-    .ledger-table td { padding: 6px 8px; border-bottom: 1px solid #eee; }
-    .right { text-align: right; font-variant-numeric: tabular-nums; }
-    .negative { color: #b91c1c; }
-    .amount-due { text-align: center; margin: 25px 0 0; padding: 15px; background: #f0f4ff; border-radius: 8px; }
-    .amount-due .label { font-size: 14px; color: #666; margin-bottom: 5px; }
-    .amount-due .value { font-size: 28px; font-weight: bold; color: #264EBE; }
-    .amount-due .subline { font-size: 12px; color: #6b7280; margin-top: 6px; }
-    .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #999; }
-    @media print { body { padding: 20px; } .receipt { border: none; } }
+    html, body { width: 80mm; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11px; line-height: 1.35; }
+    .receipt { width: 80mm; margin: 0 auto; padding: 1mm 1.5mm; }
+    .no-print { display: none; }
+
+    .head { text-align: center; }
+    .head .logo { max-width: 56mm; max-height: 24mm; object-fit: contain; }
+    .head .brand { font-size: 13px; font-weight: 700; letter-spacing: .02em; margin-top: .5mm; }
+    .head .coords { font-size: 9px; color: #555; }
+
+    .ruled { border-top: 1px dashed #999; margin: 2mm 0; }
+
+    .title { text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .no { text-align: center; font-size: 11px; font-weight: 700; margin-top: .5mm; }
+
+    table.kv { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+    .kv td { padding: .6mm 0; border-bottom: 1px dotted #ccc; vertical-align: top; }
+    .kv td:first-child { width: 44%; color: #444; }
+    .kv td:last-child { text-align: right; font-weight: 700; word-break: break-word; }
+
+    .ledger { margin-top: 2.5mm; }
+    .ledger h3 { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 1mm; }
+    .ledger-table { width: 100%; border-collapse: collapse; }
+    .ledger-table th { font-size: 8.5px; text-transform: uppercase; text-align: left; border-bottom: 1px solid #333; padding: .6mm 0; }
+    .ledger-table th.right { text-align: right; }
+    .ledger-table td { font-size: 10px; padding: .8mm 0; border-bottom: 1px dotted #ddd; font-variant-numeric: tabular-nums; }
+    .ledger-table td.right { text-align: right; }
+    .negative { font-weight: 700; }
+
+    .amount { text-align: center; margin: 3mm 0 0; border-top: 1.5px solid #111; border-bottom: 1.5px solid #111; padding: 2.5mm 0; }
+    .amount .label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .amount .value { font-size: 17px; font-weight: 700; margin: 1mm 0; }
+    .amount .subline { font-size: 10px; }
+
+    .foot { text-align: center; margin-top: 3mm; font-size: 10px; }
+    .foot .meta { font-size: 9px; color: #555; margin-top: .5mm; }
+    .cut { text-align: center; margin-top: 2.5mm; color: #666; font-size: 9px; letter-spacing: .12em; }
+
+    @media screen {
+      body { background: #eef1f6; padding: 12px; }
+      .receipt { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.15); }
+      .no-print { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
+      .no-print button { background: #111; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 12px; cursor: pointer; }
+    }
+    @media print {
+      body { padding: 0; }
+      .receipt { box-shadow: none; }
+    }
   </style>
 </head>
 <body>
+  <div class="no-print">
+    <button onclick="window.print()">Imprimer</button>
+  </div>
   <div class="receipt">
-    <div class="header">
+    <div class="head">
       ${input.logoUrl ? `<img class="logo" src="${this.escape(input.logoUrl)}" alt="${brand}">` : ""}
-      <div class="brand-text">
-        <h1>${brand}</h1>
-        <p>Reçu de Paiement</p>
-      </div>
+      <div class="brand">${brand}</div>
     </div>
-    <div class="receipt-title">${this.escape(input.title)}</div>
-    <div class="details"><table>${details}</table></div>
+    <div class="ruled"></div>
+    <div class="title">${this.escape(input.title)}</div>
+    <div class="no">N° ${this.escape(input.receiptNumber)}</div>
+    <div class="details"><table class="kv">${details}</table></div>
     ${input.ledger}
-    <div class="amount-due">
+    <div class="amount">
       <div class="label">${this.escape(input.headlineLabel)}</div>
       <div class="value">${this.escape(input.headlineValue)}</div>
       ${input.subline ? `<div class="subline">${this.escape(input.subline)}</div>` : ""}
     </div>
-    <div class="footer"><p>${brand} &mdash; Merci pour votre paiement.</p></div>
+    <div class="foot">
+      <div>${brand} &mdash; Merci pour votre paiement.</div>
+      <div class="meta">${new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date())}</div>
+    </div>
+    <div class="cut">&bull;&bull;&bull; CUT &bull;&bull;&bull;</div>
   </div>
 </body>
 </html>`;

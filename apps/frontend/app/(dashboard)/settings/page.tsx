@@ -718,11 +718,10 @@ export default function SettingsPage() {
 
                   <div>
                     <label className="block text-sm font-medium text-text-primary mb-2">{t("settings.language")}</label>
-                    <div className="grid grid-cols-2 gap-2 max-w-xs">
-                      {(["en", "fr"] as const).map((locale) => (
-                        <LanguageOption key={locale} locale={locale} />
-                      ))}
+                    <div className="inline-flex items-center gap-2 rounded-btn border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary">
+                      Français (FR)
                     </div>
+                    <p className="text-xs text-text-secondary mt-1.5">{t("settings.languageHint", "L'interface est disponible en français uniquement.")}</p>
                   </div>
 
                   <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
@@ -1247,25 +1246,6 @@ function Switch({
           checked && "translate-x-5",
         )}
       />
-    </button>
-  );
-}
-
-function LanguageOption({ locale }: { locale: "en" | "fr" }) {
-  const { locale: currentLocale, setLocale } = useTranslation();
-  const isActive = currentLocale === locale;
-  const labels: Record<string, string> = { en: "EN", fr: "FR" };
-
-  return (
-    <button
-      onClick={() => setLocale(locale)}
-      className={`flex-1 py-2 px-3 rounded-btn text-xs font-medium transition-colors ${
-        isActive
-          ? "bg-primary text-white shadow-sm"
-          : "bg-background border border-border text-text-secondary hover:bg-neutral-soft"
-      }`}
-    >
-      {labels[locale]}
     </button>
   );
 }
