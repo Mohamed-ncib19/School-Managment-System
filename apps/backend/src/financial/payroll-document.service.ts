@@ -617,14 +617,18 @@ export class PayrollDocumentService {
     const balance = Number(s.totals.remaining_balance);
     const pending = s.pending;
     const hasPending = !!pending && pending.invoice_count > 0;
-    const pctLabel = pending?.percentage_label;
+    const pendingShare = hasPending ? Number(pending.professor_potential) : 0;
+    // The "rest" a professor still expects includes the share of students who
+    // have not paid yet — the receipt must not claim "règlement soldé" while
+    // their fees are still owed.
+    const projectedBalance = balance + pendingShare;
     const pendingStudentWord = (n: number) => (n > 1 ? "étudiants non réglés" : "étudiant non réglé");
     const balanceDate =
-      balance > 0
-        ? hasPending
-          ? `${pending!.student_count} ${pendingStudentWord(pending!.student_count)} — à régler aux prochains encaissements`
-          : "à régler sur les prochains encaissements"
-        : "règlement soldé";
+      hasPending && pendingShare > 0
+        ? `${pending!.student_count} ${pendingStudentWord(pending!.student_count)} — à régler aux prochains encaissements`
+        : balance > 0
+          ? "à régler sur les prochains encaissements"
+          : "règlement soldé";
 
     return this.shell(s, {
       title: s.document.title,
@@ -665,7 +669,7 @@ export class PayrollDocumentService {
           </div>
           <div class="settled-box">
             <div class="label">Solde restant</div>
-            <div class="value ${balance > 0 ? "negative" : ""}">${fmt.money(s.totals.remaining_balance)}</div>
+            <div class="value ${projectedBalance > 0 ? "negative" : ""}">${fmt.money(projectedBalance.toFixed(2))}</div>
             <div class="date">${balanceDate}</div>
           </div>
         </div>
@@ -675,11 +679,6 @@ export class PayrollDocumentService {
         <table class="data">
           <tbody>
             <tr><td>Étudiants non réglés</td><td class="right">${pending.student_count} / ${s.totals.student_count}</td></tr>
-            <tr><td>Factures non soldées</td><td class="right">${pending.invoice_count}</td></tr>
-            <tr><td>Reste à encaisser</td><td class="right">${fmt.money(pending.unpaid)}</td></tr>
-            ${pctLabel ? `
-            <tr><td>Part professeur à venir (${this.escape(pctLabel)})</td><td class="right">${fmt.money(pending.professor_potential)}</td></tr>
-            <tr><td>Part académie à venir</td><td class="right">${fmt.money(pending.school_potential)}</td></tr>` : ""}
           </tbody>
           <tfoot>
             <tr><td>Gain professeur total prévu</td><td class="right">${fmt.money(pending.projected_earned)}</td></tr>

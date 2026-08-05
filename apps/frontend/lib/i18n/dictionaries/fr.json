@@ -810,7 +810,9 @@
       "totalEarned": "Total acquis",
       "professor": "professeur",
       "academy": "académie",
-      "students": "Étudiants inclus"
+      "students": "Étudiants inclus",
+      "remainingBalance": "Reste",
+      "restHint": "Reste = acquis non encore versé : les étudiants ont payé, la part du professeur est gagnée, mais le versement n'a pas encore eu lieu. Ce n'est pas le montant des étudiants non encore réglés — leur part n'est pas encore acquise."
     },
     "txn": {
       "payment": "Paiement",

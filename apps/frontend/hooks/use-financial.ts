@@ -69,6 +69,15 @@ function useFinancialMutation<TArgs, TResult>(
   });
 }
 
+/**
+ * Payroll and payment screens stay live while open: money moves from other
+ * places (front desk, another tab, the billing job) without ever firing a
+ * mutation on this page, so the screens poll every few seconds instead of
+ * waiting for a refetch that never comes.
+ */
+const REALTIME_INTERVAL = 10_000;
+const realtime = { refetchInterval: REALTIME_INTERVAL as number | false };
+
 // ---------------------------------------------------------------------------
 // Dashboard & analytics
 // ---------------------------------------------------------------------------
@@ -148,6 +157,7 @@ export function useFinancialPayments(query: Record<string, unknown> = {}) {
     queryKey: financialKeys.payments(query),
     queryFn: () => financialApi.payments(query),
     placeholderData: (previous) => previous,
+    ...realtime,
   });
 }
 
@@ -164,6 +174,7 @@ export function useStudentPaymentHistory(studentId: string) {
     queryKey: financialKeys.studentHistory(studentId),
     queryFn: () => financialApi.studentHistory(studentId),
     enabled: !!studentId,
+    ...realtime,
   });
 }
 
@@ -228,6 +239,7 @@ export function usePayroll(query: Record<string, unknown> = {}) {
     queryKey: financialKeys.payroll(query),
     queryFn: () => financialApi.payroll(query),
     placeholderData: (previous) => previous,
+    ...realtime,
   });
 }
 
@@ -236,6 +248,7 @@ export function useProfessorFinancials(profId: string, period?: string) {
     queryKey: financialKeys.professor(profId, period),
     queryFn: () => financialApi.professorDetail(profId, period),
     enabled: !!profId,
+    ...realtime,
   });
 }
 
@@ -286,6 +299,7 @@ export function useSettlement(profId: string, period?: string, enabled = true) {
     queryKey: financialKeys.settlement(profId, period),
     queryFn: () => financialApi.settlement(profId, period),
     enabled: !!profId && enabled,
+    ...realtime,
   });
 }
 
@@ -294,6 +308,7 @@ export function usePayoutDocuments(payoutId: string, enabled = true) {
     queryKey: financialKeys.payoutDocuments(payoutId),
     queryFn: () => financialApi.payoutDocuments(payoutId),
     enabled: !!payoutId && enabled,
+    ...realtime,
   });
 }
 
@@ -302,6 +317,7 @@ export function useProfessorDocuments(profId: string, period?: string, enabled =
     queryKey: financialKeys.professorDocuments(profId, period),
     queryFn: () => financialApi.professorDocuments(profId, period),
     enabled: !!profId && enabled,
+    ...realtime,
   });
 }
 
