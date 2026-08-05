@@ -7,7 +7,7 @@ import { AuditService } from "../audit/audit.service";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
-import { Money, ZERO, money, round2, toAmount } from "./money.util";
+import { Money, ZERO, money, percentOf, round2, sum, toAmount } from "./money.util";
 import { periodOfDate, parsePeriod } from "./period.util";
 
 /** Everything either document is rendered from, frozen at generation time. */
@@ -62,6 +62,22 @@ export interface SettlementSnapshot {
     amount_paid: string;
     remaining_balance: string;
     status: string;
+  };
+  /**
+   * Invoices of the period that are not settled yet (not_paid / due_soon /
+   * overdue / partially_paid) — the students the professor's cut will be
+   * computed on once they actually pay. Projected figures, labelled as such.
+   */
+  pending: {
+    student_count: number;
+    invoice_count: number;
+    amount_due: string;
+    amount_paid: string;
+    unpaid: string;
+    professor_potential: string;
+    school_potential: string;
+    projected_earned: string;
+    percentage_label: string | null;
   };
   verification: { revenue: string; professor_share: string; school_share: string; verified: boolean };
   groups: {
@@ -222,6 +238,67 @@ export class PayrollDocumentService {
         verified: professorShare.plus(schoolShare).equals(revenue),
       },
       groups: await this.groupBreakdown(db, profId, target),
+      pending: await this.pendingForProfessor(db, profId, target, rule, revenue, earned),
+    };
+  }
+
+  /**
+   * What the professor's roster still owes for the period.
+   *
+   * The split only ever applies to money actually collected, but a professor
+   * paid on collections wants to see where his next dinars come from: the
+   * invoices of the period that are not settled yet, and what his percentage
+   * will put in his pocket once those students pay. A projection, never a
+   * ledger figure — computed with the rule in force at generation time and
+   * frozen on the document like everything else.
+   */
+  private async pendingForProfessor(
+    db: Db,
+    profId: string,
+    period: string,
+    rule: { model: string; percentage: Money | null },
+    revenue: Money,
+    earned: Money,
+  ): Promise<SettlementSnapshot["pending"]> {
+    const invoices = await db.student_payments.findMany({
+      where: {
+        period,
+        group: { prof_id: profId },
+        status: { in: ["not_paid", "due_soon", "overdue", "partially_paid"] },
+      },
+      select: { amount_due: true, paid_amount: true, student_id: true },
+    });
+
+    // An unpaid invoice of 0,00 DT is nothing owed — it must not make the
+    // receipt claim a student still owes money.
+    const unsettled = invoices.filter(
+      (i) => round2(money(i.amount_due).minus(money(i.paid_amount))).greaterThan(0),
+    );
+
+    const students = new Set(unsettled.map((i) => i.student_id));
+    const due = round2(sum(unsettled.map((i) => money(i.amount_due))));
+    const paid = round2(sum(unsettled.map((i) => money(i.paid_amount))));
+    const unpaid = round2(due.minus(paid));
+
+    // Only the percentage leg of a rule can be projected onto future
+    // collections; fixed models owe their whole component whether or not
+    // anybody has paid, and it is already in `earned`.
+    const projectsPercentage = rule.model === "percentage" || rule.model === "hybrid";
+    const professorPotential =
+      projectsPercentage && rule.percentage !== null ? percentOf(unpaid, rule.percentage) : ZERO;
+    const schoolPotential = round2(unpaid.minus(professorPotential));
+
+    return {
+      student_count: students.size,
+      invoice_count: unsettled.length,
+      amount_due: toAmount(due),
+      amount_paid: toAmount(paid),
+      unpaid: toAmount(unpaid),
+      professor_potential: toAmount(professorPotential),
+      school_potential: toAmount(schoolPotential),
+      projected_earned: toAmount(round2(earned.plus(professorPotential))),
+      percentage_label:
+        projectsPercentage && rule.percentage !== null ? `${toAmount(rule.percentage)}%` : null,
     };
   }
 
@@ -538,6 +615,16 @@ export class PayrollDocumentService {
   private professorReceiptHtml(s: SettlementSnapshot, logoUrl?: string | null): string {
     const fmt = this.formatters(s);
     const balance = Number(s.totals.remaining_balance);
+    const pending = s.pending;
+    const hasPending = !!pending && pending.invoice_count > 0;
+    const pctLabel = pending?.percentage_label;
+    const pendingStudentWord = (n: number) => (n > 1 ? "étudiants non réglés" : "étudiant non réglé");
+    const balanceDate =
+      balance > 0
+        ? hasPending
+          ? `${pending!.student_count} ${pendingStudentWord(pending!.student_count)} — à régler aux prochains encaissements`
+          : "à régler sur les prochains encaissements"
+        : "règlement soldé";
 
     return this.shell(s, {
       title: s.document.title,
@@ -579,9 +666,27 @@ export class PayrollDocumentService {
           <div class="settled-box">
             <div class="label">Solde restant</div>
             <div class="value ${balance > 0 ? "negative" : ""}">${fmt.money(s.totals.remaining_balance)}</div>
-            <div class="date">${balance > 0 ? "à régler sur les prochains encaissements" : "règlement soldé"}</div>
+            <div class="date">${balanceDate}</div>
           </div>
         </div>
+
+        ${hasPending ? `
+        <h2 class="section">Étudiants non encore payés</h2>
+        <table class="data">
+          <tbody>
+            <tr><td>Étudiants non réglés</td><td class="right">${pending.student_count} / ${s.totals.student_count}</td></tr>
+            <tr><td>Factures non soldées</td><td class="right">${pending.invoice_count}</td></tr>
+            <tr><td>Reste à encaisser</td><td class="right">${fmt.money(pending.unpaid)}</td></tr>
+            ${pctLabel ? `
+            <tr><td>Part professeur à venir (${this.escape(pctLabel)})</td><td class="right">${fmt.money(pending.professor_potential)}</td></tr>
+            <tr><td>Part académie à venir</td><td class="right">${fmt.money(pending.school_potential)}</td></tr>` : ""}
+          </tbody>
+          <tfoot>
+            <tr><td>Gain professeur total prévu</td><td class="right">${fmt.money(pending.projected_earned)}</td></tr>
+          </tfoot>
+        </table>
+        <p class="projection-note">Gain prévisionnel si tous les étudiants non réglés paient — ${fmt.money(s.totals.total_earned)} actuels + ${fmt.money(pending.professor_potential)} à venir.</p>
+        ` : ""}
 
         <div class="signatures">
           <div class="sig">
@@ -835,6 +940,7 @@ export class PayrollDocumentService {
     .sig .label { font-size: 9px; color: #444; margin-top: 1mm; }
 
     .internal-note { margin-top: 2.5mm; font-size: 9px; font-weight: 700; border: 1px dashed #111; padding: 1.5mm 2mm; text-align: center; }
+    .projection-note { margin-top: 1.5mm; font-size: 8.5px; color: #444; }
     .watermark { text-align: center; font-size: 10px; font-weight: 700; letter-spacing: .12em; border: 1px solid #111; margin: 2mm 0 0; padding: 1mm; }
 
     footer { margin-top: 3mm; padding-top: 1mm; border-top: 1px solid #333; text-align: center; font-size: 8.5px; color: #555; }
