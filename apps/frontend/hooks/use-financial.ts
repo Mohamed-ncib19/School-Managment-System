@@ -75,7 +75,7 @@ function useFinancialMutation<TArgs, TResult>(
  * mutation on this page, so the screens poll every few seconds instead of
  * waiting for a refetch that never comes.
  */
-const REALTIME_INTERVAL = 10_000;
+const REALTIME_INTERVAL = 30_000;
 const realtime = { refetchInterval: REALTIME_INTERVAL as number | false };
 
 // ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ export default function LoginPage() {
   });
 
   const { data: system, isLoading: systemLoading } = useSystemSettings();
-  const systemName = system?.system_name?.trim() || t("app.name", "IQ Academy");
+  const systemName = system?.system_name?.trim() || t("app.name");
 
   const mutation = useMutation({
     mutationFn: authApi.login,

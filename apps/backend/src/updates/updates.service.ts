@@ -1,0 +1,202 @@
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { execFile, spawn } from "child_process";
+import { promisify } from "util";
+
+const execFileP = promisify(execFile);
+
+export interface UpdateStatus {
+  /** True when the GitHub repository reports a commit this install doesn't have. */
+  available: boolean;
+  repo?: string;
+  branch?: string;
+  installed?: { short: string; branch: string };
+  latest?: { sha: string; short: string; message: string; author: string; date: string };
+  checkedAt: string;
+  /** When the check can't run: disabled, no-git-install, no-github-remote, github-unreachable. */
+  reason?: string;
+}
+
+interface Cached {
+  at: number;
+  status: UpdateStatus;
+}
+
+/**
+ * The app is distributed as a git clone (see tools\windows\scripts\do-update.ps1),
+ * so the "installed version" IS the local HEAD commit and "latest" means the
+ * upstream repository on GitHub is ahead. The repo and owner are discovered from
+ * the install's own git config — nothing is hard-coded — and the tracked branch
+ * is `UPDATE_BRANCH` (default: the install's current branch, then "main"). Each
+ * school install gets the same `UPDATE_BRANCH=selfhosted` when the school rollout
+ * follows a dedicated release branch. GITHUB_TOKEN is required whenever the
+ * release repository is private.
+ *
+ * Public repos work without a token (subject to GitHub's unauthenticated rate
+ * limit of 60 requests/hour). Private repos always return 404 to unauthenticated
+ * requests, so GITHUB_TOKEN must be set to a classic PAT or fine-grained token
+ * with at least `Contents: Read` on the repository.
+ *
+ * The backend exposes:
+ *   GET  /api/updates               -> UpdateStatus (??refresh=1 bypasses the cache)
+ *   POST /api/updates/apply         -> spawns the platform's update engine detached
+ */
+@Injectable()
+export class UpdatesService {
+  private readonly logger = new Logger(UpdatesService.name);
+  private cache: Cached | null = null;
+
+  constructor(private readonly config: ConfigService) {}
+
+  async getStatus(force = false): Promise<UpdateStatus> {
+    const minutes = this.cacheMinutes();
+    if (minutes <= 0) {
+      return { available: false, checkedAt: new Date().toISOString(), reason: "disabled" };
+    }
+
+    if (!force && this.cache && Date.now() - this.cache.at < minutes * 60_000) return this.cache.status;
+
+    const status = await this.buildStatus();
+    // Transient failures (no internet, GitHub down) retry on the next poll.
+    this.cache = status.reason ? null : { at: Date.now(), status };
+    return status;
+  }
+
+  /** Compare local HEAD with the upstream HEAD and report which one is newer. */
+  private async buildStatus(): Promise<UpdateStatus> {
+    const base: UpdateStatus = { available: false, checkedAt: new Date().toISOString() };
+
+    const localSha = await this.git(["rev-parse", "HEAD"]);
+    if (!localSha) return { ...base, reason: "no-git-install" };
+
+    const branch = this.trackedBranch((await this.git(["symbolic-ref", "--short", "HEAD"])) || "main");
+    const remote = await this.resolveRemoteRepo();
+    if (!remote) return { ...base, reason: "no-github-remote" };
+    const repo = `${remote.owner}/${remote.repo}`;
+
+    const latest = await this.fetchLatestCommit(remote.owner, remote.repo, branch);
+    if (!latest) return { ...base, repo, branch, reason: "github-unreachable" };
+
+    return {
+      available: latest.sha !== localSha,
+      repo,
+      branch,
+      installed: { short: localSha.slice(0, 7), branch },
+      latest,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Launch the platform's update engine as a separate process (a visible
+   * console on Windows) that stops the servers, pulls, installs, migrates and
+   * restarts on its own. The HTTP response is sent before the engines get
+   * round to stopping this process.
+   */
+  async applyUpdate(): Promise<{ ok: boolean; started: boolean }> {
+    const root = await this.git(["rev-parse", "--show-toplevel"]);
+    if (!root) return { ok: false, started: false };
+
+    const isWindows = process.platform === "win32";
+    const script = isWindows
+      ? "tools\\windows\\scripts\\do-update.ps1"
+      : "tools/macos/scripts/update.sh";
+
+    try {
+      if (isWindows) {
+        // Start-Process opens its own console window so the operator sees
+        // the engine's output (stop, fetch, pull, migrate, restart).
+        const cmd =
+          `Start-Process -FilePath '${script.replace(/'/g, "''")}' ` +
+          `-WorkingDirectory '${root.replace(/'/g, "''")}'`;
+        spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], {
+          detached: true,
+          stdio: "ignore",
+        }).unref();
+      } else {
+        spawn("/bin/sh", [script], { cwd: root, detached: true, stdio: "ignore" }).unref();
+      }
+      this.logger.log(`Update engine launched: ${script}`);
+      return { ok: true, started: true };
+    } catch (e) {
+      this.logger.error(`Could not launch the update engine: ${(e as Error).message}`);
+      return { ok: false, started: false };
+    }
+  }
+
+  /** stdout of a git command, trimmed, ornull when git itself is missing. */
+  private async git(args: string[]): Promise<string | null> {
+    try {
+      const { stdout } = await execFileP("git", args, { encoding: "utf8", timeout: 10_000 });
+      return stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Extract owner/repo from the configured remote (https:// or git@…). */
+  private async resolveRemoteRepo(): Promise<{ owner: string; repo: string } | null> {
+    const url = await this.git(["config", "--get", "remote.origin.url"]);
+    if (!url) return null;
+    const m = url.match(/(?:github\.com(?::|\/))([^/]+)\/([^/]+?)(?:\.git)?$/);
+    if (!m) return null;
+    return { owner: m[1], repo: m[2] };
+  }
+
+  private async fetchLatestCommit(owner: string, repo: string, branch: string) {
+    const url = `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}?per_page=1`;
+    const token = this.config.get<string>("GITHUB_TOKEN")?.trim();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "iq-academy-updater",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        if (res.status === 404) {
+          this.logger.warn(
+            "GitHub API 404 — the repository is private or does not exist. " +
+              "Set GITHUB_TOKEN in apps/backend/.env to a token with repo read access.",
+          );
+        } else if (res.status !== 403) {
+          this.logger.warn(`GitHub API ${res.status} — check the repo visibility / token.`);
+        }
+        return null;
+      }
+      const body: unknown = await res.json();
+      const item = Array.isArray(body) ? body[0] : (body as any);
+      if (!item?.sha) return null;
+      return {
+        sha: String(item.sha),
+        short: String(item.sha).slice(0, 7),
+        message: String(item.commit?.message?.split("\n")[0] ?? "update"),
+        author: String(item.commit?.author?.name ?? "unknown"),
+        date: String(item.commit?.author?.date ?? ""),
+      };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private cacheMinutes(): number {
+    const raw = Number(this.config.get<string>("UPDATE_CHECK_MINUTES") ?? 60);
+    return Number.isFinite(raw) ? raw : 60;
+  }
+
+  /**
+   * The GitHub branch this install tracks. `UPDATE_BRANCH` in apps/backend/.env
+   * pins every school install to the same release branch (e.g. `selfhosted`);
+   * without it the install compares against its own checked-out branch.
+   */
+  private trackedBranch(fallback: string): string {
+    const configured = this.config.get<string>("UPDATE_BRANCH")?.trim();
+    return configured || fallback;
+  }
+}

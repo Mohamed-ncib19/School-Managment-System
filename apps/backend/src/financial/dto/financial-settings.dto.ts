@@ -1,4 +1,4 @@
-import {
+﻿import {
   IsBoolean,
   IsIn,
   IsInt,
@@ -25,18 +25,18 @@ export const COMPENSATION_MODELS = [
 
 /**
  * The global ValidationPipe runs with `whitelist: true`, which strips any
- * property carrying no validation decorator — an undecorated field silently
+ * property carrying no validation decorator â€” an undecorated field silently
  * never arrives.
  */
 export class UpdateFinancialSettingsDto {
-  @ApiPropertyOptional({ example: "IQ Academy" })
+  @ApiPropertyOptional({ example: "School Management System" })
   @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(120)
   academy_name?: string;
 
-  @ApiPropertyOptional({ example: "12 Rue de la Liberté, Tunis" })
+  @ApiPropertyOptional({ example: "12 Rue de la LibertÃ©, Tunis" })
   @IsOptional()
   @IsString()
   @MaxLength(240)

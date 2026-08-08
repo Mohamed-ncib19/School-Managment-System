@@ -13,7 +13,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TransformInterceptor());
   app.useGlobalFilters(new AllExceptionsFilter());
   const config = new DocumentBuilder()
-    .setTitle("IQ Academy API")
+    .setTitle(process.env.APP_NAME ?? "school-management-api")
     .setDescription("Intern Management System API")
     .setVersion("1.0")
     .addBearerAuth()

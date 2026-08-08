@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+﻿import { Injectable } from "@nestjs/common";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Workbook } from "exceljs";
@@ -15,7 +15,7 @@ export interface ExportedFile {
 /**
  * Turns a `ReportTable` into a downloadable file.
  *
- * One neutral table shape in, three formats out — so a column added to a report
+ * One neutral table shape in, three formats out â€” so a column added to a report
  * appears in every export without touching this file, and CSV, Excel and the
  * printable document can never disagree about what the report contained.
  *
@@ -31,7 +31,7 @@ export class FinancialExportService {
 
   async export(report: ReportTable, format: "csv" | "excel" | "pdf"): Promise<ExportedFile> {
     // The academy's locale decides both the CSV delimiter and the number format
-    // exported — a file that opens as one long column is not a report.
+    // exported â€” a file that opens as one long column is not a report.
     const settings = await this.settings.get();
     const locale = settings.currency_locale;
     const csvDelimiter = locale.startsWith("fr") ? ";" : ",";
@@ -39,7 +39,7 @@ export class FinancialExportService {
       new Intl.NumberFormat(locale, { style: "currency", currency: report.currency })
         .formatToParts(0)
         .find((p) => p.type === "currency")?.value ?? report.currency;
-    const brand = settings.academy_name || "IQ Academy";
+    const brand = settings.academy_name || "School Management System";
     const logo = await this.inlineLogo(settings.logo_path);
 
     switch (format) {
@@ -85,7 +85,7 @@ export class FinancialExportService {
    * BOM-less UTF-8 CSV in the system codepage, which turns every accented name
    * in the academy's roster into mojibake. The separator matters just as much:
    * Excel uses the system's list separator, which is ";" on French regional
-   * settings — a comma-separated file opens there as one endless column.
+   * settings â€” a comma-separated file opens there as one endless column.
    */
   private toCsv(report: ReportTable, delimiter: string): ExportedFile {
     const escape = (value: unknown): string => {
@@ -98,7 +98,7 @@ export class FinancialExportService {
 
     const lines: string[] = [];
     lines.push(escape(report.title));
-    lines.push(escape(`Généré le ${report.generated_at} · de ${report.range.from} à ${report.range.to}`));
+    lines.push(escape(`GÃ©nÃ©rÃ© le ${report.generated_at} Â· de ${report.range.from} Ã  ${report.range.to}`));
     lines.push("");
     lines.push(report.columns.map((c) => escape(c.label)).join(delimiter));
 
@@ -118,13 +118,13 @@ export class FinancialExportService {
     return {
       filename: `${this.slug(report)}.csv`,
       contentType: "text/csv; charset=utf-8",
-      body: "﻿" + lines.join("\r\n"),
+      body: "ï»¿" + lines.join("\r\n"),
     };
   }
 
   private async toExcel(report: ReportTable, currencySymbol: string): Promise<ExportedFile> {
     const workbook = new Workbook();
-    workbook.creator = "IQ Academy";
+    workbook.creator = "School Management System";
     workbook.created = new Date(report.generated_at);
 
     const sheet = workbook.addWorksheet(report.title.slice(0, 30), {
@@ -137,8 +137,8 @@ export class FinancialExportService {
     sheet.mergeCells(1, 1, 1, Math.max(report.columns.length, 1));
 
     const metaRow = sheet.addRow([
-      `Généré le ${new Date(report.generated_at).toLocaleString("fr-FR")} · ` +
-        `${report.range.from.slice(0, 10)} au ${report.range.to.slice(0, 10)} · ${report.currency}`,
+      `GÃ©nÃ©rÃ© le ${new Date(report.generated_at).toLocaleString("fr-FR")} Â· ` +
+        `${report.range.from.slice(0, 10)} au ${report.range.to.slice(0, 10)} Â· ${report.currency}`,
     ]);
     metaRow.font = { size: 9, italic: true, color: { argb: "FF6B7280" } };
     sheet.mergeCells(2, 1, 2, Math.max(report.columns.length, 1));
@@ -268,7 +268,7 @@ export class FinancialExportService {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escape(report.title)} — ${escape(brand)}</title>
+<title>${escape(report.title)} â€” ${escape(brand)}</title>
 <style>
   @page { size: A4 landscape; margin: 12mm; }
   * { box-sizing: border-box; }
@@ -302,7 +302,7 @@ export class FinancialExportService {
       <div class="meta">
         du ${escape(report.range.from.slice(0, 10))} au ${escape(report.range.to.slice(0, 10))}
         &middot; ${escape(report.currency)}
-        &middot; généré le ${escape(new Date(report.generated_at).toLocaleString("fr-FR"))}
+        &middot; gÃ©nÃ©rÃ© le ${escape(new Date(report.generated_at).toLocaleString("fr-FR"))}
       </div>
     </div>
     <div class="brand">
@@ -312,7 +312,7 @@ export class FinancialExportService {
   </header>
   ${
     report.rows.length === 0
-      ? `<div class="empty">Aucune donnée pour les filtres sélectionnés.</div>`
+      ? `<div class="empty">Aucune donnÃ©e pour les filtres sÃ©lectionnÃ©s.</div>`
       : `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody>${totals}</table>`
   }
   ${notes}

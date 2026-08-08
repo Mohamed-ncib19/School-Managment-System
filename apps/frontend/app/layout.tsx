@@ -47,7 +47,7 @@ async function systemName(): Promise<string | null> {
 
 export async function generateMetadata(): Promise<Metadata> {
   const [version, name] = await Promise.all([faviconVersion(), systemName()]);
-  const title = name ? `${name} | Intern Management` : "IQ Academy | Intern Management";
+  const title = name ? `${name} | School Management System` : "School Management System";
   const metadata: Metadata = {
     title,
     description: "Intern Management System",

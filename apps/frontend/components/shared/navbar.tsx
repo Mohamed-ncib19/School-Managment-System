@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Menu, Sun, Moon } from "lucide-react";
 import { useTheme, initTheme } from "@/hooks/use-theme";
+import ShutdownButton from "./shutdown-button";
+import UpdateIndicator from "./update-indicator";
 
 interface NavbarProps {
   onToggleSidebar: () => void;
@@ -34,6 +36,8 @@ export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarPro
       </div>
 
       <div className="flex items-center gap-3">
+        <UpdateIndicator />
+        <ShutdownButton />
         <button
           onClick={toggleTheme}
           className="h-9 w-9 flex items-center justify-center rounded-btn bg-background border border-border hover:bg-neutral-soft dark:hover:bg-white/10 transition-colors"

@@ -21,13 +21,16 @@ coverage
 apps/backend/check-data.js
 
 # WSL health-check diagnostics (environment-specific output)
-tools/scripts/wsl-result*.txt
+tools/windows/scripts/wsl-result*.txt
 
 # Local operational data — never commit school records, logs, or the DB itself
 backups/
 logs/
 .postgres/
 uploads/
+
+# Machine binding (anti-copy protection) - created on first run, machine-specific
+machine.lock
 
 .vscode
 .idea

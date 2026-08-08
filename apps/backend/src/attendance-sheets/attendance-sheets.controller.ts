@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -65,7 +65,7 @@ export class AttendanceSheetsController {
 
   /**
    * The print-ready A4 register. PDF is the browser's own "Save as PDF" from
-   * this page — the same convention every printable document follows.
+   * this page â€” the same convention every printable document follows.
    */
   @Get(":id/print")
   async printSheet(@Param("id", ParseUUIDPipe) id: string, @Req() req: any, @Res() res: Response) {
@@ -73,7 +73,7 @@ export class AttendanceSheetsController {
     await this.attendance.assertCanAccessGroup(req.user?.id, sheet.group_id);
 
     const settings = await this.prisma.financial_settings.findUnique({ where: { singleton: "global" } });
-    const academyName = settings?.academy_name || "IQ Academy";
+    const academyName = settings?.academy_name || "School Management System";
     // The logo is embedded as a data URI straight from disk (the /uploads
     // folder is not HTTP-served), so the print head always carries the brand
     // mark even when the browser has no network access to it.
@@ -111,7 +111,7 @@ export class AttendanceSheetsController {
     await this.attendance.assertCanAccessGroup(req.user?.id, sheet.group_id);
 
     const settings = await this.prisma.financial_settings.findUnique({ where: { singleton: "global" } });
-    const academyName = settings?.academy_name || "IQ Academy";
+    const academyName = settings?.academy_name || "School Management System";
 
     const { buffer, filename } = await this.exportService.exportExcel(
       { academy_name: academyName },

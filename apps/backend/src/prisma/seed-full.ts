@@ -1,4 +1,4 @@
-import { PrismaClient, PaymentStatus, StudentStatus, CompensationModel } from "@prisma/client";
+﻿import { PrismaClient, PaymentStatus, StudentStatus, CompensationModel } from "@prisma/client";
 import { randomUUID } from "crypto";
 
 const prisma = new PrismaClient();
@@ -88,7 +88,7 @@ async function main() {
   console.log("Full seed: erasing hierarchy + injecting 4 levels × 4 fields × 4 profs × 3 groups × 10 students...");
   await reset();
 
-  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@iqacademy.com";
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@school.local";
   const admin = await prisma.users.findUnique({ where: { email: adminEmail } });
   if (!admin) throw new Error(`Admin ${adminEmail} not found — run "npm run seed" first.`);
 
@@ -129,7 +129,7 @@ async function main() {
           field_id: fieldId,
           full_name: `${firstName} ${lastName}`,
           phone: `+216${between(20, 99)}${between(100000, 999999)}`,
-          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@iqacademy.com`,
+          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@school.local`,
           is_active: true,
         });
 

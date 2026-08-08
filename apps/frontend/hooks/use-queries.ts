@@ -69,6 +69,15 @@ export function useStudents(groupId?: string, options?: Omit<UseQueryOptions<Stu
   });
 }
 
+export function useRecentStudents(limit = 5, options?: Omit<UseQueryOptions<Student[]>, "queryKey" | "queryFn">) {
+  return useQuery({
+    queryKey: ["students", "recent", limit],
+    queryFn: async () => studentsApi.recent(limit),
+    staleTime: 60_000,
+    ...options,
+  });
+}
+
 /**
  * Students matching a name/phone term, with their full enrollment chain.
  *

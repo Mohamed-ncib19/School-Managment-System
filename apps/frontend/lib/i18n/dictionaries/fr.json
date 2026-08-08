@@ -1,7 +1,38 @@
 {
   "app": {
-    "name": "IQ Academy",
+    "name": "School Management System",
     "tagline": "Système de Gestion des Stagiaires"
+  },
+  "updates": {
+    "title": "Nouvelle mise à jour disponible",
+    "installed": "Version installée",
+    "latest": "Dernière",
+    "now": "Mettre à jour maintenant",
+    "later": "Plus tard",
+    "starting": "Démarrage…",
+    "applying": "Mise à jour lancée — une fenêtre de console va exécuter la mise à jour (arrêt des serveurs, téléchargement, migrations, redémarrage). Vous pouvez laisser cette page ouverte, elle se déconnectera d'elle-même.",
+    "failed": "Impossible de lancer la mise à jour automatiquement — réessayez « Mettre à jour maintenant » ; si la console ne s'ouvre pas, exécutez l'outil de mise à jour depuis le dossier de l'application.",
+    "availableBadge": "Nouvelle version disponible",
+    "upToDate": "À jour",
+    "checking": "Vérification…",
+    "checkPending": "Pas encore vérifié",
+    "checkNow": "Vérifier",
+    "branchLabel": "Branche",
+    "latestVersion": "Dernière version",
+    "checkedAt": "Dernière vérification :",
+    "disabledHint": "Les vérifications de mises à jour sont désactivées sur cette installation.",
+    "unreachableHint": "Impossible de joindre le dépôt GitHub (installation non git, réseau coupé ou accès refusé). La vérification sera réessayée automatiquement.",
+    "indicatorAria": "Vérifier les mises à jour du système"
+  },
+  "system": {
+    "shutdownAria": "Arrêter le système",
+    "shutdownTitle": "Arrêter le système ?",
+    "shutdownConfirm": "Les serveurs (et la base de données en local sur Windows) vont s'arrêter. Vous pouvez redémarrer à tout moment avec start.bat.",
+    "shutdownNow": "Arrêter maintenant",
+    "stopping": "Arrêt en cours…",
+    "shuttingDown": "Le système est en train de s'arrêter — cette page va se déconnecter. Vous pouvez fermer cette fenêtre.",
+    "shutdownFailed": "Impossible de lancer l'arrêt — appelez l'administrateur ou utilisez start.bat pour redémarrer.",
+    "cancel": "Annuler"
   },
   "nav": {
     "dashboard": "Tableau de bord",
@@ -26,7 +57,7 @@
   },
   "dashboard": {
     "welcomeBack": "Bon retour",
-    "subtitle": "Voici ce qui se passe aujourd'hui à IQ Academy.",
+    "subtitle": "Voici ce qui se passe aujourd'hui dans l'établissement.",
     "totalStudents": "Total Étudiants",
     "monthlyRevenue": "Chiffre d'affaires mensuel",
     "overdue": "En retard",
@@ -193,10 +224,12 @@
     "profileDescription": "Met à jour tes informations personnelles",
     "securityTitle": "Sécurité",
     "securityDescription": "Changer le mot de passe",
+    "updatesTitle": "Mises à jour du système",
+    "updatesDescription": "Vérifier le dépôt de publication pour les nouvelles versions du système",
     "systemTitle": "Préférences système",
     "systemDescription": "Configurer la langue et les options d'affichage",
     "systemNameLabel": "Nom du système",
-    "systemNamePlaceholder": "ex. IQ Academy",
+    "systemNamePlaceholder": "ex. Mon École",
     "systemNameHint": "Affiché dans l'onglet du navigateur, l'écran de connexion et la barre latérale.",
     "languageHint": "L'interface est disponible en français uniquement.",
     "featuresTitle": "Fonctionnalités",

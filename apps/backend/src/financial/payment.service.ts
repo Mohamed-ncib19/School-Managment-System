@@ -20,6 +20,76 @@ import type {
 /** The invoice plus everything the UI needs to render a row without a second call. */
 const PAYMENT_INCLUDE = {
   student: {
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      group: {
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          prof_id: true,
+          professor: {
+            select: {
+              id: true,
+              full_name: true,
+              color: true,
+              field: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                  level: { select: { id: true, name: true, color: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  group: {
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      prof_id: true,
+      professor: {
+        select: {
+          id: true,
+          full_name: true,
+          color: true,
+          field: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+              level: { select: { id: true, name: true, color: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+  transactions: {
+    orderBy: { paid_at: "asc" },
+    select: {
+      id: true,
+      type: true,
+      amount: true,
+      professor_share: true,
+      school_share: true,
+      receipt_number: true,
+      paid_at: true,
+      recorder: { select: { id: true, full_name: true } },
+    },
+  },
+} satisfies Prisma.student_paymentsInclude;
+
+/** Full include for detail views - includes assignments for context menus. */
+const PAYMENT_INCLUDE_FULL = {
+  student: {
     include: {
       group: {
         include: {
@@ -37,8 +107,6 @@ const PAYMENT_INCLUDE = {
       },
     },
   },
-  // Every invoice names the enrollment it covers; for a multi-group student
-  // this is the group the invoice belongs to, not the primary one.
   group: {
     include: {
       professor: { include: { field: { include: { level: true } } } },
@@ -179,7 +247,7 @@ export class PaymentService {
   async findOne(paymentId: string) {
     const payment = await this.prisma.student_payments.findUnique({
       where: { id: paymentId },
-      include: PAYMENT_INCLUDE,
+      include: PAYMENT_INCLUDE_FULL,
     });
     if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
     return this.present(payment);
@@ -189,7 +257,7 @@ export class PaymentService {
   async historyForStudent(studentId: string) {
     const rows = await this.prisma.student_payments.findMany({
       where: { student_id: studentId },
-      include: PAYMENT_INCLUDE,
+      include: PAYMENT_INCLUDE_FULL,
       orderBy: { period: "desc" },
     });
     return rows.map((row) => this.present(row));
@@ -205,38 +273,44 @@ export class PaymentService {
     const professor = payment.group?.professor ?? payment.student?.group?.professor ?? null;
     const field = professor?.field ?? null;
 
-    const allGroups = new Map<string, { id: string; name: string; color: string | null }>();
-    const allProfessors = new Map<string, { id: string; name: string; color: string | null }>();
-    const allFields = new Map<string, { id: string; name: string; color: string | null }>();
-    const allLevels = new Map<string, { id: string; name: string; color: string | null }>();
+    const chain = new Map<string, { type: string; id: string; name: string; color: string | null }>();
+    const add = (type: string, id: string, name: string, color: string | null) => {
+      if (!id) return;
+      chain.set(`${type}:${id}`, { type, id, name, color });
+    };
 
-    const addChain = (g?: { id: string; name: string; color: string | null } | null, p?: { id: string; full_name: string; color: string | null } | null, f?: { id: string; name: string; color: string | null } | null, l?: { id: string; name: string; color: string | null } | null) => {
-      if (g?.id) allGroups.set(g.id, g);
-      if (p?.id) allProfessors.set(p.id, { id: p.id, name: p.full_name, color: p.color });
-      if (f?.id) allFields.set(f.id, f);
-      if (l?.id) allLevels.set(l.id, l);
+    const walk = (g?: { id: string; name: string; color: string | null } | null, p?: { id: string; full_name: string; color: string | null } | null, f?: { id: string; name: string; color: string | null } | null, l?: { id: string; name: string; color: string | null } | null) => {
+      add("group", g?.id ?? "", g?.name ?? "", g?.color ?? null);
+      add("professor", p?.id ?? "", p?.full_name ?? "", p?.color ?? null);
+      add("field", f?.id ?? "", f?.name ?? "", f?.color ?? null);
+      add("level", l?.id ?? "", l?.name ?? "", l?.color ?? null);
     };
 
     if (payment.group) {
       const gp = payment.group.professor;
       const gf = gp?.field;
       const gl = gf?.level;
-      addChain(payment.group, gp, gf, gl);
+      walk(payment.group, gp, gf, gl);
     }
     if (payment.student?.group) {
       const gp = payment.student.group.professor;
       const gf = gp?.field;
       const gl = gf?.level;
-      addChain(payment.student.group, gp, gf, gl);
+      walk(payment.student.group, gp, gf, gl);
     }
-    for (const a of payment.student?.assignments ?? []) {
+    for (const a of (payment.student as any)?.assignments ?? []) {
       const g = a.group;
       if (!g) continue;
       const p = g.professor;
       const f = p?.field;
       const l = f?.level;
-      addChain(g, p, f, l);
+      walk(g, p, f, l);
     }
+
+    const groups = [...chain.values()].filter((c) => c.type === "group");
+    const professors = [...chain.values()].filter((c) => c.type === "professor");
+    const fields = [...chain.values()].filter((c) => c.type === "field");
+    const levels = [...chain.values()].filter((c) => c.type === "level");
 
     return {
       ...payment,
@@ -257,10 +331,10 @@ export class PaymentService {
         professor: professor ? { id: professor.id, name: professor.full_name, color: professor.color } : null,
         field: field ? { id: field.id, name: field.name, color: field.color } : null,
         level: field?.level ? { id: field.level.id, name: field.level.name, color: field.level.color } : null,
-        groups: Array.from(allGroups.values()),
-        professors: Array.from(allProfessors.values()),
-        fields: Array.from(allFields.values()),
-        levels: Array.from(allLevels.values()),
+        groups,
+        professors,
+        fields,
+        levels,
       },
     };
   }
@@ -682,7 +756,7 @@ export class PaymentService {
   private async requirePayment(paymentId: string): Promise<PaymentWithContext> {
     const payment = await this.prisma.student_payments.findUnique({
       where: { id: paymentId },
-      include: PAYMENT_INCLUDE,
+      include: PAYMENT_INCLUDE_FULL,
     });
     if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
     return payment;

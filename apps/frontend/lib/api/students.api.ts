@@ -6,6 +6,7 @@ export const studentsApi = {
     ApiClient.get<Student[]>("/students", {
       params: { ...(groupId ? { groupId } : {}), ...(search ? { search } : {}) },
     }),
+  recent: (limit = 5) => ApiClient.get<Student[]>(`/students/recent?limit=${limit}`),
   get: (id: string) => ApiClient.get<Student>(`/students/${id}`),
   create: (data: any) => ApiClient.post<Student>("/students", data),
   update: (id: string, data: any) => ApiClient.put<Student>(`/students/${id}`, data),

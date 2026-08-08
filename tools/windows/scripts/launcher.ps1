@@ -1,29 +1,26 @@
-<#
-  IQ Academy - one-click launcher.
+﻿<#
+  SCHOOL MANAGEMENT SYSTEM - one-click launcher.
 
   Starts PostgreSQL (existing server, native Windows service, or a private
-  portable one), takes a safety backup, applies migrations, then starts the
-  API and the web portal.
+  portable one), applies migrations, then starts the API and the web portal.
 
   DATA SAFETY: this script never resets, drops, or force-pushes the database.
   If migrations cannot be applied it stops and tells you, leaving the data
-  exactly as it was. A timestamped dump is written to backups\ on every start.
+  exactly as it was. Backups are managed from the app (Settings -> Database Backup).
 
-  No Docker required. Run it via tools\start.bat.
+  No Docker required. Run it via tools\windows\start.bat.
 #>
 [CmdletBinding()]
 param(
   # Build and run production servers instead of the dev servers.
-  [switch]$Prod,
-  # Skip the safety backup (not recommended).
-  [switch]$NoBackup
+  [switch]$Prod
 )
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
-$Root        = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$RootScripts = Join-Path $Root "scripts"
+$Root        = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$RootScripts = $PSScriptRoot
 $BackendDir  = Join-Path $Root "apps\backend"
 $FrontendDir = Join-Path $Root "apps\frontend"
 $LogDir      = Join-Path $Root "logs"
@@ -95,10 +92,37 @@ function Find-Tool {
 #  BANNER
 # ===========================================================================
 Clear-Host
-Write-Banner -Title "IQ ACADEMY" -Subtitle $(
-  if ($Prod) { "School Management System   -   production mode" }
-  else { "School Management System" }
+$bannerName = Get-EnvValue (Join-Path $BackendDir ".env") "SCHOOL_NAME"
+if (-not $bannerName) { $bannerName = "School Management System" }
+Write-Banner -Title $bannerName -Subtitle $(
+  if ($Prod) { "School Management   -   production mode" }
+  else { "School Management" }
 )
+# ===========================================================================
+#  MACHINE BINDING (anti-copy protection)
+# ===========================================================================
+Write-Step "Checking the machine licence (anti-copy)"
+
+$machineScript = Join-Path $RootScripts "machine-id.ps1"
+& powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $machineScript -Action check
+$machineCode = $LASTEXITCODE
+
+if ($machineCode -eq 2) {
+  Write-Info "First run on this computer - binding the project to this machine..."
+  & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $machineScript -Action bind
+  $machineCode = $LASTEXITCODE
+  if ($machineCode -eq 0) {
+    Write-Ok "Project bound to this computer" "running licence granted"
+  } else {
+    Fail "Could not bind this project to the computer." "Close extra windows and run start.bat again; if it persists, contact support."
+  }
+} elseif ($machineCode -eq 1) {
+  Fail "THIS COPY OF THE PROJECT IS BOUND TO A DIFFERENT COMPUTER - startup blocked." "Copying the project to another computer (USB drive, hard disk) is not allowed. To run it on this computer, contact the project provider. (Deleting machine.lock in the project folder would rebind it to this machine - reserved for the manager.)"
+} elseif ($machineCode -eq 0) {
+  Write-Ok "Machine licence verified" "machine.lock OK"
+} else {
+  Write-Warn2 "Machine check returned an unknown code ($machineCode) - continuing"
+}
 
 # ===========================================================================
 #  1. TOOLCHAIN
@@ -106,7 +130,17 @@ Write-Banner -Title "IQ ACADEMY" -Subtitle $(
 Write-Step "Checking prerequisites"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Fail "Node.js is not installed." "Install Node.js 20 LTS from https://nodejs.org and run tools\start.bat again."
+  Write-Info "Node.js not found - installing via winget..."
+  try {
+    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --silent 2>$null | Out-Null
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path", "User")
+  } catch {
+    Write-Warn2 "winget could not install Node.js: $($_.Exception.Message)"
+  }
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Fail "Node.js could not be installed automatically." "Run 'winget install OpenJS.NodeJS.LTS' in a terminal, or install Node.js 20 LTS from https://nodejs.org, then run tools\windows\start.bat again."
+  }
 }
 Write-Ok "Node.js" (node --version)
 
@@ -135,12 +169,19 @@ $backendEnv  = Join-Path $BackendDir ".env"
 $frontendEnv = Join-Path $FrontendDir ".env.local"
 
 if (-not (Test-Path $backendEnv)) {
-  $example = Join-Path $BackendDir ".env.example"
-  if (Test-Path $example) {
-    Copy-Item $example $backendEnv
-    Write-Ok "Created apps\backend\.env from .env.example"
+  # First run on a fresh machine: run the setup wizard (school name, admin
+  # account, database identity - all generated as variables, nothing hard-coded).
+  $setupScript = Join-Path $RootScripts "setup.ps1"
+  if (Test-Path $setupScript) {
+    Write-Info "First run detected - opening the setup wizard..."
+    & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $setupScript
+    $setupExit = $LASTEXITCODE
+    if ($setupExit -ne 0) {
+      Fail "Setup was not completed (setup.ps1 exited $setupExit)." "Run tools\windows\start.bat again and finish the school setup."
+    }
+    Write-Ok "School configuration created" (Get-EnvValue $backendEnv "SCHOOL_NAME")
   } else {
-    Fail "apps\backend\.env is missing." "Create it with a DATABASE_URL line."
+    Fail "apps\backend\.env is missing and the setup wizard is unavailable." "Reinstall the tools folder so setup.ps1 is present, or create .env manually with a DATABASE_URL line."
   }
 }
 if (-not (Test-Path $frontendEnv)) {
@@ -150,6 +191,9 @@ if (-not (Test-Path $frontendEnv)) {
     Write-Ok "Created apps\frontend\.env.local from .env.example"
   }
 }
+
+$schoolName = Get-EnvValue $backendEnv "SCHOOL_NAME"
+if (-not $schoolName) { $schoolName = "School Management System" }
 
 $databaseUrl = Get-EnvValue $backendEnv "DATABASE_URL"
 if (-not $databaseUrl) { Fail "DATABASE_URL is missing from apps\backend\.env" }
@@ -173,11 +217,13 @@ try {
     When nothing is listening it may have to download and initialise a server,
     so let it narrate: a silent 44 MB download is indistinguishable from a hang.
   #>
-  $pgAlreadyUp = Test-Port $dbPort
-  $pgBin = & (Join-Path $RootScripts "ensure-postgres.ps1") -Port $dbPort -Quiet:$pgAlreadyUp
+$pgAlreadyUp = Test-Port $dbPort
+$superPassword = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
+if (-not $superPassword) { $superPassword = "" }
+$pgBin = & (Join-Path $RootScripts "ensure-postgres.ps1") -Port $dbPort -SuperPassword $superPassword -Quiet:$pgAlreadyUp
 } catch {
   Fail "Could not start PostgreSQL: $($_.Exception.Message)" `
-       "Install PostgreSQL 16 from https://www.postgresql.org/download/windows/ and run tools\start.bat again."
+       "Run tools\windows\start.bat again - it will resume automatically, or install PostgreSQL 16 from https://www.postgresql.org/download/windows/"
 }
 if (-not (Test-Port $dbPort)) {
   Fail "Nothing is listening on port $dbPort." "PostgreSQL did not start. See the messages above."
@@ -212,13 +258,13 @@ if ($appLoginOk) {
 
   $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
   if ($roleExists -ne "1") {
-    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE ROLE $dbUser LOGIN PASSWORD '$dbPass' CREATEDB" 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE ROLE `"$dbUser`" LOGIN PASSWORD '$dbPass' CREATEDB" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
   }
 
   $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
   if ($dbExists -ne "1") {
-    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE DATABASE $dbName OWNER $dbUser" 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE DATABASE `"$dbName`" OWNER `"$dbUser`"" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
   }
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
@@ -240,10 +286,10 @@ if ($appLoginOk -and $tableCount -eq 0) {
     Write-Warn2 "The database '$dbName' on port $dbPort is EMPTY, but $($existingDumps.Count) backup(s) exist."
     Write-Info "Another PostgreSQL server may be using port $dbPort, with your real data on the original one."
     Write-Info "Continuing will set up an empty system. Your backups will NOT be touched."
-    Write-Info "To restore the most recent backup instead, close this window and run restore.bat."
+    Write-Info "To restore the most recent backup instead, close this window and use the Database Backup page in the app."
     Write-Host ""
     $answer = Read-Host "  Continue with the empty database? Type YES to continue"
-    if ($answer -ne "YES") { Fail "Stopped at your request. Nothing was changed." "Run restore.bat to restore a backup." }
+    if ($answer -ne "YES") { Fail "Stopped at your request. Nothing was changed." "Start the app and use the Database Backup page to restore a backup." }
   }
 }
 
@@ -262,50 +308,47 @@ if ($needsInstall) {
   pnpm install 2>$null | Out-Null
   $installExit = $LASTEXITCODE
   Pop-Location
-  if ($installExit -ne 0) { Fail "pnpm install failed." "Check your internet connection and run tools\start.bat again." }
+  if ($installExit -ne 0) { Fail "pnpm install failed." "Check your internet connection and run tools\windows\start.bat again." }
   Write-Ok "Packages installed"
 } else {
   Write-Ok "Packages up to date"
 }
 
 # ===========================================================================
-#  5. SAFETY BACKUP
-# ===========================================================================
-Write-Step "Safety backup"
-
-if ($NoBackup) {
-  Write-Warn2 "Skipped (-NoBackup was passed)"
-} elseif ($appLoginOk -and $tableCount -eq 0) {
-  Write-Info "Nothing to back up yet (empty database)"
-} else {
-  try {
-    & (Join-Path $RootScripts "backup.ps1") -Quiet
-    $newest = Get-ChildItem (Join-Path $BackupDir "iq-academy-*.dump") -ErrorAction SilentlyContinue |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($newest) {
-      $sizeKb = [math]::Round($newest.Length / 1KB, 1)
-      Write-Ok "Snapshot saved" "$($newest.Name)  ($sizeKb KB)"
-    } else {
-      Write-Ok "Backup complete"
-    }
-  } catch {
-    Write-Warn2 "Backup failed: $($_.Exception.Message)"
-    Write-Info "Startup continues, but there is no fresh restore point for this session."
-  }
-}
-
-# ===========================================================================
-#  6. MIGRATIONS
+#  5. MIGRATIONS
 # ===========================================================================
 Write-Step "Applying database migrations"
 
 Push-Location $BackendDir
-pnpm exec prisma generate 2>&1 | Out-Null
+$genOutput = pnpm exec prisma generate 2>&1
 $genExit = $LASTEXITCODE
 Pop-Location
-if ($genExit -ne 0) { Fail "prisma generate failed." "Run 'pnpm exec prisma generate' in apps\backend to see the error." }
-Write-Ok "Prisma client generated"
 
+if ($genExit -ne 0) {
+  $looksLikeDepIssue = $genOutput -match "Cannot find module|MODULE_NOT_FOUND|prisma\.build|Command .* not found"
+  if ($looksLikeDepIssue) {
+    Write-Info "prisma generate failed - dependency issue detected, repairing..."
+    Push-Location $Root
+    $repairOutput = pnpm install 2>&1
+    $repairExit = $LASTEXITCODE
+    Pop-Location
+
+    if ($repairExit -eq 0) {
+      Push-Location $BackendDir
+      $genOutput = pnpm exec prisma generate 2>&1
+      $genExit = $LASTEXITCODE
+      Pop-Location
+    } else {
+      $genOutput = $repairOutput
+    }
+  }
+}
+
+if ($genExit -ne 0) {
+  $genOutput | ForEach-Object { Write-Info "  $_" }
+  Fail "prisma generate failed." "Fix the error above, then run tools\windows\start.bat again."
+}
+Write-Ok "Prisma client generated"
 
 Push-Location $BackendDir
 $migOutput = pnpm exec prisma migrate deploy 2>&1
@@ -315,7 +358,7 @@ Pop-Location
 if ($migExit -ne 0) {
   $migOutput | ForEach-Object { Write-Info "  $_" }
   Fail "Migrations could not be applied - your data has NOT been changed." `
-       "A backup from this session is in backups\. Fix the error above, then run tools\start.bat again. Never run 'prisma migrate reset' on this database: it deletes everything."
+       "Fix the error above, then run tools\windows\start.bat again. If you need to restore data, use the Database Backup page in the app. Never run 'prisma migrate reset' on this database: it deletes everything."
 }
 Write-Ok "Database schema is up to date"
 
@@ -326,7 +369,7 @@ Pop-Location
 Write-Ok "Administrator account ready"
 
 # ===========================================================================
-#  7. BUILD (production mode only)
+#  6. BUILD (production mode only)
 # ===========================================================================
 if ($Prod) {
   Write-Step "Building the application"
@@ -339,7 +382,7 @@ if ($Prod) {
 }
 
 # ===========================================================================
-#  8. START SERVERS
+#  7. START SERVERS
 # ===========================================================================
 Write-Step "Starting servers"
 
@@ -361,7 +404,7 @@ if ($apiUp) {
 } else {
   Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $BackendDir `
     -ArgumentList "-NoLogo", "-NoProfile", "-Command",
-      "`$Host.UI.RawUI.WindowTitle='IQ Academy - API'; $backendCmd 2>&1 | Tee-Object -FilePath '$LogDir\backend.log'"
+      "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - API'; $backendCmd 2>&1 | Tee-Object -FilePath '$LogDir\backend.log'"
 }
 
 if ($webUp) {
@@ -369,7 +412,7 @@ if ($webUp) {
 } else {
   Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $FrontendDir `
     -ArgumentList "-NoLogo", "-NoProfile", "-Command",
-      "`$Host.UI.RawUI.WindowTitle='IQ Academy - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
+      "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
 }
 
 if (-not $apiUp) {
@@ -390,10 +433,10 @@ if (-not $apiUp) { Write-Warn2 "The API did not start in time - see logs\backend
 if (-not $webUp) { Fail "The web portal did not start in time." "See logs\frontend.log for the reason." }
 
 # ===========================================================================
-#  9. READY
+#  8. READY
 # ===========================================================================
 $adminEmail = Get-EnvValue $backendEnv "SEED_ADMIN_EMAIL"
-if (-not $adminEmail) { $adminEmail = "admin@iqacademy.com" }
+if (-not $adminEmail) { $adminEmail = "see apps\backend\.env (SEED_ADMIN_EMAIL)" }
 
 # Row count for the panel - reassures the operator the data is really there.
 $studentCount = $null
@@ -406,15 +449,15 @@ if ($psql) {
 
 Start-Process "http://localhost:$FrontendPort"
 
-Write-Panel -Title "IQ ACADEMY IS RUNNING" -Colour Green -Note ("ready in " + (Get-UiElapsed)) -Rows @(
+Write-Panel -Title "$schoolName IS RUNNING" -Colour Green -Note ("ready in " + (Get-UiElapsed)) -Rows @(
   "---",
   "Portal|http://localhost:$FrontendPort",
   "API docs|http://localhost:$BackendPort/api/docs",
   "Sign in|$adminEmail",
   "---",
   $(if ($null -ne $studentCount) { "Data|$dbName - $studentCount students" } else { "Data|$dbName on port $dbPort" }),
-  "Backups|backups\  (new snapshot every start)",
-  "Stop|tools\stop.bat"
+  "Backups|manage in the app (Settings -> Database Backup)",
+  "Stop|the power button in the app"
 )
 
 Write-Host "  This window can be closed - the servers keep running." -ForegroundColor DarkGray

@@ -18,17 +18,18 @@ export class ProfessorsService {
       where,
       include: {
         field: { include: { level: true } },
-        // Lightweight group preview for the professor cards (id + name only).
-        // Also the source of the `_count` below: it is already filtered to
-        // active groups, so archived ones stop counting.
-        groups: { where: { is_active: true }, select: { id: true, name: true } },
       },
       orderBy: { created_at: "desc" },
     });
-    return rows.map(({ groups, ...prof }) => ({
+    const counts = await Promise.all(
+      rows.map((p) =>
+        this.prisma.groups.count({ where: { prof_id: p.id, is_active: true } }).then((count) => ({ id: p.id, count })),
+      ),
+    );
+    const countMap = new Map(counts.map((c) => [c.id, c.count]));
+    return rows.map((prof) => ({
       ...prof,
-      groups,
-      _count: { groups: groups.length },
+      _count: { groups: countMap.get(prof.id) ?? 0 },
     }));
   }
 

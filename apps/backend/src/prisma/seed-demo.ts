@@ -1,4 +1,4 @@
-import { PrismaClient, PaymentStatus, StudentStatus } from "@prisma/client";
+﻿import { PrismaClient, PaymentStatus, StudentStatus } from "@prisma/client";
 import { randomUUID } from "crypto";
 
 const prisma = new PrismaClient();
@@ -69,7 +69,7 @@ async function reset() {
 async function main() {
   const shouldReset = process.argv.includes("--reset");
 
-  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@iqacademy.com";
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@school.local";
   const admin = await prisma.users.findUnique({ where: { email: adminEmail } });
   if (!admin) {
     throw new Error(`Admin ${adminEmail} not found — run "pnpm run db:seed" first.`);
@@ -113,7 +113,7 @@ async function main() {
           field_id: fieldId,
           full_name: profName,
           phone: `+216${between(20, 99)}${between(100000, 999999)}`,
-          email: `${profName.toLowerCase().replace(/\s+/g, ".")}@iqacademy.com`,
+          email: `${profName.toLowerCase().replace(/\s+/g, ".")}@school.local`,
           is_active: true,
         });
 

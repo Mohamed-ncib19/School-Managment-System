@@ -331,7 +331,7 @@ model financial_settings {
   /// Always "global" - a CHECK constraint makes a second row impossible.
   singleton                    String            @id @default("global")
   /// Printed on settlement documents and receipts.
-  academy_name                 String            @default("IQ Academy")
+  academy_name                 String            @default("School Management System")
   academy_address              String            @default("")
   academy_phone                String            @default("")
   /// Path of the uploaded academy logo, served by the branding routes.
@@ -488,7 +488,7 @@ model hierarchy_configurations {
 model system_settings {
   /// Always "global" - a CHECK constraint makes a second row impossible.
   singleton   String   @id @default("global")
-  system_name String   @default("IQ Academy")
+  system_name String   @default("School Management System")
   /// Module toggles: key -> boolean (absent means enabled).
   features    Json     @default("{}")
   created_at  DateTime @default(now())

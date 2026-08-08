@@ -19,7 +19,7 @@ import { DashboardSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { RevenueChart } from "@/components/charts/revenue-chart";
 import { PaymentsByStatusChart } from "@/components/charts/payments-by-status-chart";
 import { StudentsByFieldChart } from "@/components/charts/students-by-field-chart";
-import { useStudents, useFields, useProfessors } from "@/hooks/use-queries";
+import { useStudents, useFields, useProfessors, useHierarchySummary, useRecentStudents } from "@/hooks/use-queries";
 import {
   useFinancialDashboard,
   useFinancialPayments,
@@ -30,15 +30,18 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function DashboardPage() {
-  const { data: students, isLoading: studentsLoading } = useStudents(undefined, { refetchInterval: 30000 });
-  const { data: fields } = useFields({ refetchInterval: 30000 });
-  const { data: professors } = useProfessors(undefined, { refetchInterval: 30000 });
+  const { data: students, isLoading: studentsLoading } = useStudents(undefined, { refetchInterval: 60000 });
+  const { data: fields } = useFields({ refetchInterval: 60000 });
+  const { data: professors } = useProfessors(undefined, { refetchInterval: 60000 });
+  const { data: recentStudents } = useRecentStudents(5, { refetchInterval: 60000 });
+  const { data: hierarchy } = useHierarchySummary({ refetchInterval: 60000 });
   const { t } = useTranslation();
 
-  // Every figure below comes from the financial module's aggregates rather than
-  // from a full payment list reduced in the browser. That list endpoint no
-  // longer exists, and re-deriving revenue here would be a second place the
-  // professor/school split could drift from RevenueCalculationService.
+  const totalStudents = hierarchy?.levels?.reduce((sum, l) => sum + (l.students ?? 0), 0) ?? students?.length ?? 0;
+
+  const totalFields = fields?.length ?? 0;
+  const totalProfessors = professors?.length ?? 0;
+
   const { data: finance, isLoading: financeLoading } = useFinancialDashboard({});
   const { data: today } = useFinancialDashboard({ range: "today" });
   const { data: revenue } = useRevenueSeries({ granularity: "monthly" });
@@ -48,6 +51,7 @@ export default function DashboardPage() {
     limit: 5,
     sortBy: "due_date",
     sortDir: "desc",
+    refetchInterval: 60000,
   });
 
   const totalRevenue = Number(finance?.cards.total_revenue.value ?? 0);
@@ -56,9 +60,9 @@ export default function DashboardPage() {
   const todayPaymentsCount = today?.cards.collected_in_range.count ?? 0;
   const recentPayments = recent?.data ?? [];
 
-  const recentStudents = useMemo(
-    () => [...(students ?? [])].sort((a, b) => new Date(b.enrollment_date).getTime() - new Date(a.enrollment_date).getTime()).slice(0, 5),
-    [students],
+  const displayRecentStudents = useMemo(
+    () => (recentStudents ?? []).slice(0, 5),
+    [recentStudents],
   );
 
   const revenueByMonth = useMemo(
@@ -86,13 +90,18 @@ export default function DashboardPage() {
   );
 
   const studentsByField = useMemo(() => {
+    if (hierarchy?.fields?.length) {
+      return hierarchy.fields
+        .filter((f) => (f.students ?? 0) > 0)
+        .map((f) => ({ field: f.name, count: f.students ?? 0 }));
+    }
     const fieldMap: Record<string, number> = {};
     students?.forEach((s) => {
       const fieldName = s.group?.professor?.field?.name ?? "Unknown";
       fieldMap[fieldName] = (fieldMap[fieldName] ?? 0) + 1;
     });
     return Object.entries(fieldMap).map(([field, count]) => ({ field, count }));
-  }, [students]);
+  }, [hierarchy, students]);
 
   const isLoading = studentsLoading || financeLoading;
 
@@ -107,8 +116,8 @@ export default function DashboardPage() {
         <PageLoader text={t("common.loading", "Loading…")} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          <StatCard icon={<Users size={20} />} title={t("dashboard.totalStudents")} value={students?.length ?? 0} />
-          <StatCard icon={<UserCheck size={20} />} title={t("dashboard.totalFields", "Total Professors")} value={professors?.length ?? 0} />
+          <StatCard icon={<Users size={20} />} title={t("dashboard.totalStudents")} value={totalStudents} />
+          <StatCard icon={<UserCheck size={20} />} title={t("dashboard.totalFields", "Total Professors")} value={totalProfessors} />
           <StatCard icon={<CircleDollarSign size={20} />} title={t("dashboard.monthlyRevenue")} value={formatCurrency(totalRevenue)} />
           <StatCard icon={<Clock size={20} className="text-sky-400" />} title={"Today's Payments"} value={todayPaymentsCount} />
           <StatCard icon={<AlertTriangle size={20} className="text-gold-500" />} title={"Pending"} value={pendingCount} />
@@ -125,7 +134,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-sm font-medium text-text-primary">{t("nav.students")}</p>
-              <p className="text-xs text-text-secondary">{t("dashboard.totalStudents")}: {students?.length ?? 0}</p>
+              <p className="text-xs text-text-secondary">{t("dashboard.totalStudents")}: {totalStudents}</p>
             </div>
           </div>
         </Link>
@@ -147,7 +156,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-sm font-medium text-text-primary">{t("nav.fields")}</p>
-              <p className="text-xs text-text-secondary">{t("dashboard.totalFields", "Fields")}: {fields?.length ?? 0}</p>
+              <p className="text-xs text-text-secondary">{t("dashboard.totalFields", "Fields")}: {totalFields}</p>
             </div>
           </div>
         </Link>
@@ -242,7 +251,7 @@ export default function DashboardPage() {
               {t("dashboard.viewAll")} <ArrowUpRight size={12} />
             </Link>
           </div>
-          {recentStudents.length === 0 ? (
+          {displayRecentStudents.length === 0 ? (
             <p className="text-sm text-text-secondary py-8 text-center">{t("dashboard.noStudents")}</p>
           ) : (
             <div className="overflow-hidden rounded-table border border-border">
@@ -255,7 +264,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {recentStudents.map((s) => (
+                  {displayRecentStudents.map((s) => (
                     <tr key={s.id} className="hover:bg-background/50 transition-colors">
                       <td className="px-4 py-3 font-medium">{s.first_name} {s.last_name}</td>
                       <td className="px-4 py-3 text-text-secondary">{formatDate(s.enrollment_date)}</td>

@@ -69,6 +69,21 @@ export class StudentsService {
     },
   } as const;
 
+  /** Lite version for unpaginated list - drops assignments to keep payload small. */
+  private static readonly LITE_HIERARCHY_INCLUDE = {
+    group: {
+      include: {
+        professor: {
+          include: {
+            field: {
+              include: { level: true },
+            },
+          },
+        },
+      },
+    },
+  } as const;
+
   /**
    * Every enrollment of a student, with the same full chain as the primary
    * group. A student can be registered in several groups (different fields of
@@ -97,10 +112,11 @@ export class StudentsService {
    * Returns a bare array when no `page` is supplied, so existing callers keep
    * working, and a paginated envelope when it is.
    *
-   * Unpaginated, this endpoint serialises every student together with their
-   * whole parent chain - 384 KB and ~1.6 s for 324 students, and growing
-   * linearly with enrolment. Callers that only need counts should use
-   * /hierarchy/summary, which aggregates in SQL instead.
+   * Unpaginated, this endpoint used to serialise every student together with their
+   * whole parent chain - 384 KB and ~1.6 s for 324 students. The lite payload
+   * drops the assignments include and keeps only the hierarchy chain needed for
+   * the students page's breadcrumb rendering. Callers that need full detail
+   * should paginate or fetch each student individually.
    */
   async listStudents(params: {
     groupId?: string;
@@ -128,7 +144,7 @@ export class StudentsService {
     if (!page) {
       return this.prisma.students.findMany({
         where,
-        include: { ...StudentsService.HIERARCHY_INCLUDE, ...StudentsService.ASSIGNMENTS_INCLUDE },
+        include: StudentsService.LITE_HIERARCHY_INCLUDE,
         orderBy: { created_at: "desc" },
       });
     }
@@ -149,6 +165,47 @@ export class StudentsService {
       data,
       meta: { total, page: Math.max(1, page), limit: take, totalPages: Math.max(1, Math.ceil(total / take)) },
     };
+  }
+
+  /** Recent students for dashboard widgets - minimal payload. */
+  async recentStudents(limit = 5) {
+    const take = Math.min(Math.max(1, limit), 20);
+    return this.prisma.students.findMany({
+      take,
+      orderBy: { enrollment_date: "desc" },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        enrollment_date: true,
+        monthly_fee: true,
+        status: true,
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+            professor: {
+              select: {
+                id: true,
+                full_name: true,
+                color: true,
+                field: {
+                  select: {
+                    id: true,
+                    name: true,
+                    color: true,
+                    level: {
+                      select: { id: true, name: true, color: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   }
 
   /**

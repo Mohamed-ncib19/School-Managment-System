@@ -42,7 +42,9 @@ import {
 } from "lucide-react";
 import { usersApi } from "@/lib/api/users.api";
 import { authApi } from "@/lib/api/auth.api";
+import { updatesApi } from "@/lib/api/updates.api";
 import { useAuthStore } from "@/hooks/use-auth-store";
+import { useUpdateStore } from "@/hooks/use-update-store";
 import { useTranslation } from "@/lib/i18n/context";
 import { FormButton } from "@/components/forms/form-helpers";
 import { useBackups, useCreateBackup, useRestoreBackup } from "@/hooks/use-backups";
@@ -71,7 +73,7 @@ const passwordSchema = z.object({
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
-type SectionId = "profile" | "security" | "branding" | "system" | "features" | "hierarchy" | "backups";
+type SectionId = "profile" | "security" | "branding" | "system" | "features" | "hierarchy" | "updates" | "backups";
 
 const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   fields: BookOpen,
@@ -183,6 +185,29 @@ export default function SettingsPage() {
   const dragCounterRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  const updateStatus = useUpdateStore((s) => s.status);
+  const updateChecking = useUpdateStore((s) => s.checking);
+  const updateApplying = useUpdateStore((s) => s.applying);
+  const updateFailed = useUpdateStore((s) => s.failed);
+
+  const checkNow = async () => {
+    const result = await useUpdateStore.getState().refresh(true);
+    if (result?.available) useUpdateStore.getState().openDialog();
+  };
+
+  const applyUpdate = async () => {
+    const store = useUpdateStore.getState();
+    store.setApplying(true);
+    store.setFailed(false);
+    try {
+      const result = await updatesApi.apply();
+      if (!result.ok || !result.started) store.setFailed(true);
+    } catch {
+      store.setFailed(true);
+    }
+    store.setApplying(false);
+  };
 
   const { data: profile } = useQuery({
     queryKey: ["users", "me"],
@@ -306,6 +331,7 @@ export default function SettingsPage() {
     { id: "system", icon: Globe, label: t("settings.systemTitle"), description: t("settings.systemDescription") },
     { id: "features", icon: ToggleLeft, label: t("settings.featuresTitle"), description: t("settings.featuresDescription") },
     { id: "hierarchy", icon: Network, label: t("hierarchy.title", "Navigation Hierarchy"), description: t("hierarchy.subtitle", "Configure hierarchy navigation order") },
+    { id: "updates", icon: Download, label: t("settings.updatesTitle", "System Updates"), description: t("settings.updatesDescription", "Check for and apply new versions of the system") },
     ...(isFeatureEnabled(system?.features, "backups")
       ? [{ id: "backups" as SectionId, icon: Database, label: t("settings.backupTitle", "Database Backup"), description: t("settings.backupDescription", "Create, list, and restore versioned database backups") }]
       : []),
@@ -924,7 +950,7 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2 px-2 py-1.5 mb-1">
                       <img src={brandLogo} alt="" className="h-6 w-6 rounded-btn object-contain" />
                       <span className="text-xs font-bold tracking-tight truncate">
-                        {systemName || t("app.name", "IQ Academy")}
+                        {systemName || t("app.name")}
                       </span>
                     </div>
 
@@ -1090,6 +1116,119 @@ export default function SettingsPage() {
                       {t("settings.restoreSuccess", "Backup restored successfully. The system has been updated.")}
                     </p>
                   )}
+                </div>
+              </div>
+            )}
+
+            {active === "updates" && (
+              <div className="card max-w-xl">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
+                    <Download size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-h4 font-bold text-text-primary">{t("settings.updatesTitle", "System Updates")}</h3>
+                    <p className="text-xs text-text-secondary">{t("settings.updatesDescription", "Check the release repository for new versions of the system.")}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-btn border border-border bg-background p-4">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      {updateStatus?.available ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 dark:bg-primary/15 px-3 py-1 text-xs font-medium text-primary">
+                          <span className="h-2 w-2 rounded-full bg-gold animate-pulse" />
+                          {t("updates.availableBadge")}
+                        </span>
+                      ) : updateStatus?.checkedAt ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft dark:bg-success-dark-soft px-3 py-1 text-xs font-medium text-success-strong dark:text-success-dark-strong">
+                          <span className="h-2 w-2 rounded-full bg-success dark:bg-success-dark" />
+                          {t("updates.upToDate")}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-soft px-3 py-1 text-xs font-medium text-text-secondary">
+                          <RefreshCw size={11} className={cn(updateChecking && "animate-spin")} />
+                          {updateChecking ? t("updates.checking") : t("updates.checkPending")}
+                        </span>
+                      )}
+                      {updateStatus?.branch && (
+                        <span className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-text-secondary">
+                          {t("updates.branchLabel")} <span className="font-mono">{updateStatus.branch}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {updateStatus?.latest && (
+                      <div className="space-y-2 rounded-btn border border-border p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-text-secondary">{t("updates.latestVersion")}</p>
+                          <span className="font-mono text-xs text-text-primary">{updateStatus.latest.short}</span>
+                        </div>
+                        <p className="text-sm font-medium text-text-primary">{updateStatus.latest.message}</p>
+                        <p className="text-xs text-text-secondary">
+                          {updateStatus.latest.author}
+                          {updateStatus.latest.date ? ` — ${new Date(updateStatus.latest.date).toLocaleString()}` : ""}
+                        </p>
+                      </div>
+                    )}
+
+                    {updateStatus?.installed && (
+                      <p className="text-xs text-text-secondary">
+                        {t("updates.installed")} <span className="font-mono text-text-primary">{updateStatus.installed.short}</span>
+                      </p>
+                    )}
+
+                    {updateStatus?.checkedAt && (
+                      <p className="text-[11px] text-text-secondary/80">
+                        {t("updates.checkedAt")} {new Date(updateStatus.checkedAt).toLocaleString()}
+                      </p>
+                    )}
+
+                    {updateStatus?.reason === "disabled" && (
+                      <p className="text-xs text-text-secondary/80">{t("updates.disabledHint")}</p>
+                    )}
+                    {updateStatus && updateStatus.reason && updateStatus.reason !== "disabled" && (
+                      <p className="text-xs text-text-secondary/80">{t("updates.unreachableHint")}</p>
+                    )}
+
+                    {updateFailed && (
+                      <p role="alert" className="text-xs text-danger">{t("updates.failed")}</p>
+                    )}
+                    {updateApplying && (
+                      <p className="text-xs text-text-secondary">{t("updates.applying")}</p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+                    <button
+                      type="button"
+                      onClick={checkNow}
+                      disabled={updateChecking || updateApplying}
+                      className="btn btn-secondary text-xs min-h-[36px] disabled:opacity-50"
+                    >
+                      {updateChecking ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={14} />
+                      )}
+                      {t("updates.checkNow")}
+                    </button>
+                    {updateStatus?.available && (
+                      <button
+                        type="button"
+                        onClick={applyUpdate}
+                        disabled={updateChecking || updateApplying}
+                        className="btn btn-primary text-xs min-h-[36px] disabled:opacity-50"
+                      >
+                        {updateApplying ? (
+                          <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                          <Download size={14} />
+                        )}
+                        {updateApplying ? t("updates.starting") : t("updates.now")}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

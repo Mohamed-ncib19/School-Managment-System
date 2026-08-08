@@ -1,16 +1,16 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ============================================================
-#  IQ Academy - Update Script (macOS / Linux)
+#  SCHOOL MANAGEMENT SYSTEM - Update Script (macOS / Linux)
 #
 #  Fetches from GitHub, pulls changes, syncs dependencies,
 #  runs migrations (data-safe), and restarts the app.
 #
-#  Run via:  ./tools/update.sh
+#  Invoked by the in-app "Update now" dialog (and the do-update engine)
 # ============================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/backend"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
@@ -21,7 +21,7 @@ fail() { printf "  ${RED}✗${NC}  %s\n" "$1"; exit 1; }
 
 echo ""
 echo "=========================================="
-echo "  IQ Academy - Update"
+echo "  SCHOOL MANAGEMENT SYSTEM - Update"
 echo "=========================================="
 echo ""
 
@@ -29,13 +29,21 @@ echo ""
 command -v git &>/dev/null || fail "Git is not available in PATH."
 [[ -d "$ROOT_DIR/.git" ]] || fail "Not a git repository."
 
+# The tracked branch comes from UPDATE_BRANCH in apps/backend/.env
+# (each school install pins the same branch, e.g. selfhosted) - otherwise main.
+BRANCH="main"
+if [[ -f "$BACKEND_DIR/.env" ]]; then
+  ENV_BRANCH=$(grep -E '^UPDATE_BRANCH=' "$BACKEND_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '[:space:]')
+  [[ -n "$ENV_BRANCH" ]] && BRANCH="$ENV_BRANCH"
+fi
+
 # Fetch latest
 echo "Fetching latest changes from origin..."
 git -C "$ROOT_DIR" fetch origin || fail "Failed to fetch from origin."
 
 # Check if behind
-BEHIND=$(git -C "$ROOT_DIR" rev-list HEAD..origin/main --count 2>/dev/null || echo "0")
-AHEAD=$(git -C "$ROOT_DIR" rev-list origin/main..HEAD --count 2>/dev/null || echo "0")
+BEHIND=$(git -C "$ROOT_DIR" rev-list HEAD..origin/$BRANCH --count 2>/dev/null || echo "0")
+AHEAD=$(git -C "$ROOT_DIR" rev-list origin/$BRANCH..HEAD --count 2>/dev/null || echo "0")
 
 echo ""
 echo "  Local commits ahead of remote: $AHEAD"
@@ -46,7 +54,7 @@ if [[ "$BEHIND" == "0" ]]; then
   echo "  Already on the latest version. No update needed."
   echo ""
   echo "  Starting servers..."
-  "$SCRIPT_DIR/start.sh"
+  "$SCRIPT_DIR/../start.sh"
   exit 0
 fi
 
@@ -81,7 +89,7 @@ echo "  Ready after ${wait_count}s."
 # Pull changes
 echo ""
 echo "Pulling latest changes from origin..."
-git -C "$ROOT_DIR" pull origin main || fail "Failed to pull. Resolve conflicts and try again."
+git -C "$ROOT_DIR" pull origin $BRANCH || fail "Failed to pull. Resolve conflicts and try again."
 
 # Sync dependencies
 echo ""
@@ -105,7 +113,7 @@ echo "Update complete."
 # Start servers
 echo ""
 echo "Starting servers..."
-"$SCRIPT_DIR/start.sh"
+"\$SCRIPT_DIR/../start.sh"
 
 echo ""
 echo "Done."

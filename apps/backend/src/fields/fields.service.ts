@@ -16,17 +16,18 @@ export class FieldsService {
       where: { ...(levelId ? { level_id: levelId } : {}), is_active: true },
       include: {
         level: true,
-        // Lightweight professor preview for the field cards (id + name only).
-        // Also the source of the `_count` below: it is already filtered to
-        // active professors, so deactivated ones stop counting.
-        professors: { where: { is_active: true }, select: { id: true, full_name: true } },
       },
       orderBy: { created_at: "desc" },
     });
-    return rows.map(({ professors, ...field }) => ({
+    const counts = await Promise.all(
+      rows.map((f) =>
+        this.prisma.professors.count({ where: { field_id: f.id, is_active: true } }).then((count) => ({ id: f.id, count })),
+      ),
+    );
+    const countMap = new Map(counts.map((c) => [c.id, c.count]));
+    return rows.map((field) => ({
       ...field,
-      professors,
-      _count: { professors: professors.length },
+      _count: { professors: countMap.get(field.id) ?? 0 },
     }));
   }
 

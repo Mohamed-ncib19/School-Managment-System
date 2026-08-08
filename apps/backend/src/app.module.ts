@@ -17,6 +17,9 @@ import { HierarchyConfigModule } from "./hierarchy-config/hierarchy-config.modul
 import { SystemSettingsModule } from "./system-settings/system-settings.module";
 import { AttendanceSheetsModule } from "./attendance-sheets/attendance-sheets.module";
 import { AiModule } from "./ai/ai.module";
+import { UpdatesModule } from "./updates/updates.module";
+import { SystemModule } from "./system/system.module";
+import { MachineBindingService } from "./machine/machine-binding.service";
 
 @Module({
   imports: [
@@ -38,6 +41,9 @@ import { AiModule } from "./ai/ai.module";
     SystemSettingsModule,
     AttendanceSheetsModule,
     AiModule,
+    UpdatesModule,
+    SystemModule,
   ],
+  providers: [MachineBindingService],
 })
 export class AppModule {}

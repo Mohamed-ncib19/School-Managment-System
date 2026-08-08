@@ -31,12 +31,16 @@ export class StudentsController {
   ) {
     return this.studentsService.listStudents({
       groupId,
-      // Absent `page` keeps the historical bare-array response.
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       search,
       status,
     });
+  }
+
+  @Get("recent")
+  async recent(@Query("limit") limit?: string) {
+    return this.studentsService.recentStudents(limit ? Number(limit) : 5);
   }
 
   @Get(":id")

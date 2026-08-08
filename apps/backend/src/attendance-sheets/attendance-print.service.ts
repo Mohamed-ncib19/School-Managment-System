@@ -1,22 +1,22 @@
-import { Injectable } from "@nestjs/common";
+﻿import { Injectable } from "@nestjs/common";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AttendanceSession, AttendanceStudent } from "./attendance.types";
 
 /**
- * The print-ready A4 attendance register — a modern evolution of the academy's
+ * The print-ready A4 attendance register â€” a modern evolution of the academy's
  * paper register: same layout, same colours, now dynamic.
  *
  * PDF is not a separate pipeline: the browser's own print dialogue (which
  * includes "Save as PDF" on every modern machine) prints this HTML exactly as
- * the CSS lays it out — the same convention the quittances and settlement
+ * the CSS lays it out â€” the same convention the quittances and settlement
  * documents already follow.
  *
  * Design tokens (locked with the client):
- *   - Primary blue   #264EAE — headers, titles, borders, branding
- *   - Light blue     #DCEEFF — schedule banner, secondary section headers
- *   - Soft yellow    #F8E8A5 — the Professor/Month/Level/Field/Group panel
- *   - White          #FFFFFF — student rows and attendance cells
+ *   - Primary blue   #264EAE â€” headers, titles, borders, branding
+ *   - Light blue     #DCEEFF â€” schedule banner, secondary section headers
+ *   - Soft yellow    #F8E8A5 â€” the Professor/Month/Level/Field/Group panel
+ *   - White          #FFFFFF â€” student rows and attendance cells
  *
  * Layout rules: A4 portrait, thin blue inner borders with a thicker outer
  * frame, centred attendance cells, headers repeated on every page, student
@@ -45,8 +45,8 @@ export class AttendancePrintService {
       generated_at: Date;
     },
   ): string {
-    const brand = this.escape(input.academy_name || "IQ Academy");
-    const title = "Feuille de Présence Mensuelle";
+    const brand = this.escape(input.academy_name || "School Management System");
+    const title = "Feuille de PrÃ©sence Mensuelle";
     const monthLabel = MONTHS_FR[context.month - 1] ?? String(context.month);
     const sessions = context.sessions;
     const students = context.students;
@@ -63,7 +63,7 @@ export class AttendancePrintService {
     /**
      * A4 is ~275mm of usable height; header + panels consume ~55mm and each
      * row ~8.4mm, so roughly 25 rows fit a page. Beyond that the register is
-     * split into two equal tables, each on its own page — the teacher gets two
+     * split into two equal tables, each on its own page â€” the teacher gets two
      * legible halves instead of a table cut at an arbitrary line, and each
      * page keeps its own headers.
      */
@@ -77,15 +77,15 @@ export class AttendancePrintService {
         <thead>
           <tr>
             <th class="col-num">#</th>
-            <th class="col-name">Nom de l'étudiant</th>
-            <th class="col-phone">Téléphone</th>
-            ${sessions.map((_, i) => `<th class="col-session">Séance ${i + 1}</th>`).join("")}
-            <th class="col-remarks remarks-head">Présence</th>
+            <th class="col-name">Nom de l'Ã©tudiant</th>
+            <th class="col-phone">TÃ©lÃ©phone</th>
+            ${sessions.map((_, i) => `<th class="col-session">SÃ©ance ${i + 1}</th>`).join("")}
+            <th class="col-remarks remarks-head">PrÃ©sence</th>
           </tr>
         </thead>
         <tbody>
           ${rows.length === 0
-            ? `<tr class="empty-row"><td colspan="${3 + sessions.length + 1}">Aucun étudiant dans ce groupe.</td></tr>`
+            ? `<tr class="empty-row"><td colspan="${3 + sessions.length + 1}">Aucun Ã©tudiant dans ce groupe.</td></tr>`
             : rows.map((s, i) => rowHtml(s, startIndex + i)).join("")}
         </tbody>
       </table>`;
@@ -262,7 +262,7 @@ export class AttendancePrintService {
       </div>
       <div class="head-right">
         <div class="title">${title}</div>
-        <div class="year">${context.academic_year ? `Année académique ${this.escape(context.academic_year)}` : ""}</div>
+        <div class="year">${context.academic_year ? `AnnÃ©e acadÃ©mique ${this.escape(context.academic_year)}` : ""}</div>
       </div>
     </header>
 
@@ -270,9 +270,9 @@ export class AttendancePrintService {
       <div class="cell"><div class="k">Professeur</div><div class="v">${this.escape(context.teacher_name)}</div></div>
       <div class="cell"><div class="k">Mois</div><div class="v">${monthLabel} ${context.year}</div></div>
       <div class="cell"><div class="k">Niveau</div><div class="v">${this.escape(context.level_name)}</div></div>
-      <div class="cell"><div class="k">Filière</div><div class="v">${this.escape(context.field_name ?? "—")}</div></div>
+      <div class="cell"><div class="k">FiliÃ¨re</div><div class="v">${this.escape(context.field_name ?? "â€”")}</div></div>
       <div class="cell"><div class="k">Groupe</div><div class="v">${this.escape(context.group_name)}</div></div>
-      <div class="cell"><div class="k">Séances</div><div class="v">${sessions.length}</div></div>
+      <div class="cell"><div class="k">SÃ©ances</div><div class="v">${sessions.length}</div></div>
     </div>
 
     ${banner}
@@ -291,7 +291,7 @@ export class AttendancePrintService {
     </div>
 
     <div class="meta-footer">
-      <div>${brand} — document généré le ${generatedOn}${input.generated_by_name ? ` par ${this.escape(input.generated_by_name)}` : ""}</div>
+      <div>${brand} â€” document gÃ©nÃ©rÃ© le ${generatedOn}${input.generated_by_name ? ` par ${this.escape(input.generated_by_name)}` : ""}</div>
       <div class="pager"></div>
     </div>
   </div>
@@ -309,13 +309,13 @@ export class AttendancePrintService {
     return `
       <div class="schedule-banner">
         <div class="label">Emploi du temps</div>
-        <div class="days">${lines.map((l) => `<span>${this.escape(l)}</span>`).join('<span class="sep">·</span>')}</div>
+        <div class="days">${lines.map((l) => `<span>${this.escape(l)}</span>`).join('<span class="sep">Â·</span>')}</div>
       </div>`;
   }
 
   /**
    * The student's own phone number, or nothing. Empty strings count as
-   * missing — the register must not fall back to the parent's number, and a
+   * missing â€” the register must not fall back to the parent's number, and a
    * student without a phone leaves the cell blank.
    */
   private studentPhone(s: AttendanceStudent): string {
@@ -354,6 +354,6 @@ export class AttendancePrintService {
 }
 
 const MONTHS_FR = [
-  "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
-  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
+  "Janvier", "FÃ©vrier", "Mars", "Avril", "Mai", "Juin",
+  "Juillet", "AoÃ»t", "Septembre", "Octobre", "Novembre", "DÃ©cembre",
 ];

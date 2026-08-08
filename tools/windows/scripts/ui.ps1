@@ -1,5 +1,5 @@
-<#
-  Shared console presentation for the IQ Academy tools.
+﻿<#
+  Shared console presentation for the SCHOOL MANAGEMENT SYSTEM tools.
 
   Dot-sourced by launcher.ps1 and stop.ps1 so both windows look like one
   product rather than two unrelated scripts.

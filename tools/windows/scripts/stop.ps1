@@ -1,17 +1,21 @@
-<#
-  IQ Academy - stops the API and the web portal.
+﻿<#
+  SCHOOL MANAGEMENT SYSTEM - stops the API and the web portal.
 
   Killing only the process that holds the port is not enough: the dev servers
   run under a watcher (nest --watch / next dev) that immediately restarts the
   child, so the system looks stopped and then comes back. This walks up to the
   watcher and kills the whole tree.
 
-  PostgreSQL is deliberately left running - it holds the data, and it is a
-  shared Windows service. Nothing here touches the database.
+  PostgreSQL is deliberately left running by default - it holds the data, and
+  it may be a shared Windows service. Nothing here touches the database.
+  Pass -StopDatabase to also stop the project's own portable cluster under
+  .postgres\ (the engine behind the in-app Shut Down button). A native server
+  or a machine-wide service is never stopped.
 #>
 [CmdletBinding()]
 param(
-  [int[]]$Ports = @(3000, 3001)
+  [int[]]$Ports = @(3000, 3001),
+  [switch]$StopDatabase
 )
 
 $ErrorActionPreference = "Continue"
@@ -23,7 +27,7 @@ $ErrorActionPreference = "Continue"
   brittle: the watcher reads 'nest.js" start --watch', which does not contain
   the literal 'nest start'.
 #>
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $RootPattern = "*" + [System.Management.Automation.WildcardPattern]::Escape($ProjectRoot) + "*"
 
 # Only ever consider killing these. Anything else is somebody else's process.
@@ -58,11 +62,34 @@ function Get-TreeRoot {
   return $root
 }
 
+<#
+  Stops the project's own portable cluster (the one ensure-postgres.ps1 may
+  have created under .postgres\). Native PostgreSQL installs and Windows
+  services are somebody else's territory and are never touched here.
+#>
+function Stop-PortablePostgres {
+  $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+  $dataDir = Join-Path $root ".postgres\data"
+  if (-not (Test-Path (Join-Path $dataDir "PG_VERSION"))) { return $false }
+
+  $pgCtl = Get-ChildItem (Join-Path $root ".postgres\runtime") -Filter "pg_ctl.exe" -Recurse -ErrorAction SilentlyContinue |
+           Select-Object -First 1
+  if (-not $pgCtl) { return $false }
+
+  & $pgCtl.FullName -D $dataDir -m fast stop 2>&1 | Out-Null
+  for ($i = 0; $i -lt 10; $i++) {
+    Start-Sleep -Milliseconds 500
+    $conn = Get-NetTCPConnection -LocalPort 5432 -State Listen -ErrorAction SilentlyContinue
+    if (-not $conn) { return $true }
+  }
+  return $false
+}
+
 . (Join-Path $PSScriptRoot "ui.ps1")
 Initialize-Ui -TotalSteps $Ports.Count
 
 Clear-Host
-Write-Banner -Title "IQ ACADEMY" -Subtitle "Shutting down" -Colour DarkYellow
+Write-Banner -Title "SCHOOL MANAGEMENT SYSTEM" -Subtitle "Shutting down" -Colour DarkYellow
 
 $stopped = 0
 $labels = @{ 3000 = "Web portal"; 3001 = "API" }
@@ -114,15 +141,22 @@ foreach ($port in $Ports) {
 }
 
 if ($stopped -gt 0) {
-  Write-Panel -Title "IQ ACADEMY STOPPED" -Colour DarkYellow -Note (Get-UiElapsed) -Rows @(
+  $rows = @(
     "---",
-    "Servers|$stopped stopped",
-    "Database|still running - your data is untouched",
-    "Restart|tools\start.bat"
+    "Servers|$stopped stopped"
   )
+  if ($StopDatabase) {
+    $pgStopped = Stop-PortablePostgres
+    if ($pgStopped) { $rows += @("Database|portable cluster stopped - can be restarted by start.bat") }
+    else { $rows += @("Database|left running (native install or already stopped)") }
+  } else {
+    $rows += @("Database|still running - your data is untouched")
+  }
+  $rows += @("Restart|tools\windows\start.bat")
+  Write-Panel -Title "SCHOOL MANAGEMENT SYSTEM STOPPED" -Colour DarkYellow -Note (Get-UiElapsed) -Rows $rows
 } else {
   Write-Panel -Title "NOTHING WAS RUNNING" -Colour DarkGray -Icon none -Rows @(
     "---",
-    "Start|tools\start.bat"
+    "Start|tools\windows\start.bat"
   )
 }

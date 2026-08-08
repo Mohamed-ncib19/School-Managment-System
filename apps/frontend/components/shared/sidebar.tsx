@@ -132,7 +132,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
   const [financialOpen, setFinancialOpen] = useState(false);
 
   const features = system?.features;
-  const systemName = system?.system_name?.trim() || t("app.name", "IQ Academy");
+  const systemName = system?.system_name?.trim() || t("app.name");
 
   /** Hierarchy entities whose module is switched off, per feature toggle. */
   const ENTITY_FEATURE: Partial<Record<HierarchyEntity, FeatureKey>> = {

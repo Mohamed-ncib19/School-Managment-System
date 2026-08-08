@@ -1,12 +1,12 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ============================================================
-#  IQ Academy - Stop All Servers (macOS / Linux)
+#  SCHOOL MANAGEMENT SYSTEM - Stop engine (macOS / Linux)
 #
-#  Kills the API and web portal dev servers by finding
-#  processes that hold the expected ports. PostgreSQL is
-#  deliberately left running.
+#  Internal engine, launched by the in-app Shut Down button
+#  (POST /api/system/stop). Kills the API and web portal
+#  process trees by port. PostgreSQL is left running.
 #
-#  Run via:  ./tools/stop.sh
+#  Invoked detached by the backend.
 # ============================================================
 set -euo pipefail
 
@@ -56,7 +56,7 @@ find_pids() {
 #  BANNER
 # ===========================================================================
 clear 2>/dev/null || true
-banner "IQ ACADEMY - Shutting down"
+banner "SCHOOL MANAGEMENT SYSTEM - Shutting down"
 
 PORTS=(3000 3001)
 LABELS=("Web portal" "API")
@@ -99,15 +99,15 @@ done
 echo ""
 printf '  ┌──────────────────────────────────────────────────────┐\n'
 if [[ $stopped -gt 0 ]]; then
-  printf '  │  \033[33mIQ ACADEMY STOPPED\033[0m                                 │\n'
+  printf '  │  \033[33mSCHOOL MANAGEMENT SYSTEM STOPPED\033[0m                                 │\n'
   printf '  ├──────────────────────────────────────────────────────┤\n'
   printf '  │  Servers   %-41s │\n' "$stopped stopped"
   printf '  │  Database  %-41s │\n' "still running - data untouched"
-  printf '  │  Restart   %-41s │\n' "./tools/start.sh"
+  printf '  │  Restart   %-41s │\n' "./tools/macos/start.sh"
 else
   printf '  │  \033[90mNOTHING WAS RUNNING\033[0m                                │\n'
   printf '  ├──────────────────────────────────────────────────────┤\n'
-  printf '  │  Start     %-41s │\n' "./tools/start.sh"
+  printf '  │  Start     %-41s │\n' "./tools/macos/start.sh"
 fi
 printf '  └──────────────────────────────────────────────────────┘\n'
 echo ""

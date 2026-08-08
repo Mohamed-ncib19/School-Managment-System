@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+﻿import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import * as ExcelJS from "exceljs";
 import { PrismaService } from "../prisma/prisma.service";
@@ -61,7 +61,7 @@ export class ImportsService {
     try {
       await workbook.xlsx.load(buffer as any);
     } catch {
-      throw new BadRequestException("Could not read that file — is it a valid .xlsx workbook?");
+      throw new BadRequestException("Could not read that file â€” is it a valid .xlsx workbook?");
     }
 
     const sheet = workbook.worksheets[0];
@@ -148,7 +148,7 @@ export class ImportsService {
   /** Builds the blank workbook staff fill in, with one example row. */
   async buildTemplate(): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "IQ Academy";
+    workbook.creator = "School Management System";
     const sheet = workbook.addWorksheet("Students");
 
     sheet.columns = IMPORT_COLUMNS.map((header) => ({
@@ -190,7 +190,7 @@ export class ImportsService {
     try {
       await workbook.xlsx.load(buffer as any);
     } catch {
-      throw new BadRequestException("Could not read that file — is it a valid .xlsx workbook?");
+      throw new BadRequestException("Could not read that file â€” is it a valid .xlsx workbook?");
     }
 
     const sheet = workbook.worksheets[0];
@@ -330,7 +330,7 @@ export class ImportsService {
             field_id: fieldId,
             full_name: this.sanitize(row.professor),
             phone:
-              row.professorPhone && row.professorPhone !== "—"
+              row.professorPhone && row.professorPhone !== "â€”"
                 ? (normalizeTunisianPhone(row.professorPhone) ?? this.sanitize(row.professorPhone))
                 : "",
           },
@@ -452,7 +452,7 @@ export class ImportsService {
       }
 
       // Strip currency symbols/spaces, but insist on an actual number afterwards.
-      // Without the digit check, "abc" cleans to "" and Number("") is 0 — which
+      // Without the digit check, "abc" cleans to "" and Number("") is 0 â€” which
       // would silently enrol a student at a zero monthly fee.
       const feeCleaned = values.monthlyFee
         .replace(/\s/g, "")
@@ -500,7 +500,7 @@ export class ImportsService {
         level: values.level,
         field: values.field,
         professor: values.professor,
-        professorPhone: values.professorPhone || "—",
+        professorPhone: values.professorPhone || "â€”",
         group: values.group,
         firstName: values.firstName,
         lastName: values.lastName,
@@ -534,8 +534,8 @@ export class ImportsService {
   }
 
   /**
-   * enrollment_date is a calendar day, not an instant — it anchors the monthly
-   * billing anniversary (§3). Pinning it to UTC midnight keeps the day-of-month
+   * enrollment_date is a calendar day, not an instant â€” it anchors the monthly
+   * billing anniversary (Â§3). Pinning it to UTC midnight keeps the day-of-month
    * stable regardless of the server's timezone; without this a date can drift
    * to the previous day and shift a student's whole billing schedule.
    */
