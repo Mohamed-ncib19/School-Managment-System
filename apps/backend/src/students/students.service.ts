@@ -109,6 +109,39 @@ export class StudentsService {
   } as const;
 
   /**
+   * The same enrollments, restricted to the fields the student rows render
+   * (name + hierarchy chain, no fee rows or audit dates). Kept small so the
+   * unpaginated list does not regrow into the multi-hundred-KB payload it used
+   * to be while still showing every group a multi-enrolled student belongs to.
+   */
+  private static readonly ASSIGNMENTS_LITE_INCLUDE = {
+    assignments: {
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            professor: {
+              select: {
+                id: true,
+                full_name: true,
+                field: {
+                  select: {
+                    id: true,
+                    name: true,
+                    level: { select: { id: true, name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { created_at: "asc" as const },
+    },
+  } as const;
+
+  /**
    * Returns a bare array when no `page` is supplied, so existing callers keep
    * working, and a paginated envelope when it is.
    *
@@ -144,7 +177,7 @@ export class StudentsService {
     if (!page) {
       return this.prisma.students.findMany({
         where,
-        include: StudentsService.LITE_HIERARCHY_INCLUDE,
+        include: { ...StudentsService.LITE_HIERARCHY_INCLUDE, ...StudentsService.ASSIGNMENTS_LITE_INCLUDE },
         orderBy: { created_at: "desc" },
       });
     }

@@ -17,7 +17,7 @@ import { ViewToggle } from "@/components/shared/view-toggle";
 import { ConfirmDeleteDialog, FormButton } from "@/components/forms/form-helpers";
 import Tooltip from "@/components/shared/tooltip";
 import StudentDetailModal from "@/components/shared/student-detail-modal";
-import { StudentAssignmentsCell, StudentFeeCell } from "@/components/shared/student-assignments";
+import { StudentAffectationCell, StudentFeeCell } from "@/components/shared/student-assignments";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { formatCurrency, formatDate, studentTotalFee } from "@/lib/utils/format";
 import { normalizeTunisianPhone } from "@/lib/utils/phone";
@@ -192,15 +192,7 @@ export default function StudentsPage() {
                 <StatusBadge status={student.status} />
               </div>
               <div className="mt-3 space-y-1 text-sm">
-                <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
-                  <span className="font-medium text-text-primary">{student.group?.professor?.field?.level?.name ?? "—"}</span>
-                  <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
-                  <span>{student.group?.professor?.field?.name ?? "—"}</span>
-                  <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
-                  <span>{student.group?.professor?.full_name ?? "—"}</span>
-                  <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
-                  <span>{student.group?.name ?? "—"}</span>
-                </div>
+                <StudentAffectationCell student={student} />
                 <p className="text-text-secondary"><span className="font-medium">{t("students.feeLabel")}</span> {formatCurrency(studentTotalFee(student))}</p>
               </div>
               <div className="mt-4 flex gap-2">
@@ -231,15 +223,7 @@ export default function StudentsPage() {
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{student.phone}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
-                      <span className="font-medium text-text-primary">{student.group?.professor?.field?.level?.name ?? "—"}</span>
-                      <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
-                      <span>{student.group?.professor?.field?.name ?? "—"}</span>
-                      <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
-                      <span>{student.group?.professor?.full_name ?? "—"}</span>
-                      <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />
-                      <span>{student.group?.name ?? "—"}</span>
-                    </div>
+                    <StudentAffectationCell student={student} />
                   </td>
                   <td className="px-4 py-3"><StudentFeeCell student={student} /></td>
                   <td className="px-4 py-3">
