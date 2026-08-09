@@ -50,6 +50,16 @@ export class SystemSettingsService {
       data: {
         ...(dto.system_name !== undefined && { system_name: dto.system_name }),
         ...(dto.features !== undefined && { features: dto.features }),
+        // Empty input clears the field: the school falls back to the default channel.
+        ...(dto.support_email !== undefined && {
+          support_email: dto.support_email.trim() || null,
+        }),
+        ...(dto.support_phone !== undefined && {
+          support_phone: dto.support_phone.trim() || null,
+        }),
+        ...(dto.support_whatsapp !== undefined && {
+          support_whatsapp: dto.support_whatsapp.trim() || null,
+        }),
       },
     });
 
@@ -77,6 +87,9 @@ export class SystemSettingsService {
     return {
       system_name: settings.system_name,
       features: settings.features,
+      support_email: settings.support_email,
+      support_phone: settings.support_phone,
+      support_whatsapp: settings.support_whatsapp,
     };
   }
 }

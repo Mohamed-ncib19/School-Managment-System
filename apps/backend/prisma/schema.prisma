@@ -491,6 +491,11 @@ model system_settings {
   system_name String   @default("School Management System")
   /// Module toggles: key -> boolean (absent means enabled).
   features    Json     @default("{}")
+  /// Per-school support contacts shown in the "Contact support" modal.
+  /// Empty means the channel falls back to the support defaults.
+  support_email     String?
+  support_phone     String?
+  support_whatsapp  String?
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 

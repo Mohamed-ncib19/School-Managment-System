@@ -525,6 +525,10 @@ export interface SystemSettings {
   system_name: string;
   /** Module toggles: key -> boolean (absent means enabled). */
   features: Record<string, boolean>;
+  /** Per-school support contacts; empty means the channel falls back to defaults. */
+  support_email: string | null;
+  support_phone: string | null;
+  support_whatsapp: string | null;
   created_at: string;
   updated_at: string;
 }

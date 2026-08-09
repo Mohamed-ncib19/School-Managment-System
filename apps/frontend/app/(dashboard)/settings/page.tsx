@@ -41,6 +41,7 @@ Palette,
   FileText,
   Receipt,
   SlidersHorizontal,
+  Headset,
 } from "lucide-react";
 import { usersApi } from "@/lib/api/users.api";
 import { authApi } from "@/lib/api/auth.api";
@@ -77,7 +78,7 @@ const passwordSchema = z.object({
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
-type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "features" | "hierarchy" | "updates" | "backups";
+type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "support" | "features" | "hierarchy" | "updates" | "backups";
 
 const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   fields: BookOpen,
@@ -232,16 +233,26 @@ export default function SettingsPage() {
 
   const [systemName, setSystemName] = useState("");
   const [featuresDraft, setFeaturesDraft] = useState<Record<string, boolean>>({});
+  const [supportDraft, setSupportDraft] = useState({ email: "", phone: "", whatsapp: "" });
 
   useEffect(() => {
     if (system) {
       setSystemName(system.system_name ?? "");
       setFeaturesDraft(normalized(system.features));
+      setSupportDraft({
+        email: system.support_email ?? "",
+        phone: system.support_phone ?? "",
+        whatsapp: system.support_whatsapp ?? "",
+      });
     }
   }, [system]);
 
   const systemDirty = systemName.trim() !== (system?.system_name?.trim() ?? "");
   const featuresDirty = JSON.stringify(featuresDraft) !== JSON.stringify(normalized(system?.features));
+  const supportDirty =
+    supportDraft.email.trim() !== (system?.support_email ?? "") ||
+    supportDraft.phone.trim() !== (system?.support_phone ?? "") ||
+    supportDraft.whatsapp.trim() !== (system?.support_whatsapp ?? "");
   const enabledCount = FEATURE_KEYS.filter((key) => featuresDraft[key] !== false).length;
   const brandLogo = settings?.logo_path
     ? `${apiBaseUrl()}/financial/settings/logo?v=${new Date(settings.updated_at).getTime()}`
@@ -312,9 +323,20 @@ export default function SettingsPage() {
 
   const saveSystem = () => {
     setError(null);
-    const patch: { system_name?: string; features?: Record<string, boolean> } = {};
+    const patch: {
+      system_name?: string;
+      features?: Record<string, boolean>;
+      support_email?: string;
+      support_phone?: string;
+      support_whatsapp?: string;
+    } = {};
     if (systemDirty) patch.system_name = systemName.trim();
     if (featuresDirty) patch.features = featuresDraft;
+    if (supportDirty) {
+      patch.support_email = supportDraft.email.trim();
+      patch.support_phone = supportDraft.phone.trim();
+      patch.support_whatsapp = supportDraft.whatsapp.trim();
+    }
     updateSystem.mutate(patch, {
       onSuccess: () => {
         setSuccess(t("settings.systemSaved"));
@@ -334,6 +356,7 @@ export default function SettingsPage() {
     { id: "branding", icon: Palette, label: t("settings.brandingTitle"), description: t("settings.brandingDescription") },
     { id: "theme", icon: SunMoon, label: t("settings.themeTitle"), description: t("settings.themeDescription") },
     { id: "system", icon: Globe, label: t("settings.systemTitle"), description: t("settings.systemDescription") },
+    { id: "support", icon: Headset, label: t("settings.supportSectionTitle"), description: t("settings.supportSectionDescription") },
     { id: "features", icon: ToggleLeft, label: t("settings.featuresTitle"), description: t("settings.featuresDescription") },
     { id: "hierarchy", icon: Network, label: t("hierarchy.title", "Navigation Hierarchy"), description: t("hierarchy.subtitle", "Configure hierarchy navigation order") },
     { id: "updates", icon: Download, label: t("settings.updatesTitle", "System Updates"), description: t("settings.updatesDescription", "Check for and apply new versions of the system") },
@@ -860,6 +883,92 @@ export default function SettingsPage() {
                       type="button"
                       onClick={saveSystem}
                       disabled={!systemDirty || updateSystem.isPending}
+                      className="btn btn-primary text-xs min-h-[36px] disabled:opacity-50"
+                    >
+                      {updateSystem.isPending ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <Save size={14} />
+                      )}
+                      {t("settings.saveChanges")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {active === "support" && (
+              <div className="card">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
+                    <Headset size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-h4 font-bold text-text-primary">{t("settings.supportSectionTitle")}</h3>
+                    <p className="text-xs text-text-secondary">{t("settings.supportSectionDescription")}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <label htmlFor="support_email" className="block text-sm font-medium text-text-primary mb-1.5">
+                      {t("settings.supportEmailLabel")}
+                    </label>
+                    <input
+                      id="support_email"
+                      type="email"
+                      value={supportDraft.email}
+                      onChange={(e) => setSupportDraft((d) => ({ ...d, email: e.target.value }))}
+                      placeholder={t("settings.supportEmailPlaceholder")}
+                      maxLength={120}
+                      className="input w-full max-w-md"
+                    />
+                    <p className="text-xs text-text-secondary mt-1">{t("settings.supportEmailHint")}</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+                    <div>
+                      <label htmlFor="support_phone" className="block text-sm font-medium text-text-primary mb-1.5">
+                        {t("settings.supportPhoneLabel")}
+                      </label>
+                      <input
+                        id="support_phone"
+                        type="tel"
+                        value={supportDraft.phone}
+                        onChange={(e) => setSupportDraft((d) => ({ ...d, phone: e.target.value }))}
+                        placeholder={t("settings.supportPhonePlaceholder")}
+                        maxLength={60}
+                        className="input w-full"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="support_whatsapp" className="block text-sm font-medium text-text-primary mb-1.5">
+                        {t("settings.supportWhatsappLabel")}
+                      </label>
+                      <input
+                        id="support_whatsapp"
+                        type="tel"
+                        value={supportDraft.whatsapp}
+                        onChange={(e) => setSupportDraft((d) => ({ ...d, whatsapp: e.target.value }))}
+                        placeholder={t("settings.supportWhatsappPlaceholder")}
+                        maxLength={60}
+                        className="input w-full"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-text-secondary">{t("settings.supportHint")}</p>
+
+                  <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+                    {supportDirty && (
+                      <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+                        <span className="h-2 w-2 rounded-full bg-gold animate-pulse" />
+                        {t("settings.unsaved")}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={saveSystem}
+                      disabled={!supportDirty || updateSystem.isPending}
                       className="btn btn-primary text-xs min-h-[36px] disabled:opacity-50"
                     >
                       {updateSystem.isPending ? (
