@@ -71,7 +71,7 @@ export class UpdatesService {
     const localSha = await this.git(["rev-parse", "HEAD"]);
     if (!localSha) return { ...base, reason: "no-git-install" };
 
-    const branch = this.trackedBranch((await this.git(["symbolic-ref", "--short", "HEAD"])) || "main");
+    const branch = this.trackedBranch();
     const remote = await this.resolveRemoteRepo();
     if (!remote) return { ...base, reason: "no-github-remote" };
     const repo = `${remote.owner}/${remote.repo}`;
@@ -204,12 +204,12 @@ export class UpdatesService {
   }
 
   /**
-   * The GitHub branch this install tracks. `UPDATE_BRANCH` in apps/backend/.env
-   * pins every school install to the same release branch (e.g. `selfhosted`);
-   * without it the install compares against its own checked-out branch.
+   * The GitHub branch this install tracks — always the `selfhosted` release
+   * branch. `UPDATE_BRANCH` in apps/backend/.env can pin a school to another
+   * branch, but the default is never the local branch or `main`: every school
+   * install updates from the same release branch.
    */
-  private trackedBranch(fallback: string): string {
-    const configured = this.config.get<string>("UPDATE_BRANCH")?.trim();
-    return configured || fallback;
+  private trackedBranch(): string {
+    return this.config.get<string>("UPDATE_BRANCH")?.trim() || "selfhosted";
   }
 }

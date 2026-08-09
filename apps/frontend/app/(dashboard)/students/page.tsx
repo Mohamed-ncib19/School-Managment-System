@@ -38,7 +38,10 @@ export default function StudentsPage() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
-  const selectedStudentId = searchParams.get("studentId") || "";
+  // Opens on a direct link (/students?studentId=X) and from row clicks; row
+  // clicks only show the modal, they do not push a new URL until the user
+  // acts inside it (details, payments, ...).
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("studentId"));
 
   const { data: fields } = useFields();
   const { data: professors } = useProfessors(fieldId || undefined);
@@ -101,11 +104,12 @@ export default function StudentsPage() {
   const hasFilters = fieldId || profId || levelId || groupId || statusFilter !== "all" || search;
 
   const openStudent = (id: string) => {
-    router.push(`/students?studentId=${id}`);
+    setSelectedId(id);
   };
 
   const closeStudent = () => {
-    router.push("/students");
+    setSelectedId(null);
+    router.replace("/students");
   };
 
   return (
@@ -217,16 +221,20 @@ export default function StudentsPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {filteredStudents.map((student) => (
-                <tr key={student.id} className="hover:bg-background/50 transition-colors">
+                <tr
+                  key={student.id}
+                  onClick={() => openStudent(student.id)}
+                  className="hover:bg-background/50 transition-colors cursor-pointer"
+                >
                   <td className="px-4 py-3">
-                    <button onClick={() => openStudent(student.id)} className="text-primary hover:underline font-medium">{student.first_name} {student.last_name}</button>
+                    <button onClick={(e) => { e.stopPropagation(); openStudent(student.id); }} className="text-primary hover:underline font-medium">{student.first_name} {student.last_name}</button>
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{student.phone}</td>
                   <td className="px-4 py-3">
                     <StudentAffectationCell student={student} />
                   </td>
                   <td className="px-4 py-3"><StudentFeeCell student={student} /></td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <select
                       value={student.status}
                       onChange={(e) => statusMutation.mutate({ id: student.id, status: e.target.value })}
@@ -243,7 +251,7 @@ export default function StudentsPage() {
                       <option value="withdrawn">{t("students.withdrawn", "Withdrawn")}</option>
                     </select>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1.5">
                       <Tooltip text={t("students.viewDetails")}>
                         <button onClick={() => openStudent(student.id)} className="h-8 w-8 inline-flex items-center justify-center rounded-btn bg-primary-50 dark:bg-primary/10 text-primary hover:bg-primary-100 dark:hover:bg-primary/20 transition-colors">
@@ -269,7 +277,7 @@ export default function StudentsPage() {
           </table>
         </div>
       )}
-      <StudentDetailModal studentId={selectedStudentId} isOpen={!!selectedStudentId} onClose={closeStudent} />
+      <StudentDetailModal studentId={selectedId ?? ""} isOpen={!!selectedId} onClose={closeStudent} />
 
       <ConfirmDeleteDialog
         entityName={t("students.entityName")}

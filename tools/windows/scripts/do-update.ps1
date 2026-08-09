@@ -28,8 +28,9 @@ function Fail {
 }
 
 # The tracked release branch comes from UPDATE_BRANCH in apps/backend/.env
-# (each school install pins the same branch, e.g. selfhosted) - otherwise main.
-$Branch = "main"
+# (each school install pins the same branch, e.g. selfhosted) - otherwise
+# selfhosted: every install updates from the same release branch, never main.
+$Branch = "selfhosted"
 $EnvFile = Join-Path $BackendDir ".env"
 if (Test-Path $EnvFile) {
   $match = Select-String -Path $EnvFile -Pattern '^UPDATE_BRANCH=(.+)$' -ErrorAction SilentlyContinue
