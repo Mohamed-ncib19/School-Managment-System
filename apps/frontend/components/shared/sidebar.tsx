@@ -31,14 +31,16 @@ import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-
 import { useFinancialSettings } from "@/hooks/use-financial";
 import { useSystemSettings, isFeatureEnabled, type FeatureKey } from "@/hooks/use-system-settings";
 import { apiBaseUrl } from "@/lib/api/client";
+import BrandMark from "./brand-mark";
+import ContactSupport from "./contact-support";
 
-/** The brand mark: the uploaded academy logo when set, else the bundled one. */
-function useBrandLogo(): string {
+/** The brand mark: the uploaded academy logo when set, else null (monogram). */
+function useBrandLogo(): string | null {
   const { data: settings } = useFinancialSettings();
   if (settings?.logo_path) {
     return `${apiBaseUrl()}/financial/settings/logo?v=${new Date(settings.updated_at).getTime()}`;
   }
-  return "/images/logo.svg";
+  return null;
 }
 
 const MAIN_NAV_ITEMS = [
@@ -214,13 +216,21 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
         <div className="flex items-center justify-between h-16 px-4 border-b border-white/10">
           {!collapsed && (
             <Link href="/dashboard" className="flex items-center gap-2">
-              <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
+              {brandLogo ? (
+                <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
+              ) : (
+                <BrandMark name={systemName} className="h-8 w-8 text-[11px]" />
+              )}
               <span className="font-bold text-sm tracking-tight">{systemName}</span>
             </Link>
           )}
           {collapsed && (
             <Link href="/dashboard" className="mx-auto">
-              <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
+              {brandLogo ? (
+                <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
+              ) : (
+                <BrandMark name={systemName} className="h-8 w-8 text-[11px]" />
+              )}
             </Link>
           )}
           <div className="flex items-center gap-1">
@@ -305,39 +315,17 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
             /* Collapsed financial */
             <div className="flex flex-col items-center">
               <button
-                onClick={() => setFinancialOpen(!financialOpen)}
+                onClick={() =>
+                  router.push(financialItems[0]?.href ?? "/financial")
+                }
                 className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
                   isOnFinancialPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
                 }`}
                 aria-label={t("nav.financialManagement")}
+                title={t("nav.financialManagement")}
               >
                 <Wallet size={18} />
               </button>
-              {financialOpen && isOnFinancialPage && (
-                <div className="mt-2 space-y-1 w-full">
-                  {financialItems.map((item) => {
-                    // The dashboard sits at the segment root, so prefix matching
-                    // would light it up on every financial screen.
-                    const isActive = item.exact
-                      ? pathname === item.href
-                      : pathname === item.href || pathname.startsWith(item.href + "/");
-                    const Icon = item.icon;
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        onClick={onCloseMobile}
-                        className={`flex items-center justify-center w-full py-2 rounded-btn transition-all duration-150 hover:scale-105 hover:shadow-sm ${
-                          isActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white"
-                        }`}
-                        aria-label={t(item.label)}
-                      >
-                        <Icon size={14} className="shrink-0" />
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           )}
             </>
@@ -385,35 +373,17 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
             /* Collapsed hierarchy */
             <div className="flex flex-col items-center">
               <button
-                onClick={() => setHierarchyOpen(!hierarchyOpen)}
+                onClick={() =>
+                  router.push(visibleEntities[0] ? `/hierarchy/${visibleEntities[0]}` : "/hierarchy")
+                }
                 className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
                   isOnHierarchyPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
                 }`}
                 aria-label={t("nav.fields")}
+                title={t("nav.fields")}
               >
                 <Network size={18} className="shrink-0" />
               </button>
-              {hierarchyOpen && isOnHierarchyPage && (
-                <div className="mt-2 space-y-1 w-full">
-                  {visibleEntities.map((entity) => {
-                    const isEntityActive = activeEntity === entity;
-                    const Icon = ENTITY_ICONS[entity];
-                    return (
-                      <Link
-                        key={entity}
-                        href={`/hierarchy/${entity}`}
-                        onClick={onCloseMobile}
-                        className={`flex items-center justify-center w-full py-2 rounded-btn transition-all duration-150 hover:scale-105 hover:shadow-sm ${
-                          isEntityActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white"
-                        }`}
-                        aria-label={getEntityLabel(entity)}
-                      >
-                        <Icon size={14} className="shrink-0" />
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           )}
 
@@ -439,6 +409,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
         </nav>
 
         <div className="border-t border-white/10 p-3 space-y-2">
+          <ContactSupport collapsed={collapsed} />
           {!collapsed && user && (
             <div className="flex items-center gap-3 px-2 py-1">
               <div className="h-8 w-8 rounded-full bg-sky-300/20 flex items-center justify-center text-xs font-bold shrink-0">

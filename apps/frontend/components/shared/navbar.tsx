@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Menu, Sun, Moon } from "lucide-react";
-import { useTheme, initTheme } from "@/hooks/use-theme";
+import { useAppearance, initAppearance } from "@/hooks/use-appearance";
 import ShutdownButton from "./shutdown-button";
 import UpdateIndicator from "./update-indicator";
 
@@ -14,10 +14,10 @@ interface NavbarProps {
 }
 
 export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarProps) {
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme } = useAppearance();
 
   useEffect(() => {
-    initTheme();
+    initAppearance();
   }, []);
 
   return (

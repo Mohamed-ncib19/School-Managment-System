@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { execFile, spawn } from "child_process";
+import { mkdirSync, openSync } from "fs";
+import { join } from "path";
 import { promisify } from "util";
 
 const execFileP = promisify(execFile);
@@ -88,10 +90,14 @@ export class UpdatesService {
   }
 
   /**
-   * Launch the platform's update engine as a separate process (a visible
-   * console on Windows) that stops the servers, pulls, installs, migrates and
-   * restarts on its own. The HTTP response is sent before the engines get
-   * round to stopping this process.
+   * Launch the platform's update engine (a visible console on Windows) that
+   * stops the servers, pulls, installs, migrates and restarts on its own. The
+   * HTTP response is sent before the engine gets round to stopping this
+   * process.
+   *
+   * Like the shutdown engine, the spawned process must NOT be `detached` with
+   * `stdio: "ignore"` — that combination freezes PowerShell on Windows. The
+   * engine output is piped to logs\update-<timestamp>.log instead.
    */
   async applyUpdate(): Promise<{ ok: boolean; started: boolean }> {
     const root = await this.git(["rev-parse", "--show-toplevel"]);
@@ -104,15 +110,14 @@ export class UpdatesService {
 
     try {
       if (isWindows) {
-        // Start-Process opens its own console window so the operator sees
-        // the engine's output (stop, fetch, pull, migrate, restart).
-        const cmd =
-          `Start-Process -FilePath '${script.replace(/'/g, "''")}' ` +
-          `-WorkingDirectory '${root.replace(/'/g, "''")}'`;
-        spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], {
-          detached: true,
-          stdio: "ignore",
-        }).unref();
+        const logFd = openSync(this.openLog(root, "update"), "a");
+        spawn(
+          process.env.SystemRoot
+            ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+            : "powershell.exe",
+          ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+          { cwd: root, stdio: ["ignore", logFd, logFd], windowsHide: true },
+        ).unref();
       } else {
         spawn("/bin/sh", [script], { cwd: root, detached: true, stdio: "ignore" }).unref();
       }
@@ -122,6 +127,14 @@ export class UpdatesService {
       this.logger.error(`Could not launch the update engine: ${(e as Error).message}`);
       return { ok: false, started: false };
     }
+  }
+
+  /** Path of a fresh timestamped log file under logs\ for the engine output. */
+  private openLog(root: string, kind: string): string {
+    const logsDir = join(root, "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return join(logsDir, `${kind}-${stamp}.log`);
   }
 
   /** stdout of a git command, trimmed, ornull when git itself is missing. */

@@ -4,9 +4,31 @@
 
 @layer base {
   :root {
-    --color-primary: #264EAE;
+    /* Brand ramp as RGB channel triplets: Tailwind reads these through the
+     * `rgb(var(--color-primary-XX) / <alpha-value>)` pattern so that both the
+     * plain colors and the /opacity classes (bg-primary/15, border-primary/40…)
+     * keep working when the accent is changed. */
+    --color-primary: 38 78 174;
+    --color-primary-50: 232 238 251;
+    --color-primary-100: 209 220 245;
+    --color-primary-200: 163 185 235;
+    --color-primary-300: 117 151 224;
+    --color-primary-400: 71 116 214;
+    --color-primary-500: 38 78 174;
+    --color-primary-600: 31 63 138;
+    --color-primary-700: 25 48 102;
+    --color-primary-900: 11 16 22;
     --color-sky: #77D4F2;
-    --color-gold: #F5B940;
+    /* Secondary (gold) ramp, same triplet convention as the primary ramp. */
+    --color-gold: 245 185 64;
+    --color-gold-50: 253 246 232;
+    --color-gold-100: 250 237 202;
+    --color-gold-200: 245 219 149;
+    --color-gold-300: 240 201 102;
+    --color-gold-400: 242 166 48;
+    --color-gold-500: 229 165 48;
+    --color-gold-600: 180 131 15;
+    --color-gold-700: 138 100 16;
     --color-background: #F8FAFC;
     --color-surface: #FFFFFF;
     --color-border: #E5E7EB;
@@ -274,4 +296,68 @@
     background: white !important;
     color: black !important;
   }
+}
+
+/* Accent colour presets (Settings → Apparence).
+ *
+ * The accent changes the brand primary ramp through inline styles set by
+ * the appearance store. Charts cannot be recoloured that way — they read
+ * CSS variables once, for both modes — so each preset re-defines the brand
+ * slots (--chart-1 and the sequential ramp) and the dark-mode soft fills
+ * and glow shadow per mode here. "blue" is the default and needs none. */
+:root[data-accent="emerald"] {
+  --chart-1: #078857;
+  --chart-4: #E8B73F;
+  --chart-seq-100: #D5EBE1;
+  --chart-seq-300: #5FC79F;
+  --chart-seq-500: #036B47;
+  --chart-seq-700: #024D39;
+}
+.dark[data-accent="emerald"] {
+  --chart-1: #34D399;
+  --chart-4: #B8860B;
+  --chart-seq-100: #06332B;
+  --chart-seq-300: #0C9271;
+  --chart-seq-500: #34D399;
+  --chart-seq-700: #6EE7B7;
+  --color-soft-primary: rgba(52, 211, 153, 0.18);
+  --shadow-glow-primary: 0 0 0 1px rgba(52, 211, 153, 0.25), 0 4px 16px rgba(52, 211, 153, 0.15);
+}
+
+:root[data-accent="violet"] {
+  --chart-1: #7C3AED;
+  --chart-4: #D9B24E;
+  --chart-seq-100: #E4DDFB;
+  --chart-seq-300: #9D80EF;
+  --chart-seq-500: #6D28D9;
+  --chart-seq-700: #4C1D95;
+}
+.dark[data-accent="violet"] {
+  --chart-1: #A78BFA;
+  --chart-4: #B98A2F;
+  --chart-seq-100: #2E1065;
+  --chart-seq-300: #7C3AED;
+  --chart-seq-500: #A78BFA;
+  --chart-seq-700: #C4B5FD;
+  --color-soft-primary: rgba(167, 139, 250, 0.18);
+  --shadow-glow-primary: 0 0 0 1px rgba(167, 139, 250, 0.25), 0 4px 16px rgba(167, 139, 250, 0.15);
+}
+
+:root[data-accent="crimson"] {
+  --chart-1: #E11D48;
+  --chart-4: #EBB83F;
+  --chart-seq-100: #FAD4DC;
+  --chart-seq-300: #F3708C;
+  --chart-seq-500: #BE123C;
+  --chart-seq-700: #881337;
+}
+.dark[data-accent="crimson"] {
+  --chart-1: #F87171;
+  --chart-4: #C07A2F;
+  --chart-seq-100: #4C0519;
+  --chart-seq-300: #E11D48;
+  --chart-seq-500: #F87171;
+  --chart-seq-700: #FDA4AF;
+  --color-soft-primary: rgba(248, 113, 113, 0.18);
+  --shadow-glow-primary: 0 0 0 1px rgba(248, 113, 113, 0.25), 0 4px 16px rgba(248, 113, 113, 0.15);
 }

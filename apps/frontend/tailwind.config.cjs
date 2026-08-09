@@ -8,9 +8,9 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: { DEFAULT: "#264EAE", 50: "#E8EEFB", 100: "#D1DCF5", 200: "#A3B9EB", 300: "#7597E0", 400: "#4774D6", 500: "#264EAE", 600: "#1F3F8A", 700: "#193066", 800: "#122042", 900: "#0B1016" },
+        primary: { DEFAULT: "rgb(var(--color-primary) / <alpha-value>)", 50: "rgb(var(--color-primary-50) / <alpha-value>)", 100: "rgb(var(--color-primary-100) / <alpha-value>)", 200: "rgb(var(--color-primary-200) / <alpha-value>)", 300: "rgb(var(--color-primary-300) / <alpha-value>)", 400: "rgb(var(--color-primary-400) / <alpha-value>)", 500: "rgb(var(--color-primary-500) / <alpha-value>)", 600: "rgb(var(--color-primary-600) / <alpha-value>)", 700: "rgb(var(--color-primary-700) / <alpha-value>)", 800: "rgb(var(--color-primary-800) / <alpha-value>)", 900: "rgb(var(--color-primary-900) / <alpha-value>)" },
         sky: { DEFAULT: "#77D4F2", 50: "#EBF8FD", 100: "#D7F1FB", 200: "#AFE3F7", 300: "#77D4F2", 400: "#4CC5E8", 500: "#33B5DB" },
-        gold: { DEFAULT: "#F5B940", 50: "#FDF6E8", 100: "#FAEDCA", 200: "#F5DB95", 300: "#F5B940", 400: "#F2A630", 500: "#E5A530", 600: "#B4830F", 700: "#8A6410" },
+        gold: { DEFAULT: "rgb(var(--color-gold) / <alpha-value>)", 50: "rgb(var(--color-gold-50) / <alpha-value>)", 100: "rgb(var(--color-gold-100) / <alpha-value>)", 200: "rgb(var(--color-gold-200) / <alpha-value>)", 300: "rgb(var(--color-gold-300) / <alpha-value>)", 400: "rgb(var(--color-gold-400) / <alpha-value>)", 500: "rgb(var(--color-gold-500) / <alpha-value>)", 600: "rgb(var(--color-gold-600) / <alpha-value>)", 700: "rgb(var(--color-gold-700) / <alpha-value>)" },
         background: {
           DEFAULT: "var(--color-background)",
         },

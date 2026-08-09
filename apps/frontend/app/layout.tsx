@@ -4,6 +4,7 @@ import { Poppins } from "next/font/google";
 import Providers from "./providers";
 import { I18nProvider } from "@/lib/i18n/context";
 import ThemeInit from "@/components/shared/theme-init";
+import { schoolMarkDataUrl } from "@/lib/brand";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -45,6 +46,11 @@ async function systemName(): Promise<string | null> {
   }
 }
 
+/**
+ * The favicon is the uploaded logo when one exists ({/icon?v=N} busts the
+ * browser's aggressive favicon cache), else the school monogram — the first
+ * two letters of the school name — as a data URI, so no request round-trip.
+ */
 export async function generateMetadata(): Promise<Metadata> {
   const [version, name] = await Promise.all([faviconVersion(), systemName()]);
   const title = name ? `${name} | School Management System` : "School Management System";
@@ -52,9 +58,9 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description: "Intern Management System",
   };
-  if (version) {
-    metadata.icons = { icon: `/icon?v=${version}` };
-  }
+  metadata.icons = version
+    ? { icon: `/icon?v=${version}` }
+    : { icon: schoolMarkDataUrl(name ?? "") };
   return metadata;
 }
 

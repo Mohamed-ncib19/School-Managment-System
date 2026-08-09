@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { initTheme } from "@/hooks/use-theme";
+import { initAppearance } from "@/hooks/use-appearance";
 
 export default function ThemeInit() {
   useEffect(() => {
-    initTheme();
+    initAppearance();
   }, []);
   return null;
 }

@@ -22,7 +22,8 @@ import {
   Network,
   ImagePlus,
   Upload,
-  Palette,
+Palette,
+  SunMoon,
   ToggleLeft,
   Users,
   UserCheck,
@@ -36,6 +37,7 @@ import {
   Settings,
   ChevronDown,
   TrendingUp,
+  CheckCircle2,
   FileText,
   Receipt,
   SlidersHorizontal,
@@ -50,8 +52,10 @@ import { FormButton } from "@/components/forms/form-helpers";
 import { useBackups, useCreateBackup, useRestoreBackup } from "@/hooks/use-backups";
 import { useFinancialSettings, useUploadLogo, useRemoveLogo } from "@/hooks/use-financial";
 import { useSystemSettings, useUpdateSystemSettings, isFeatureEnabled, FEATURE_KEYS, type FeatureKey } from "@/hooks/use-system-settings";
+import { useAppearance, ACCENT_PRESETS, ACCENT_IDS } from "@/hooks/use-appearance";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { SettingsSkeleton, PageLoader } from "@/components/shared/skeletons";
+import BrandMark from "@/components/shared/brand-mark";
 import { apiBaseUrl } from "@/lib/api/client";
 import { cn } from "@/lib/utils/format";
 import type { LucideIcon } from "lucide-react";
@@ -73,7 +77,7 @@ const passwordSchema = z.object({
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
-type SectionId = "profile" | "security" | "branding" | "system" | "features" | "hierarchy" | "updates" | "backups";
+type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "features" | "hierarchy" | "updates" | "backups";
 
 const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   fields: BookOpen,
@@ -184,7 +188,6 @@ export default function SettingsPage() {
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
 
   const updateStatus = useUpdateStore((s) => s.status);
   const updateChecking = useUpdateStore((s) => s.checking);
@@ -225,6 +228,7 @@ export default function SettingsPage() {
   const { data: system } = useSystemSettings();
   const updateSystem = useUpdateSystemSettings();
   const { entityOrder, getEntityLabel } = useHierarchyConfig();
+  const { theme, setTheme, accent, setAccent } = useAppearance();
 
   const [systemName, setSystemName] = useState("");
   const [featuresDraft, setFeaturesDraft] = useState<Record<string, boolean>>({});
@@ -241,7 +245,7 @@ export default function SettingsPage() {
   const enabledCount = FEATURE_KEYS.filter((key) => featuresDraft[key] !== false).length;
   const brandLogo = settings?.logo_path
     ? `${apiBaseUrl()}/financial/settings/logo?v=${new Date(settings.updated_at).getTime()}`
-    : "/images/logo.svg";
+    : null;
 
   const logoUrl = settings?.logo_path
     ? `${apiBaseUrl()}/financial/settings/logo?v=${new Date(settings.updated_at).getTime()}`
@@ -328,6 +332,7 @@ export default function SettingsPage() {
     { id: "profile", icon: User, label: t("settings.profileTitle"), description: t("settings.profileDescription") },
     { id: "security", icon: Lock, label: t("settings.securityTitle"), description: t("settings.securityDescription") },
     { id: "branding", icon: Palette, label: t("settings.brandingTitle"), description: t("settings.brandingDescription") },
+    { id: "theme", icon: SunMoon, label: t("settings.themeTitle"), description: t("settings.themeDescription") },
     { id: "system", icon: Globe, label: t("settings.systemTitle"), description: t("settings.systemDescription") },
     { id: "features", icon: ToggleLeft, label: t("settings.featuresTitle"), description: t("settings.featuresDescription") },
     { id: "hierarchy", icon: Network, label: t("hierarchy.title", "Navigation Hierarchy"), description: t("hierarchy.subtitle", "Configure hierarchy navigation order") },
@@ -338,7 +343,6 @@ export default function SettingsPage() {
   ];
   const goTo = (id: SectionId) => {
     setActive(id);
-    contentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -376,7 +380,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-1 gap-8 lg:gap-10 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
           {/* Section navigator */}
           <aside className="lg:sticky lg:top-8">
             <nav
@@ -392,7 +396,7 @@ export default function SettingsPage() {
                     onClick={() => goTo(section.id)}
                     aria-current={isActive ? "true" : undefined}
                     className={cn(
-                      "flex items-center gap-3 rounded-btn px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors duration-150 shrink-0 lg:shrink",
+                      "flex items-center gap-3 rounded-btn px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-150 shrink-0 lg:shrink lg:w-full",
                       isActive
                         ? "bg-primary text-white shadow-sm"
                         : "text-text-secondary hover:bg-neutral-soft hover:text-text-primary",
@@ -407,7 +411,7 @@ export default function SettingsPage() {
           </aside>
 
           {/* Active section content */}
-          <div ref={contentRef} className="scroll-mt-8 space-y-6 min-w-0">
+          <div className="space-y-6 min-w-0">
             {active === "profile" && (
               <div className="card max-w-xl">
                 {/* Profile Section */}
@@ -713,6 +717,101 @@ export default function SettingsPage() {
               </div>
             )}
 
+            {active === "theme" && (
+              <div className="card max-w-xl">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
+                    <SunMoon size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-h4 font-bold text-text-primary">{t("settings.themeTitle", "Apparence")}</h3>
+                    <p className="text-xs text-text-secondary">{t("settings.themeDescription", "Choisissez le mode d'affichage et la couleur d'accent.")}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-8">
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-2">
+                      {t("settings.themeModeLabel", "Mode d'affichage")}
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { id: "light" as const, label: t("settings.themeLight", "Clair"), swatch: "#F8FAFC" },
+                        { id: "dark" as const, label: t("settings.themeDark", "Sombre"), swatch: "#1E293B" },
+                      ].map((mode) => {
+                        const activeMode = theme === mode.id;
+                        return (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => setTheme(mode.id)}
+                            aria-pressed={activeMode}
+                            className={cn(
+                              "flex items-center gap-3 rounded-card border-2 p-4 text-left transition-all duration-150",
+                              activeMode
+                                ? "border-primary bg-primary-50/60 dark:bg-primary/15"
+                                : "border-border bg-background hover:border-primary/40",
+                            )}
+                          >
+                            <span
+                              className="h-8 w-8 shrink-0 rounded-full border border-border shadow-sm"
+                              style={{ backgroundColor: mode.swatch }}
+                            />
+                            <span className="text-sm font-semibold text-text-primary">{mode.label}</span>
+                            {activeMode && (
+                              <CheckCircle2 size={18} className="ml-auto shrink-0 text-primary" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-2">
+                      {t("settings.themeAccentLabel", "Couleur d'accent")}
+                    </label>
+                    <div className="flex flex-wrap items-start gap-4">
+                      {ACCENT_IDS.map((id) => {
+                        const preset = ACCENT_PRESETS[id];
+                        const activeAccent = accent === id;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => setAccent(id)}
+                            aria-pressed={activeAccent}
+                            className="flex flex-col items-center gap-1.5 outline-none"
+                          >
+                            <span
+                              className={cn(
+                                "relative h-10 w-10 rounded-full transition-all duration-150",
+                                activeAccent
+                                  ? "ring-2 ring-primary ring-offset-2 ring-offset-surface scale-110"
+                                  : "hover:scale-105",
+                              )}
+                              style={{ backgroundColor: preset.swatch }}
+                            >
+                              <span
+                                className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-surface"
+                                style={{ backgroundColor: `rgb(${preset.goldRamp[0]})` }}
+                              />
+                            </span>
+                            <span className={cn("text-xs", activeAccent ? "font-semibold text-text-primary" : "text-text-secondary")}>
+                              {t(`settings.themeAccents.${id}`, preset.id)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-text-secondary mt-3">
+                      {t("settings.themeAccentHint", "La couleur d'accent s'applique aux boutons, liens et éléments de marque. Enregistrée sur cet appareil.")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {active === "system" && (
               <div className="card">
                 <div className="flex items-center gap-3 mb-5">
@@ -948,7 +1047,11 @@ export default function SettingsPage() {
                   </div>
                   <div className="rounded-card bg-primary dark:bg-primary-900 p-3 text-white shadow-md overflow-hidden">
                     <div className="flex items-center gap-2 px-2 py-1.5 mb-1">
-                      <img src={brandLogo} alt="" className="h-6 w-6 rounded-btn object-contain" />
+                      {brandLogo ? (
+                        <img src={brandLogo} alt="" className="h-6 w-6 rounded-btn object-contain" />
+                      ) : (
+                        <BrandMark name={systemName || t("app.name")} className="h-6 w-6 text-[9px]" />
+                      )}
                       <span className="text-xs font-bold tracking-tight truncate">
                         {systemName || t("app.name")}
                       </span>
@@ -1128,107 +1231,83 @@ export default function SettingsPage() {
                   </div>
                   <div>
                     <h3 className="text-h4 font-bold text-text-primary">{t("settings.updatesTitle", "System Updates")}</h3>
-                    <p className="text-xs text-text-secondary">{t("settings.updatesDescription", "Check the release repository for new versions of the system.")}</p>
+                    <p className="text-xs text-text-secondary">{t("settings.updatesDescription", "Keep the system up to date")}</p>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="rounded-btn border border-border bg-background p-4">
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                      {updateStatus?.available ? (
+                <div className="rounded-btn border border-border bg-background p-4">
+                  <div className="flex items-center gap-2">
+                    {updateStatus?.available ? (
+                      <>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 dark:bg-primary/15 px-3 py-1 text-xs font-medium text-primary">
                           <span className="h-2 w-2 rounded-full bg-gold animate-pulse" />
                           {t("updates.availableBadge")}
                         </span>
-                      ) : updateStatus?.checkedAt ? (
+                        <p className="text-sm text-text-secondary">{t("updates.availableText")}</p>
+                      </>
+                    ) : updateStatus?.checkedAt ? (
+                      <>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft dark:bg-success-dark-soft px-3 py-1 text-xs font-medium text-success-strong dark:text-success-dark-strong">
                           <span className="h-2 w-2 rounded-full bg-success dark:bg-success-dark" />
                           {t("updates.upToDate")}
                         </span>
-                      ) : (
+                        <p className="text-sm text-text-secondary">{t("updates.upToDateText")}</p>
+                      </>
+                    ) : (
+                      <>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-soft px-3 py-1 text-xs font-medium text-text-secondary">
                           <RefreshCw size={11} className={cn(updateChecking && "animate-spin")} />
                           {updateChecking ? t("updates.checking") : t("updates.checkPending")}
                         </span>
-                      )}
-                      {updateStatus?.branch && (
-                        <span className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-text-secondary">
-                          {t("updates.branchLabel")} <span className="font-mono">{updateStatus.branch}</span>
-                        </span>
-                      )}
-                    </div>
-
-                    {updateStatus?.latest && (
-                      <div className="space-y-2 rounded-btn border border-border p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs font-semibold uppercase tracking-wider text-text-secondary">{t("updates.latestVersion")}</p>
-                          <span className="font-mono text-xs text-text-primary">{updateStatus.latest.short}</span>
-                        </div>
-                        <p className="text-sm font-medium text-text-primary">{updateStatus.latest.message}</p>
-                        <p className="text-xs text-text-secondary">
-                          {updateStatus.latest.author}
-                          {updateStatus.latest.date ? ` — ${new Date(updateStatus.latest.date).toLocaleString()}` : ""}
-                        </p>
-                      </div>
-                    )}
-
-                    {updateStatus?.installed && (
-                      <p className="text-xs text-text-secondary">
-                        {t("updates.installed")} <span className="font-mono text-text-primary">{updateStatus.installed.short}</span>
-                      </p>
-                    )}
-
-                    {updateStatus?.checkedAt && (
-                      <p className="text-[11px] text-text-secondary/80">
-                        {t("updates.checkedAt")} {new Date(updateStatus.checkedAt).toLocaleString()}
-                      </p>
-                    )}
-
-                    {updateStatus?.reason === "disabled" && (
-                      <p className="text-xs text-text-secondary/80">{t("updates.disabledHint")}</p>
-                    )}
-                    {updateStatus && updateStatus.reason && updateStatus.reason !== "disabled" && (
-                      <p className="text-xs text-text-secondary/80">{t("updates.unreachableHint")}</p>
-                    )}
-
-                    {updateFailed && (
-                      <p role="alert" className="text-xs text-danger">{t("updates.failed")}</p>
-                    )}
-                    {updateApplying && (
-                      <p className="text-xs text-text-secondary">{t("updates.applying")}</p>
+                        <p className="text-sm text-text-secondary">{t("updates.checkPendingText")}</p>
+                      </>
                     )}
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+                  {updateStatus?.reason === "disabled" && (
+                    <p className="mt-3 text-xs text-text-secondary/80">{t("updates.disabledHint")}</p>
+                  )}
+                  {updateStatus && updateStatus.reason && updateStatus.reason !== "disabled" && (
+                    <p className="mt-3 text-xs text-text-secondary/80">{t("updates.unreachableHint")}</p>
+                  )}
+
+                  {updateFailed && (
+                    <p role="alert" className="mt-3 text-xs text-danger">{t("updates.failed")}</p>
+                  )}
+                  {updateApplying && (
+                    <p className="mt-3 text-xs text-text-secondary">{t("updates.applying")}</p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+                  <button
+                    type="button"
+                    onClick={checkNow}
+                    disabled={updateChecking || updateApplying}
+                    className="btn btn-secondary text-xs min-h-[36px] disabled:opacity-50"
+                  >
+                    {updateChecking ? (
+                      <RefreshCw size={14} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={14} />
+                    )}
+                    {t("updates.checkNow")}
+                  </button>
+                  {updateStatus?.available && (
                     <button
                       type="button"
-                      onClick={checkNow}
+                      onClick={applyUpdate}
                       disabled={updateChecking || updateApplying}
-                      className="btn btn-secondary text-xs min-h-[36px] disabled:opacity-50"
+                      className="btn btn-primary text-xs min-h-[36px] disabled:opacity-50"
                     >
-                      {updateChecking ? (
+                      {updateApplying ? (
                         <RefreshCw size={14} className="animate-spin" />
                       ) : (
-                        <RefreshCw size={14} />
+                        <Download size={14} />
                       )}
-                      {t("updates.checkNow")}
+                      {updateApplying ? t("updates.starting") : t("updates.now")}
                     </button>
-                    {updateStatus?.available && (
-                      <button
-                        type="button"
-                        onClick={applyUpdate}
-                        disabled={updateChecking || updateApplying}
-                        className="btn btn-primary text-xs min-h-[36px] disabled:opacity-50"
-                      >
-                        {updateApplying ? (
-                          <RefreshCw size={14} className="animate-spin" />
-                        ) : (
-                          <Download size={14} />
-                        )}
-                        {updateApplying ? t("updates.starting") : t("updates.now")}
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
               </div>
             )}

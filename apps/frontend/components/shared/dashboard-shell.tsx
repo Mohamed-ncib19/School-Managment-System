@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import Sidebar from "@/components/shared/sidebar";
 import Navbar from "@/components/shared/navbar";
 import PageBreadcrumbs from "@/components/shared/page-breadcrumbs";
+import ShutdownFailedBanner from "@/components/shared/shutdown-failed-banner";
 
 /** Most specific route first — the first match wins. */
 const TITLES: ReadonlyArray<[RegExp, string]> = [
@@ -38,6 +39,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen flex bg-background">
+      <ShutdownFailedBanner />
       <Sidebar
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}

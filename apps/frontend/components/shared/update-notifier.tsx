@@ -7,15 +7,6 @@ import { useTranslation } from "@/lib/i18n/context";
 
 const SNOOZE_KEY = "update-snoozed-sha";
 
-function formatDate(date: string): string {
-  if (!date) return "";
-  try {
-    return new Date(date).toLocaleString();
-  } catch {
-    return date;
-  }
-}
-
 /**
  * Polls the backend's update check while the dashboard is open. When a newer
  * commit exists on the release branch it shows a dialog:
@@ -48,18 +39,29 @@ export default function UpdateNotifier() {
 
   useEffect(() => {
     let cancelled = false;
-    const check = async () => {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const RETRY_FAILED_MS = 5 * 60_000;
+
+    const check = async (force: boolean) => {
       if (cancelled) return;
-      track(await useUpdateStore.getState().refresh(false));
+      const result = await useUpdateStore.getState().refresh(force);
+      if (!result) return;
+      track(result);
+      // When the check itself failed (no git, no internet, bad token), retry
+      // after 5 minutes instead of waiting for the next 30-minute poll so a
+      // fixed token/config is picked up quickly.
+      if (retryTimer) clearTimeout(retryTimer);
+      if (result.reason) retryTimer = setTimeout(() => void check(true), RETRY_FAILED_MS);
     };
-    void check();
+    void check(true);
     const minutes = Number(process.env.NEXT_PUBLIC_UPDATE_CHECK_MINUTES ?? "30");
     if (!Number.isFinite(minutes) || minutes <= 0) return;
-    const timer = setInterval(() => void check(), minutes * 60_000);
-    const onFocus = () => void check();
+    const timer = setInterval(() => void check(false), minutes * 60_000);
+    const onFocus = () => void check(false);
     window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
@@ -108,13 +110,7 @@ export default function UpdateNotifier() {
         </h3>
 
         <p id="update-body" className="mb-4 text-sm text-text-secondary">
-          {t("updates.installed")} <span className="font-mono">{status.installed?.short}</span> · {t("updates.latest")}{" "}
-          <span className="font-mono">{status.latest.short}</span>
-          {status.latest.author ? ` — ${status.latest.author}` : ""}
-          <span className="mt-1 block truncate text-xs italic">{status.latest.message}</span>
-          {status.latest.date && (
-            <span className="mt-1 block text-xs">{formatDate(status.latest.date)}</span>
-          )}
+          {t("updates.availableText")}
         </p>
 
         {failed && (
