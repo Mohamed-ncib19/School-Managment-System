@@ -402,7 +402,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 }`}
               >
                 <Icon size={18} className="shrink-0" />
-                {!collapsed && <span>{t(item.label)}</span>}
+                {!collapsed && <span className="min-w-0 truncate">{t(item.label)}</span>}
               </Link>
             );
           })}

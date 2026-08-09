@@ -380,7 +380,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
           {/* Section navigator */}
           <aside className="lg:sticky lg:top-8">
             <nav

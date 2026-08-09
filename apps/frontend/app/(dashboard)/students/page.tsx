@@ -14,7 +14,6 @@ import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ViewToggle } from "@/components/shared/view-toggle";
-import { TreeView, buildStudentTree } from "@/components/shared/tree-view";
 import { ConfirmDeleteDialog, FormButton } from "@/components/forms/form-helpers";
 import Tooltip from "@/components/shared/tooltip";
 import StudentDetailModal from "@/components/shared/student-detail-modal";
@@ -36,7 +35,6 @@ export default function StudentsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [treeStudentId, setTreeStudentId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -90,8 +88,6 @@ export default function StudentsPage() {
       return matchesSearch && matchesField && matchesProf && matchesLevel && matchesGroup && matchesStatus;
     });
   }, [allStudents, search, fieldId, profId, levelId, groupId, statusFilter]);
-
-  const treeData = useMemo(() => buildStudentTree(filteredStudents), [filteredStudents]);
 
   const clearFilters = () => {
     setFieldId("");
@@ -289,7 +285,6 @@ export default function StudentsPage() {
           </table>
         </div>
       )}
-
       <StudentDetailModal studentId={selectedStudentId} isOpen={!!selectedStudentId} onClose={closeStudent} />
 
       <ConfirmDeleteDialog
@@ -317,11 +312,6 @@ export default function StudentsPage() {
           }}
         />
       )}
-      <StudentDetailModal
-        studentId={treeStudentId ?? ""}
-        isOpen={!!treeStudentId}
-        onClose={() => setTreeStudentId(null)}
-      />
     </div>
   );
 }

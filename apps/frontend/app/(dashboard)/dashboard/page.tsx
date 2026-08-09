@@ -19,7 +19,7 @@ import { DashboardSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { RevenueChart } from "@/components/charts/revenue-chart";
 import { PaymentsByStatusChart } from "@/components/charts/payments-by-status-chart";
 import { StudentsByFieldChart } from "@/components/charts/students-by-field-chart";
-import { useStudents, useFields, useProfessors, useHierarchySummary, useRecentStudents } from "@/hooks/use-queries";
+import { useHierarchySummary, useRecentStudents } from "@/hooks/use-queries";
 import {
   useFinancialDashboard,
   useFinancialPayments,
@@ -30,17 +30,13 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function DashboardPage() {
-  const { data: students, isLoading: studentsLoading } = useStudents(undefined, { refetchInterval: 60000 });
-  const { data: fields } = useFields({ refetchInterval: 60000 });
-  const { data: professors } = useProfessors(undefined, { refetchInterval: 60000 });
   const { data: recentStudents } = useRecentStudents(5, { refetchInterval: 60000 });
-  const { data: hierarchy } = useHierarchySummary({ refetchInterval: 60000 });
+  const { data: hierarchy, isLoading: hierarchyLoading } = useHierarchySummary({ refetchInterval: 60000 });
   const { t } = useTranslation();
 
-  const totalStudents = hierarchy?.levels?.reduce((sum, l) => sum + (l.students ?? 0), 0) ?? students?.length ?? 0;
-
-  const totalFields = fields?.length ?? 0;
-  const totalProfessors = professors?.length ?? 0;
+  const totalStudents = hierarchy?.levels?.reduce((sum, l) => sum + (l.students ?? 0), 0) ?? 0;
+  const totalFields = hierarchy?.fields?.length ?? 0;
+  const totalProfessors = hierarchy?.professors?.length ?? 0;
 
   const { data: finance, isLoading: financeLoading } = useFinancialDashboard({});
   const { data: today } = useFinancialDashboard({ range: "today" });
@@ -89,21 +85,15 @@ export default function DashboardPage() {
     [statusSlices],
   );
 
-  const studentsByField = useMemo(() => {
-    if (hierarchy?.fields?.length) {
-      return hierarchy.fields
+  const studentsByField = useMemo(
+    () =>
+      (hierarchy?.fields ?? [])
         .filter((f) => (f.students ?? 0) > 0)
-        .map((f) => ({ field: f.name, count: f.students ?? 0 }));
-    }
-    const fieldMap: Record<string, number> = {};
-    students?.forEach((s) => {
-      const fieldName = s.group?.professor?.field?.name ?? "Unknown";
-      fieldMap[fieldName] = (fieldMap[fieldName] ?? 0) + 1;
-    });
-    return Object.entries(fieldMap).map(([field, count]) => ({ field, count }));
-  }, [hierarchy, students]);
+        .map((f) => ({ field: f.name, count: f.students ?? 0 })),
+    [hierarchy],
+  );
 
-  const isLoading = studentsLoading || financeLoading;
+  const isLoading = hierarchyLoading || financeLoading;
 
   return (
     <div className="space-y-6">

@@ -6,15 +6,14 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, ChevronRight, Search } from "lucide-react";
 import { professorsApi } from "@/lib/api/professors.api";
-import { useFields, useLevels, useGroups, useStudents } from "@/hooks/use-queries";
+import { useFields, useLevels } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
-import type { Professor, Field, Level, Group, Student } from "@/types";
+import type { Professor, Field } from "@/types";
 import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { ViewToggle } from "@/components/shared/view-toggle";
-import { TreeView, buildProfessorsTree } from "@/components/shared/tree-view";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { normalizeTunisianPhone } from "@/lib/utils/phone";
 import { useTranslation } from "@/lib/i18n/context";
@@ -24,21 +23,13 @@ export default function ProfessorsPage() {
   const qc = useQueryClient();
   const router = useRouter();
   const { data: fields } = useFields();
+  const { data: levels } = useLevels();
   const { data: professors, isLoading } = useQuery({
     queryKey: ["professors"],
     queryFn: () => professorsApi.list(),
   });
 
-  const { data: levels } = useLevels();
-  const { data: groups } = useGroups();
-  const { data: students } = useStudents();
-
   const { viewMode, setViewMode } = useViewMode("list");
-
-  const treeData = useMemo(
-    () => buildProfessorsTree(professors ?? [], fields ?? [], levels ?? [], groups ?? [], students ?? []),
-    [professors, fields, levels, groups, students],
-  );
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editingProf, setEditingProf] = useState<Professor | null>(null);

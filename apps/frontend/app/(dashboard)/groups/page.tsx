@@ -6,15 +6,14 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, ChevronRight, Printer, Search } from "lucide-react";
 import { groupsApi } from "@/lib/api/groups.api";
-import { useProfessors, useFields, useLevels, useStudents } from "@/hooks/use-queries";
+import { useProfessors, useFields, useLevels } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
-import type { Group, Professor, Field, Student } from "@/types";
+import type { Group, Professor, Field } from "@/types";
 import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { ViewToggle } from "@/components/shared/view-toggle";
-import { TreeView, buildGroupsTree } from "@/components/shared/tree-view";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function GroupsPage() {
@@ -30,14 +29,7 @@ export default function GroupsPage() {
     queryFn: () => groupsApi.list(),
   });
 
-  const { data: students } = useStudents();
-
   const { viewMode, setViewMode } = useViewMode("list");
-
-  const treeData = useMemo(
-    () => buildGroupsTree(groups ?? [], professors ?? [], fields ?? [], students ?? []),
-    [groups, professors, fields, students],
-  );
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
