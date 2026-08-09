@@ -194,7 +194,7 @@ export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
                 {t("support.call")} {phoneDisplay}
               </a>
 
-              <div className="mt-4 flex justify-end">
+              <div className="mt-4 flex justify-center">
                 <button className="btn btn-secondary text-sm" onClick={() => setShow(false)}>
                   {t("support.close")}
                 </button>

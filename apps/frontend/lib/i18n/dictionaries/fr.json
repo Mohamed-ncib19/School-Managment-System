@@ -58,9 +58,9 @@
     },
     "descriptionLabel": "Description du problème",
     "descriptionPlaceholder": "Que se passe-t-il ? Que tentiez-vous de faire ?…",
-    "contextHint": "Votre rapport comprend : école, date, type de problème.",
-    "sendEmail": "Envoyer par e-mail",
-    "sendWhatsApp": "Envoyer par WhatsApp",
+    "contextHint": "Cliquez sur E-mail ou WhatsApp pour envoyer le problème décrit ci-dessus.",
+    "sendEmail": "E-mail",
+    "sendWhatsApp": "WhatsApp",
     "call": "Appeler le support",
     "close": "Fermer"
   },
