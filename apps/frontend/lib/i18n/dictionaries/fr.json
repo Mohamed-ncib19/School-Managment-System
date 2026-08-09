@@ -45,17 +45,23 @@
     "cancel": "Annuler"
   },
   "support": {
-    "contact": "Contact support",
-    "contactAria": "Contacter le support technique",
-    "title": "Support technique",
-    "subtitle": "Écrivez votre problème, puis choisissez comment nous joindre.",
-    "messageLabel": "Votre message",
-    "messagePlaceholder": "Expliquez le problème en quelques mots…",
-    "contextHint": "Le nom de l'école et la date sont ajoutés automatiquement au message.",
-    "recipientHint": "Où ira le message :",
-    "email": "E-mail",
-    "whatsapp": "WhatsApp",
-    "phone": "Appel direct",
+    "contact": "Signaler un problème",
+    "contactAria": "Signaler un problème technique",
+    "title": "Rapport technique",
+    "subtitle": "Précisez le type de problème et décrivez-le — l'école et la date sont jointes automatiquement.",
+    "typeLabel": "Type de problème",
+    "type": {
+      "technique": "Technique",
+      "payment": "Paiement",
+      "attendance": "Présences / élèves",
+      "other": "Autre"
+    },
+    "descriptionLabel": "Description du problème",
+    "descriptionPlaceholder": "Que se passe-t-il ? Que tentiez-vous de faire ?…",
+    "contextHint": "Votre rapport comprend : école, date, type de problème.",
+    "sendEmail": "Envoyer par e-mail",
+    "sendWhatsApp": "Envoyer par WhatsApp",
+    "call": "Appeler le support",
     "close": "Fermer"
   },
   "nav": {

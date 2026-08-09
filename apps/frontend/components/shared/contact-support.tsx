@@ -2,14 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Headset, HelpCircle, Mail, MessageCircle, Phone, X } from "lucide-react";
+import { Headset, HelpCircle, Mail, MessageCircle, Phone, X, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { useSystemSettings } from "@/hooks/use-system-settings";
+import { cn } from "@/lib/utils/format";
 
 /** Fallback contacts used when a school did not configure their own. */
 const FALLBACK_EMAIL = "mohamedncib900@gmail.com";
 const FALLBACK_PHONE_DISPLAY = "+216 55 518 492";
 const FALLBACK_PHONE_LINK = "21655518492";
+
+type ReportType = "technique" | "payment" | "attendance" | "other";
+
+const REPORT_TYPES: ReportType[] = ["technique", "payment", "attendance", "other"];
 
 /** Digits only, for wa.me / tel: links. */
 function digitsOnly(value: string): string {
@@ -27,21 +32,22 @@ function nowLabel(): string {
 }
 
 /**
- * "Contact support" button in the sidebar footer, just above the signed-in
+ * "Signal un problème" button in the sidebar footer, just above the signed-in
  * admins account card.
  *
- * One text box, then pick a channel — every school runs its own installation,
- * so the targets (email / WhatsApp / phone) come from Settings > Contact
- * support for that school and fall back to the product defaults when empty.
- * The school name and the date are joined to the message automatically, so
- * nothing else has to be typed.
+ * A structured technical report: pick the type of issue, describe it, then
+ * send by e-mail or WhatsApp in one click. The school name, the date and the
+ * issue type are joined to the report automatically. Targets (email / WhatsApp /
+ * phone) come from Settings > Contact support per school and fall back to the
+ * product defaults when empty.
  */
 export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation();
   const { data: settings } = useSystemSettings();
   const schoolName = settings?.system_name ?? "Système de gestion scolaire";
   const [show, setShow] = useState(false);
-  const [message, setMessage] = useState("");
+  const [type, setType] = useState<ReportType>("technique");
+  const [description, setDescription] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const email = settings?.support_email?.trim() || FALLBACK_EMAIL;
@@ -63,17 +69,21 @@ export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [show]);
 
-  const subject = `Support — ${schoolName}`;
-  const messageBody = [
-    schoolName,
-    nowLabel(),
-    message.trim(),
+  const typeLabel = t(`support.type.${type}`);
+  const subject = `[Rapport technique] ${typeLabel} — ${schoolName}`;
+  const reportBody = [
+    `École : ${schoolName}`,
+    `Date : ${nowLabel()}`,
+    `Type de problème : ${typeLabel}`,
+    "",
+    description.trim(),
   ]
-    .filter(Boolean)
-    .join("\n");
+    .filter((line, i) => line !== "" || i === 4)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
 
-  const composeWhatsApp = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(messageBody)}`;
-  const composeEmail = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(messageBody)}`;
+  const composeEmail = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(reportBody)}`;
+  const composeWhatsApp = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`${subject}\n${reportBody}`)}`;
 
   return (
     <>
@@ -98,7 +108,6 @@ export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="support-title"
-            aria-describedby="support-body"
             onClick={() => setShow(false)}
           >
             <div
@@ -107,7 +116,7 @@ export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
             >
               <div className="flex items-start justify-between gap-3">
                 <h3 id="support-title" className="flex items-center gap-2 text-h4 font-bold text-text-primary">
-                  <HelpCircle size={20} className="text-gold" />
+                  <AlertTriangle size={20} className="text-gold" />
                   {t("support.title")}
                 </h3>
                 <button
@@ -118,56 +127,72 @@ export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
                   <X size={16} />
                 </button>
               </div>
-              <p id="support-body" className="mb-5 mt-1 text-sm text-text-secondary">
+              <p className="mb-5 mt-1 text-sm text-text-secondary">
                 {t("support.subtitle")}
               </p>
 
-              <label htmlFor="support-message" className="mb-1.5 block text-sm font-medium text-text-primary">
-                {t("support.messageLabel")}
+              <p className="mb-2 text-xs font-semibold text-text-primary">{t("support.typeLabel")}</p>
+              <div className="grid grid-cols-2 gap-2" role="group" aria-label={t("support.typeLabel")}>
+                {REPORT_TYPES.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setType(key)}
+                    className={cn(
+                      "rounded-btn border px-3 py-2 text-xs font-medium transition-colors text-left",
+                      type === key
+                        ? "border-gold bg-gold/15 text-gold"
+                        : "border-border bg-background text-text-secondary hover:border-gold/40 hover:text-text-primary",
+                    )}
+                  >
+                    {t(`support.type.${key}`)}
+                  </button>
+                ))}
+              </div>
+
+              <label htmlFor="support-description" className="mt-4 mb-1.5 block text-sm font-medium text-text-primary">
+                {t("support.descriptionLabel")}
               </label>
               <textarea
-                id="support-message"
+                id="support-description"
                 ref={textareaRef}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
                 rows={4}
                 maxLength={1000}
-                placeholder={t("support.messagePlaceholder")}
+                placeholder={t("support.descriptionPlaceholder")}
                 className="input w-full resize-none text-sm"
               />
               <p className="mt-1 text-[11px] text-text-secondary">{t("support.contextHint")}</p>
 
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <a
-                  href={composeWhatsApp}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-1.5 rounded-btn border border-border bg-background px-3 py-3.5 text-sm font-semibold text-text-primary transition-colors hover:border-green-500/60 hover:bg-green-50 dark:hover:bg-green-500/10"
-                >
-                  <MessageCircle size={20} className="text-green-500" />
-                  {t("support.whatsapp")}
-                </a>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <a
                   href={composeEmail}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-1.5 rounded-btn border border-border bg-background px-3 py-3.5 text-sm font-semibold text-text-primary transition-colors hover:border-sky-500/60 hover:bg-sky-500/10 dark:hover:bg-sky-500/10"
+                  className="flex items-center justify-center gap-2 rounded-btn border border-sky-500/50 bg-sky-50/60 dark:bg-sky-500/10 px-3 py-3 text-sm font-semibold text-text-primary transition-colors hover:bg-sky-100 dark:hover:bg-sky-500/20"
                 >
-                  <Mail size={20} className="text-sky-500" />
-                  {t("support.email")}
+                  <Mail size={16} className="text-sky-500" />
+                  {t("support.sendEmail")}
                 </a>
                 <a
-                  href={`tel:${phoneLink}`}
-                  className="flex flex-col items-center gap-1.5 rounded-btn border border-border bg-background px-3 py-3.5 text-sm font-semibold text-text-primary transition-colors hover:border-gold/60 hover:bg-gold/10"
+                  href={composeWhatsApp}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 rounded-btn border border-green-500/50 bg-green-50/60 dark:bg-green-500/10 px-3 py-3 text-sm font-semibold text-text-primary transition-colors hover:bg-green-100 dark:hover:bg-green-500/20"
                 >
-                  <Phone size={20} className="text-gold" />
-                  {t("support.phone")}
+                  <MessageCircle size={16} className="text-green-500" />
+                  {t("support.sendWhatsApp")}
                 </a>
               </div>
 
-              <p className="mt-3 text-center text-xs text-text-secondary">
-                {t("support.recipientHint")} {email}
-              </p>
+              <a
+                href={`tel:${phoneLink}`}
+                className="mt-3 flex items-center justify-center gap-1.5 text-xs font-medium text-text-secondary hover:text-gold transition-colors"
+              >
+                <Phone size={13} className="text-gold" />
+                {t("support.call")} {phoneDisplay}
+              </a>
 
               <div className="mt-4 flex justify-end">
                 <button className="btn btn-secondary text-sm" onClick={() => setShow(false)}>
