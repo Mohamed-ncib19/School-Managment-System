@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, User, Phone, Mail, CalendarDays, DollarSign, UserCheck, Trash2, Pencil } from "lucide-react";
+import { X, DollarSign, Trash2, Pencil, ChevronRight } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
@@ -14,6 +14,10 @@ import { normalizeTunisianPhone, stripTunisiaPrefix } from "@/lib/utils/phone";
 import type { StudentStatus } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
 import Link from "next/link";
+import AssignmentSlotsPicker, {
+  emptyAssignmentSlot,
+  type AssignmentSlot,
+} from "@/components/hierarchy/assignment-slots-picker";
 
 interface StudentDetailModalProps {
   studentId: string;
@@ -48,6 +52,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
     status: "active" as StudentStatus,
     group_id: "",
   });
+  const [assignmentSlots, setAssignmentSlots] = useState<AssignmentSlot[]>([emptyAssignmentSlot()]);
 
   useEffect(() => {
     if (student) {
@@ -61,6 +66,24 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
         status: student.status,
         group_id: student.group_id,
       });
+      // Seed one slot per enrollment (primary first); fall back to the legacy
+      // single group relation for payloads that predate the join table.
+      const enrollments = student.assignments?.length
+        ? student.assignments
+        : student.group
+          ? [{ group_id: student.group_id, group: student.group }]
+          : [];
+      setAssignmentSlots(
+        enrollments.length
+          ? enrollments.map((a: any) => ({
+              levelId: a.group?.professor?.field?.level?.id ?? "",
+              fieldId: a.group?.professor?.field?.id ?? "",
+              professorId: a.group?.professor?.id ?? "",
+              groupId: a.group?.id ?? "",
+              fee: a.fee !== undefined ? String(a.fee) : String(student.monthly_fee),
+            }))
+          : [emptyAssignmentSlot(String(student.monthly_fee))],
+      );
     }
   }, [student]);
 
@@ -134,14 +157,33 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
       toast.error(t("students.phoneInvalidTitle", "Invalid phone number"), t("students.parentPhoneInvalid", "Parent phone must be 8 digits, e.g. +216 22 123 456"));
       return;
     }
+    const complete = assignmentSlots.filter((s) => !!(s.levelId && s.fieldId && s.professorId && s.groupId));
+    if (assignmentSlots.some((s) => !(s.levelId && s.fieldId && s.professorId && s.groupId))) {
+      toast.error(
+        t("students.assignmentInvalidTitle", "Incomplete assignment"),
+        t("students.assignmentInvalid", "Finish each assignment: level, field, professor and group."),
+      );
+      return;
+    }
+    if (complete.some((s) => !(parseFloat(s.fee) > 0))) {
+      toast.error(
+        t("students.assignmentFeeInvalidTitle", "Missing fee"),
+        t("students.assignmentFeeInvalid", "Every assignment needs a monthly fee."),
+      );
+      return;
+    }
     updateMutation.mutate({
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
       phone,
       parent_phone: parentPhone,
       email: form.email.trim() || null,
-      monthly_fee: parseFloat(form.monthly_fee) || 0,
+      enrollment_date: student?.enrollment_date,
+      // The legacy single fee follows the primary enrollment for roll-ups;
+      // billing itself reads the per-assignment fee.
+      monthly_fee: parseFloat(complete[0].fee),
       status: form.status,
+      assignments: complete.map((s) => ({ group_id: s.groupId, fee: parseFloat(s.fee) })),
     });
   };
 
@@ -154,8 +196,9 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-surface rounded-card shadow-hover border border-border w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-h4 font-bold text-text-primary">
+          <h2 className="text-h4 font-bold text-text-primary flex items-center gap-3">
             {student ? `${student.first_name} ${student.last_name}` : t("studentDetail.loading")}
+            {student && <StatusBadge status={student.status} />}
           </h2>
           <div className="flex items-center gap-2">
             {student && isEditing ? (
@@ -190,7 +233,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-5">
           {isLoading ? (
             <div className="space-y-4">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -202,159 +245,107 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
           ) : !student ? (
             <p className="text-text-secondary text-center py-8">{t("studentDetail.notFound")}</p>
           ) : (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="xl:col-span-2 space-y-6">
-                  <div className="card">
-                    <h3 className="text-h4 font-bold text-text-primary mb-4 flex items-center gap-2">
-                      <User size={18} className="text-primary" />
-                      {t("studentDetail.personalInfo")}
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.firstName")}</label>
-                        {isEditing ? (
-                          <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="input w-full" />
-                        ) : (
-                          <p className="text-sm text-text-primary font-medium">{student.first_name}</p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.lastName")}</label>
-                        {isEditing ? (
-                          <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="input w-full" />
-                        ) : (
-                          <p className="text-sm text-text-primary font-medium">{student.last_name}</p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("students.phone")}</label>
-                        {isEditing ? (
-                          <PhoneInput value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
-                        ) : (
-                          <p className="text-sm text-text-primary font-medium flex items-center gap-1.5">
-                            <Phone size={13} className="text-text-secondary" /> {student.phone}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.parentPhone")}</label>
-                        {isEditing ? (
-                          <PhoneInput value={form.parent_phone} onChange={(v) => setForm({ ...form, parent_phone: v })} />
-                        ) : (
-                          <p className="text-sm text-text-primary font-medium">{student.parent_phone ?? "—"}</p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.email")}</label>
-                        {isEditing ? (
-                          <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="input w-full" />
-                        ) : (
-                          <p className="text-sm text-text-primary font-medium flex items-center gap-1.5">
-                            <Mail size={13} className="text-text-secondary" /> {student.email ?? "—"}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.monthlyFee")}</label>
-                        {isEditing ? (
-                          <input type="number" value={form.monthly_fee} onChange={(e) => setForm({ ...form, monthly_fee: e.target.value })} className="input w-full" />
-                        ) : (
-                          <p className="text-sm text-text-primary font-medium flex items-center gap-1.5">
-                            <DollarSign size={13} className="text-text-secondary" /> {formatCurrency(student.monthly_fee)}
-                          </p>
-                        )}
-                      </div>
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+                {isEditing && (
+                  <>
+                    <div>
+                      <p className="text-xs text-text-secondary mb-1">{t("studentDetail.firstName")}</p>
+                      <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="input w-full" />
                     </div>
-                  </div>
-
-                  <div className="card">
-                    <h3 className="text-h4 font-bold text-text-primary mb-4 flex items-center gap-2">
-                      <CalendarDays size={18} className="text-primary" />
-                      {t("studentDetail.enrollmentStatus")}
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.enrollmentDate")}</label>
-                        <p className="text-sm text-text-primary font-medium">{formatDate(student.enrollment_date)}</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-text-secondary mb-1">{t("studentDetail.status")}</label>
-                        {isEditing ? (
-                          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as StudentStatus })} className="input w-full">
-                            <option value="active">{t("students.active")}</option>
-                            <option value="paused">{t("students.paused")}</option>
-                            <option value="withdrawn">{t("students.withdrawn")}</option>
-                          </select>
-                        ) : (
-                          <StatusBadge status={student.status} />
-                        )}
-                      </div>
+                    <div>
+                      <p className="text-xs text-text-secondary mb-1">{t("studentDetail.lastName")}</p>
+                      <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="input w-full" />
                     </div>
-                  </div>
+                  </>
+                )}
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("students.phone")}</p>
+                  {isEditing ? (
+                    <PhoneInput value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+                  ) : (
+                    <p className="text-sm font-medium text-text-primary">{student.phone}</p>
+                  )}
                 </div>
-
-                <div className="space-y-6">
-                  <div className="card">
-                    <h3 className="text-h4 font-bold text-text-primary mb-4 flex items-center gap-2">
-                      <UserCheck size={18} className="text-primary" />
-                      {t("studentDetail.currentAssignment")}
-                    </h3>
-                    <div className="space-y-4 text-sm">
-                      {(student.assignments?.length
-                        ? student.assignments
-                        : student.group
-                          ? [{ id: "primary", group: student.group }]
-                          : []
-                      ).map((a: any, i: number) => {
-                        const field = a.group?.professor?.field;
-                        const level = field?.level;
-                        const rows = [
-                          { label: t("studentDetail.level"), value: level?.name },
-                          { label: t("studentDetail.field"), value: field?.name },
-                          { label: t("studentDetail.professor"), value: a.group?.professor?.full_name },
-                          { label: t("studentDetail.group"), value: a.group?.name },
-                          {
-                            label: t("studentDetail.monthlyFee"),
-                            value: a.fee !== undefined
-                              ? formatCurrency(Number(a.fee))
-                              : formatCurrency(Number(student.monthly_fee)),
-                          },
-                        ];
-                        return (
-                          <div key={a.id ?? "primary"} className={i > 0 ? "pt-3 border-t border-border" : ""}>
-                            {i > 0 && (
-                              <p className="text-xs font-semibold text-text-secondary mb-2">
-                                {t("students.assignmentExtra", "Additional")} #{i + 1}
-                              </p>
-                            )}
-                            <div className="space-y-3">
-                              {rows.map((row) => (
-                                <div key={row.label}>
-                                  <p className="text-xs text-text-secondary">{row.label}</p>
-                                  <p className="font-medium text-text-primary">{row.value ?? "—"}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="card">
-                    <h3 className="text-h4 font-bold text-text-primary mb-2">{t("studentDetail.quickActions")}</h3>
-                    <div className="space-y-2">
-                      <Link href={`/students/${studentId}/payments`} className="btn btn-primary text-xs w-full flex items-center justify-center gap-2">
-                        <DollarSign size={14} /> {t("studentDetail.viewPayments")}
-                      </Link>
-                      <button onClick={() => setDeleteId(studentId)} className="btn btn-danger text-xs w-full flex items-center justify-center gap-2">
-                        <Trash2 size={14} /> {t("studentDetail.deleteStudent")}
-                      </button>
-                    </div>
-                  </div>
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.parentPhone")}</p>
+                  {isEditing ? (
+                    <PhoneInput value={form.parent_phone} onChange={(v) => setForm({ ...form, parent_phone: v })} />
+                  ) : (
+                    <p className="text-sm font-medium text-text-primary">{student.parent_phone ?? "—"}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.email")}</p>
+                  {isEditing ? (
+                    <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="input w-full" />
+                  ) : (
+                    <p className="text-sm font-medium text-text-primary">{student.email ?? "—"}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.monthlyFee")}</p>
+                  {isEditing ? (
+                    <input type="number" value={form.monthly_fee} onChange={(e) => setForm({ ...form, monthly_fee: e.target.value })} className="input w-full" />
+                  ) : (
+                    <p className="text-sm font-medium text-text-primary">{formatCurrency(student.monthly_fee)}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.enrollmentDate")}</p>
+                  <p className="text-sm font-medium text-text-primary">{formatDate(student.enrollment_date)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.status")}</p>
+                  {isEditing ? (
+                    <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as StudentStatus })} className="input w-full">
+                      <option value="active">{t("students.active")}</option>
+                      <option value="paused">{t("students.paused")}</option>
+                      <option value="withdrawn">{t("students.withdrawn")}</option>
+                    </select>
+                  ) : (
+                    <StatusBadge status={student.status} />
+                  )}
                 </div>
               </div>
+
+              {isEditing ? (
+                <div className="border-t border-border pt-4">
+                  <AssignmentSlotsPicker slots={assignmentSlots} onChange={setAssignmentSlots} />
+                </div>
+              ) : (
+                <div className="border-t border-border pt-4">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2.5">
+                    {t("studentDetail.currentAssignment")}
+                  </p>
+                  <div className="space-y-2">
+                    {(student.assignments?.length
+                      ? student.assignments
+                      : student.group
+                        ? [{ id: "primary", group: student.group }]
+                        : []
+                    ).map((a: any) => (
+                      <div key={a.id ?? "primary"} className="flex items-center gap-2 text-xs text-text-secondary flex-wrap">
+                        <AssignmentPath
+                          group={a.group}
+                          fee={a.fee !== undefined ? formatCurrency(Number(a.fee)) : formatCurrency(Number(student.monthly_fee))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!isEditing && (
+                <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+                  <Link href={`/students/${studentId}/payments`} className="btn btn-primary text-xs px-4 flex items-center justify-center gap-2">
+                    <DollarSign size={14} /> {t("studentDetail.viewPayments")}
+                  </Link>
+                  <button onClick={() => setDeleteId(studentId)} className="btn btn-danger text-xs px-4 flex items-center justify-center gap-2">
+                    <Trash2 size={14} /> {t("studentDetail.deleteStudent")}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -371,5 +362,48 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
         }}
       />
     </div>
+  );
+}
+
+/**
+ * The same compact hierarchy breadcrumb as the students table: level › field ›
+ * professor › group, with the group name navigating to its hierarchy page.
+ */
+function AssignmentPath({ group, fee }: { group?: any; fee?: string }) {
+  const levelName = group?.professor?.field?.level?.name;
+  const fieldName = group?.professor?.field?.name;
+  const professorName = group?.professor?.full_name;
+  const groupName = group?.name;
+  const groupId = group?.id;
+
+  const crumbs: Array<{ key: string; node: React.ReactNode }> = [];
+  if (levelName) crumbs.push({ key: "level", node: <span className="font-medium text-text-primary">{levelName}</span> });
+  if (fieldName) crumbs.push({ key: "field", node: <span>{fieldName}</span> });
+  if (professorName) crumbs.push({ key: "professor", node: <span>{professorName}</span> });
+  if (groupName && groupId) {
+    crumbs.push({
+      key: "group",
+      node: (
+        <Link href={`/hierarchy/group/${groupId}`} className="font-medium text-primary hover:underline">
+          {groupName}
+        </Link>
+      ),
+    });
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-text-secondary flex-wrap">
+      {crumbs.length === 0 ? (
+        <span className="text-text-secondary">—</span>
+      ) : (
+        crumbs.map((crumb, i) => (
+          <span key={crumb.key} className="inline-flex items-center gap-1">
+            {i > 0 && <ChevronRight size={10} className="text-text-secondary/50 shrink-0" />}
+            {crumb.node}
+          </span>
+        ))
+      )}
+      {fee && <span className="text-text-secondary/70">· {fee}</span>}
+    </span>
   );
 }

@@ -523,7 +523,7 @@ export class PaymentService {
         },
       });
 
-      const updated = await this.reconcile(tx, input.paymentId);
+      const updated = await this.reconcile(tx, input.paymentId, input.type);
       return { transaction, updated };
     });
 
@@ -563,8 +563,12 @@ export class PaymentService {
    *
    * The only place either column is set. Callers pass the transaction client so
    * this runs inside the write that made it necessary.
+   *
+   * A refund that nets the ledger back to zero cancels the invoice: its money
+   * is gone, so it must not show up as still owed (`not_paid`) anywhere in the
+   * financial section — every figure there already excludes `cancelled`.
    */
-  private async reconcile(tx: Prisma.TransactionClient, paymentId: string) {
+  private async reconcile(tx: Prisma.TransactionClient, paymentId: string, movementType?: TransactionType) {
     const [payment, aggregate, settings] = await Promise.all([
       tx.student_payments.findUniqueOrThrow({ where: { id: paymentId } }),
       tx.payment_transactions.aggregate({ where: { payment_id: paymentId }, _sum: { amount: true } }),
@@ -577,7 +581,9 @@ export class PaymentService {
     const status =
       payment.status === "cancelled"
         ? "cancelled"
-        : this.deriveStatus(collected, due, payment.due_date, settings.due_soon_days);
+        : movementType === "refund" && collected.lessThanOrEqualTo(0)
+          ? "cancelled"
+          : this.deriveStatus(collected, due, payment.due_date, settings.due_soon_days);
 
     // The last payment's timestamp is what a receipt and the "paid on" column
     // should show; it is null again the moment the ledger nets back to nothing.
@@ -668,17 +674,16 @@ export class PaymentService {
     return this.findOne(updated.id);
   }
 
-  /** Puts a cancelled invoice back into circulation, recomputing its status. */
+  /** Puts a cancelled invoice back into circulation as unpaid. */
   async reopen(paymentId: string, userId: string) {
     const payment = await this.requirePayment(paymentId);
     if (payment.status !== "cancelled") {
       throw new BadRequestException("Only a cancelled invoice can be reopened");
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      // Clear the cancellation first so `reconcile` derives a live status.
-      await tx.student_payments.update({ where: { id: paymentId }, data: { status: "not_paid" } });
-      await this.reconcile(tx, paymentId);
+    await this.prisma.student_payments.update({
+      where: { id: paymentId },
+      data: { status: "not_paid" },
     });
 
     await this.audit.record({
@@ -698,41 +703,17 @@ export class PaymentService {
   /**
    * Admin override of an invoice's status.
    *
-   * The pending labels (`not_paid` / `due_soon`) can always be set; the
-   * money-bearing ones are checked against the ledger so the status can never
-   * contradict the invoice's own history — `paid` requires the full amount
-   * collected, `partially_paid` requires some of it, and `cancelled` requires
-   * none of it. Every change is audited with the caller and an optional reason.
+   * Any status can be set — the ledger checks are intentionally waived so the
+   * override never bounces on the invoice's own history (marking a zero-cash
+   * invoice paid is the front desk's call, and the revenue engine reads
+   * transactions, not this badge). Every change is audited with the caller and
+   * an optional reason.
    */
   async updateStatus(paymentId: string, userId: string, dto: UpdatePaymentStatusDto) {
     const payment = await this.requirePayment(paymentId);
     const target = dto.status;
 
     if (payment.status === target) return this.findOne(paymentId);
-
-    const collected = money(payment.paid_amount ?? 0);
-    const due = money(payment.amount_due);
-
-    if ((target === "not_paid" || target === "due_soon") && collected.greaterThan(0)) {
-      throw new BadRequestException(
-        "Money has been collected against this invoice — its status is derived from the ledger",
-      );
-    }
-    if (target === "paid" && collected.lessThan(due)) {
-      throw new BadRequestException(
-        `Marking this invoice paid requires ${toAmount(due.minus(collected))} to be collected — record the payment instead`,
-      );
-    }
-    if (target === "partially_paid" && (collected.lessThanOrEqualTo(0) || collected.greaterThanOrEqualTo(due))) {
-      throw new BadRequestException(
-        "partially_paid is derived from the ledger — record a partial payment instead",
-      );
-    }
-    if (target === "cancelled" && collected.greaterThan(0)) {
-      throw new BadRequestException(
-        "This invoice has money against it. Refund the collected amount before cancelling.",
-      );
-    }
 
     const updated = await this.prisma.student_payments.update({
       where: { id: paymentId },

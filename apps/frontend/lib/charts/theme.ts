@@ -1,4 +1,5 @@
 import type { PaymentStatus } from "@/types";
+import { getPaymentStatusColorLight } from "@/lib/utils/format";
 
 /**
  * Chart colours, by the job they do.
@@ -61,19 +62,9 @@ export const STATUS_COLOR: Record<string, string> = {
   cancelled: "var(--chart-cancelled)",
 };
 
-/** Tinted badge classes per status — the table and chart agree by construction. */
+/** Tinted badge classes per status — single colour source lives in `format.ts`. */
 export function statusClasses(status: PaymentStatus | string): string {
-  switch (status) {
-    case "paid":
-      return "bg-success-soft text-success-strong border-success/30";
-    case "partially_paid":
-    case "due_soon":
-      return "bg-gold-50 text-gold-700 border-gold-200";
-    case "cancelled":
-      return "bg-neutral-soft text-neutral-strong border-border line-through";
-    default:
-      return "bg-neutral-soft text-neutral-strong border-border";
-  }
+  return getPaymentStatusColorLight(status);
 }
 
 /** Payroll states, reusing the same vocabulary. */

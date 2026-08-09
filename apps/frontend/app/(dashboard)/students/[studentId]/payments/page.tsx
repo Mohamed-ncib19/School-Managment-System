@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, User, CircleDollarSign, Printer, Plus, TrendingUp, Clock, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
@@ -81,25 +81,29 @@ export default function StudentPaymentsPage() {
 
   /** The groups this student is actually billed for, scoped by the level/field filters. */
   const groupOptions = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string; color: string | null }>();
-    const add = (id: string, name: string, color: string | null) => {
+    const seen = new Map<string, { id: string; label: string; color: string | null }>();
+    const add = (id: string, name: string, color: string | null, chain: string) => {
       if (!id || seen.has(id)) return;
-      seen.set(id, { id, name, color });
+      seen.set(id, { id, label: chain ? `${name} — ${chain}` : name, color });
     };
     (student?.assignments ?? []).forEach((a) => {
       const g = a.group;
       if (!g) return;
       if (fieldId && g.professor?.field?.id !== fieldId) return;
       if (levelId && g.professor?.field?.level?.id !== levelId) return;
-      add(g.id, g.name, g.color);
+      const chain = [g.professor?.field?.name, g.professor?.full_name].filter(Boolean).join(" › ");
+      add(g.id, g.name, g.color, chain);
     });
     (payments ?? []).forEach((p) => {
       if (fieldId && p.context.field?.id !== fieldId) return;
       if (levelId && p.context.level?.id !== levelId) return;
-      if (p.context.group) add(p.context.group.id, p.context.group.name, p.context.group.color);
+      if (p.context.group) {
+        const chain = [p.context.field?.name, p.context.professor?.name].filter(Boolean).join(" › ");
+        add(p.context.group.id, p.context.group.name, p.context.group.color, chain);
+      }
     });
-    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [student, payments, fieldId]);
+    return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [student, payments, fieldId, levelId]);
 
   const filteredPayments = useMemo(() => {
     if (!payments) return payments;
@@ -112,6 +116,22 @@ export default function StudentPaymentsPage() {
   }, [payments, levelId, fieldId, groupId]);
 
   const hasFilters = !!levelId || !!fieldId || !!groupId;
+
+  // A student in several groups gets several invoices per month; the table is
+  // grouped by period with a divider row per month so the two bills don't blur
+  // into one another.
+  const multiGroup = (student?.assignments?.length ?? 0) > 1;
+
+  const groupedByPeriod = useMemo(() => {
+    if (!filteredPayments || !multiGroup) return null;
+    const map = new Map<string, StudentPayment[]>();
+    for (const p of filteredPayments) {
+      const list = map.get(p.period);
+      if (list) list.push(p);
+      else map.set(p.period, [p]);
+    }
+    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [filteredPayments, multiGroup]);
 
   // The modal mutates through the financial cache, so the row it is showing has
   // to be re-read from the refreshed list or it keeps a stale balance.
@@ -139,6 +159,63 @@ export default function StudentPaymentsPage() {
     return { totalDue, totalPaid, overdue, dueSoon, pending, paid };
   }, [filteredPayments]);
 
+  const paymentRow = (p: StudentPayment) => (
+    <tr key={p.id} className="hover:bg-background/50 transition-colors">
+      <td className="px-4 py-3 font-medium">{formatPeriod(p.period)}</td>
+      <td className="px-4 py-3 text-text-secondary">{p.context.level?.name ?? "—"}</td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.field?.name ?? ""}>
+          {p.context.field?.color && (
+            <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.field.color }} />
+          )}
+          {p.context.field?.name ?? t("studentPayments.dash")}
+        </span>
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.professor?.name ?? ""}>
+          {p.context.professor?.color && (
+            <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.professor.color }} />
+          )}
+          {p.context.professor?.name ?? t("studentPayments.dash")}
+        </span>
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.group?.name ?? ""}>
+          {p.context.group?.color && (
+            <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.group.color }} />
+          )}
+          {p.context.group?.name ?? t("studentPayments.dash")}
+        </span>
+      </td>
+      <td className="px-4 py-3 text-text-secondary">{formatDate(p.due_date)}</td>
+      <td className="px-4 py-3">{formatCurrency(p.amount_due)}</td>
+      <td className="px-4 py-3">{p.paid_amount ? <span className="text-success-strong font-medium">{formatCurrency(p.paid_amount)}</span> : <span className="text-text-secondary">—</span>}</td>
+      <td className="px-4 py-3">
+        {/* Status is derived from the ledger now — it is reported,
+            not set. Changing it means recording money. */}
+        <StatusBadge status={p.status} />
+      </td>
+      <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? t("studentPayments.dash")}</td>
+      <td className="px-4 py-3 text-right">
+        <div className="flex items-center justify-end gap-2">
+          {p.status === "paid" && student && (
+            <button
+              type="button"
+              onClick={() => openReceipt("payment", p.id).catch(() => {})}
+              aria-label={t("financial.printReceipt", "Print receipt")}
+              className="btn btn-secondary text-xs"
+            >
+              <Printer size={13} aria-hidden="true" />
+            </button>
+          )}
+          <button onClick={() => setSelectedPayment(p)} className="btn btn-secondary text-xs">
+            {t("financial.manage", "Manage")}
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -156,16 +233,28 @@ export default function StudentPaymentsPage() {
               {student.assignments && student.assignments.length > 0 && (
                 <span className="flex items-center gap-1.5 flex-wrap">
                   <CircleDollarSign size={12} />
-                  {student.assignments.map((a) => (
-                    <span
-                      key={a.id}
-                      className="inline-flex items-center gap-1 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs"
-                      title={a.group?.professor?.field?.name ?? a.group?.name}
-                    >
-                      <span className="font-medium text-text-primary">{a.group?.name}</span>
-                      <span className="text-text-secondary">{formatCurrency(Number(a.fee))}/mo</span>
-                    </span>
-                  ))}
+                  {student.assignments.map((a) => {
+                    // A multi-group student gets one chip per enrollment, each
+                    // labelled with its own chain so two groups sharing a name
+                    // stay distinguishable.
+                    const chain = [
+                      a.group?.professor?.field?.level?.name,
+                      a.group?.professor?.field?.name,
+                      a.group?.professor?.full_name,
+                    ]
+                      .filter(Boolean)
+                      .join(" › ");
+                    return (
+                      <span
+                        key={a.id}
+                        className="inline-flex items-center gap-1 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs"
+                      >
+                        <span className="font-medium text-text-primary">{a.group?.name}</span>
+                        {chain && <span className="text-text-secondary">{chain}</span>}
+                        <span className="text-text-secondary">{formatCurrency(Number(a.fee))}/mo</span>
+                      </span>
+                    );
+                  })}
                 </span>
               )}
             </div>
@@ -235,7 +324,7 @@ export default function StudentPaymentsPage() {
             className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
           >
             <option value="">{t("students.allGroups", "All groups")}</option>
-            {groupOptions.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            {groupOptions.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
           </select>
           {hasFilters && (
             <button type="button" onClick={clearFilters} className="btn btn-secondary text-xs">
@@ -288,6 +377,7 @@ export default function StudentPaymentsPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.period")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.levels", "Level")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.field", "Field")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.professor", "Professor")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("payments.group", "Group")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.dueDate")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("studentPayments.amountDue")}</th>
@@ -300,7 +390,7 @@ export default function StudentPaymentsPage() {
             <tbody>
               {Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i} className="border-b border-border last:border-b-0">
-                  {Array.from({ length: 10 }).map((_, j) => (
+                  {Array.from({ length: 11 }).map((_, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 w-full max-w-24 rounded bg-neutral-soft animate-pulse" />
                     </td>
@@ -320,6 +410,7 @@ export default function StudentPaymentsPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.period")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("nav.levels", "Level")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.field", "Field")}</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.professor", "Professor")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("payments.group", "Group")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.dueDate")}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">{t("studentPayments.amountDue")}</th>
@@ -330,54 +421,29 @@ export default function StudentPaymentsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filteredPayments?.map((p) => (
-                <tr key={p.id} className="hover:bg-background/50 transition-colors">
-                  <td className="px-4 py-3 font-medium">{formatPeriod(p.period)}</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.context.level?.name ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.field?.name ?? ""}>
-                      {p.context.field?.color && (
-                        <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.field.color }} />
-                      )}
-                      {p.context.field?.name ?? t("studentPayments.dash")}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface-2 px-2 py-0.5 text-xs font-medium text-text-primary" title={p.context.group?.name ?? ""}>
-                      {p.context.group?.color && (
-                        <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: p.context.group.color }} />
-                      )}
-                      {p.context.group?.name ?? t("studentPayments.dash")}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-text-secondary">{formatDate(p.due_date)}</td>
-                  <td className="px-4 py-3">{formatCurrency(p.amount_due)}</td>
-                  <td className="px-4 py-3">{p.paid_amount ? <span className="text-success-strong font-medium">{formatCurrency(p.paid_amount)}</span> : <span className="text-text-secondary">—</span>}</td>
-                  <td className="px-4 py-3">
-                    {/* Status is derived from the ledger now — it is reported,
-                        not set. Changing it means recording money. */}
-                    <StatusBadge status={p.status} />
-                  </td>
-                  <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? t("studentPayments.dash")}</td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {p.status === "paid" && student && (
-                        <button
-                          type="button"
-                          onClick={() => openReceipt("payment", p.id).catch(() => {})}
-                          aria-label={t("financial.printReceipt", "Print receipt")}
-                          className="btn btn-secondary text-xs"
-                        >
-                          <Printer size={13} aria-hidden="true" />
-                        </button>
-                      )}
-                      <button onClick={() => setSelectedPayment(p)} className="btn btn-secondary text-xs">
-                        {t("financial.manage", "Manage")}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {groupedByPeriod ? (
+                groupedByPeriod.map(([period, list]) => {
+                  const monthTotal = list.reduce((sum, p) => sum + Number(p.amount_due), 0);
+                  return (
+                    <Fragment key={period}>
+                      <tr className="bg-background">
+                        <td colSpan={11} className="px-4 py-2 text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                          <span className="inline-flex items-center gap-2">
+                            {formatPeriod(period)}
+                            <span className="text-text-tertiary">·</span>
+                            {list.length} {t("studentPayments.invoices", "invoices")}
+                            <span className="text-text-tertiary">·</span>
+                            {formatCurrency(monthTotal)}
+                          </span>
+                        </td>
+                      </tr>
+                      {list.map(paymentRow)}
+                    </Fragment>
+                  );
+                })
+              ) : (
+                filteredPayments?.map(paymentRow)
+              )}
             </tbody>
           </table>
         </div>

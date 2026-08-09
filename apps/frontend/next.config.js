@@ -7,6 +7,11 @@ const nextConfig = {
       { source: "/api/:path*", destination: `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}/:path*` },
     ];
   },
+  async redirects() {
+    return [
+      { source: "/students", destination: "/hierarchy/student", permanent: true },
+    ];
+  },
 };
 
 module.exports = nextConfig;

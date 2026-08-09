@@ -221,6 +221,7 @@
     "statuses": {
       "not_paid": "Non payé",
       "due_soon": "Dû bientôt",
+      "overdue": "En retard",
       "partially_paid": "Partiellement payé",
       "paid": "Payé",
       "cancelled": "Annulé"
@@ -572,13 +573,15 @@
     "dash": "—",
     "period": "Période",
     "field": "Matière",
+    "professor": "Professeur",
     "dueDate": "Date d'échéance",
     "amountDue": "Montant dû",
     "paidAmount": "Montant payé",
     "status": "Statut",
     "method": "Méthode",
     "noRecords": "Aucun enregistrement de paiement pour cet étudiant pour le moment.",
-    "paid": "Payé"
+    "paid": "Payé",
+    "invoices": "factures"
   },
   "fieldsHierarchy": {
     "breadcrumbFields": "Spécialités",
@@ -841,7 +844,7 @@
     },
     "title": "Gestion financière",
     "subtitle": "Paiements, paie et revenus de l'académie",
-    "statusHint": "Payé, partiellement payé et annulé suivent l'argent encaissé sur cette facture et ne peuvent être définis que si le registre est d'accord.",
+    "statusHint": "Choisissez n'importe quel statut : il sera appliqué lorsque vous cliquerez sur Confirmer, et chaque modification est consignée dans le journal d'audit.",
     "statusReasonPlaceholder": "Motif (optionnel)",
     "nav": {
       "dashboard": "Tableau de bord",
@@ -1174,6 +1177,7 @@
     "sortNameDesc": "Nom Z–A",
     "sortColor": "Par couleur",
     "noSearchResults": "Aucun résultat pour cette recherche.",
+    "clearFilters": "Effacer les filtres",
     "activeConfig": "Configuration Active",
     "savedConfigs": "Configurations Enregistrées",
     "name": "Nom",

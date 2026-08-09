@@ -109,22 +109,14 @@ export class CancelPaymentDto {
   reason!: string;
 }
 
-/** The manual statuses an admin can set. `overdue` is never set — it is not a state. */
-export const MANUAL_PAYMENT_STATUSES = [
-  "not_paid",
-  "due_soon",
-  "paid",
-  "partially_paid",
-  "cancelled",
-] as const;
+/** The statuses an admin can set on an invoice — every persisted status is allowed. */
+export const MANUAL_PAYMENT_STATUSES = PAYMENT_STATUSES;
 
 /**
  * Admin override of an invoice's status.
  *
- * Money-bearing states (`paid`, `partially_paid`, `cancelled`) are validated
- * against the ledger in the service so an invoice never shows a status its own
- * history cannot support — marking it paid without the cash would contradict
- * the revenue engine, which only reads transactions.
+ * Any status can be set as an override regardless of the ledger; the change is
+ * audited with the caller and an optional reason.
  */
 export class UpdatePaymentStatusDto {
   @ApiProperty({ enum: MANUAL_PAYMENT_STATUSES })

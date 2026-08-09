@@ -18,7 +18,7 @@ import type { StudentPayment } from "@/types";
 
 type Mode = "pay" | "refund" | "correct" | "cancel";
 
-const MANUAL_STATUSES = ["not_paid", "due_soon", "paid", "partially_paid", "cancelled"] as const;
+const MANUAL_STATUSES = ["not_paid", "due_soon", "overdue", "paid", "partially_paid", "cancelled"] as const;
 
 interface PaymentActionsModalProps {
   payment: StudentPayment;
@@ -69,7 +69,7 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
   }, [isOpen, payment.id, outstanding, isCancelled]);
 
   const pending =
-    record.isPending || refund.isPending || correct.isPending || cancel.isPending || reopen.isPending;
+    record.isPending || refund.isPending || correct.isPending || cancel.isPending || reopen.isPending || statusUpdate.isPending;
 
   if (!isOpen) return null;
 
@@ -85,17 +85,32 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
   const submit = async () => {
     setError(null);
     try {
-      if (mode === "pay") {
-        await record.mutateAsync({ id: payment.id, amount: amount || undefined, notes: notes || undefined });
-      } else if (mode === "refund") {
-        if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
-        await refund.mutateAsync({ id: payment.id, amount, reason, notes: notes || undefined });
-      } else if (mode === "correct") {
-        if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
-        await correct.mutateAsync({ id: payment.id, amount, reason, notes: notes || undefined });
-      } else if (mode === "cancel") {
-        if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
-        await cancel.mutateAsync({ id: payment.id, reason });
+      const statusChanged = overrideStatus !== payment.status;
+      // A manual status change is the whole intent — skip the money action so
+      // Confirm cannot take a payment (or re-take a settled one) nobody asked
+      // for. The "record payment" mode only runs on its own.
+      if (!statusChanged) {
+        if (mode === "pay") {
+          await record.mutateAsync({ id: payment.id, amount: amount || undefined, notes: notes || undefined });
+        } else if (mode === "refund") {
+          if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
+          await refund.mutateAsync({ id: payment.id, amount, reason, notes: notes || undefined });
+        } else if (mode === "correct") {
+          if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
+          await correct.mutateAsync({ id: payment.id, amount, reason, notes: notes || undefined });
+        } else if (mode === "cancel") {
+          if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
+          await cancel.mutateAsync({ id: payment.id, reason });
+        }
+      }
+      // The manual status selection is applied by the same Confirm button —
+      // there is no separate "Apply" step for it.
+      if (statusChanged) {
+        await statusUpdate.mutateAsync({
+          id: payment.id,
+          status: overrideStatus,
+          reason: overrideReason.trim() || undefined,
+        });
       }
       onClose();
     } catch (err) {
@@ -118,20 +133,6 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
       await openReceipt("payment", payment.id);
     } catch {
       setError(t("financial.popupBlocked", "Allow pop-ups to print the receipt."));
-    }
-  };
-
-  const handleStatusUpdate = async () => {
-    setError(null);
-    try {
-      await statusUpdate.mutateAsync({
-        id: payment.id,
-        status: overrideStatus,
-        reason: overrideReason.trim() || undefined,
-      });
-      onClose();
-    } catch (err) {
-      fail(err);
     }
   };
 
@@ -201,7 +202,9 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
               <div className="rounded-table border border-border overflow-hidden">
                 <table className="min-w-full text-xs">
                   <tbody className="divide-y divide-border">
-                    {payment.transactions.map((transaction) => (
+                    {[...payment.transactions]
+                      .sort((a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime())
+                      .map((transaction) => (
                       <tr key={transaction.id}>
                         <td className="px-3 py-2 text-text-secondary">{formatDate(transaction.paid_at)}</td>
                         <td className="px-3 py-2">
@@ -231,51 +234,43 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
             </div>
           )}
 
-          <div className="rounded-btn border border-border bg-background p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Tag size={13} className="text-text-secondary" aria-hidden="true" />
-              <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                {t("financial.manualStatus", "Manual status")}
-              </h4>
+          {!isCancelled && (
+            <div className="rounded-btn border border-border bg-background p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Tag size={13} className="text-text-secondary" aria-hidden="true" />
+                <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                  {t("financial.manualStatus", "Manual status")}
+                </h4>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <select
+                  aria-label={t("payments.status", "Status")}
+                  value={overrideStatus}
+                  onChange={(e) => setOverrideStatus(e.target.value)}
+                  className="input w-full text-xs"
+                >
+                  {MANUAL_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {t(`payments.statuses.${status}`, status.replace(/_/g, " "))}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder={t("financial.statusReasonPlaceholder", "Reason (optional)")}
+                  className="input w-full text-xs"
+                />
+              </div>
+              <p className="text-xs text-text-secondary">
+                {t(
+                  "financial.statusHint",
+                  "Pick any status; the selected one is applied when you click Confirm and every change is recorded in the audit log.",
+                )}
+              </p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <select
-                aria-label={t("payments.status", "Status")}
-                value={overrideStatus}
-                onChange={(e) => setOverrideStatus(e.target.value)}
-                className="input w-full text-xs"
-              >
-                {MANUAL_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {t(`payments.statuses.${status}`, status.replace(/_/g, " "))}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={overrideReason}
-                onChange={(e) => setOverrideReason(e.target.value)}
-                placeholder={t("financial.statusReasonPlaceholder", "Reason (optional)")}
-                className="input w-full text-xs"
-              />
-            </div>
-            <p className="text-xs text-text-secondary">
-              {t(
-                "financial.statusHint",
-                "Paid, partially paid and cancelled follow the money on this invoice and can only be set when the ledger agrees.",
-              )}
-            </p>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                disabled={overrideStatus === payment.status || statusUpdate.isPending}
-                onClick={handleStatusUpdate}
-                className="btn btn-secondary text-xs disabled:opacity-40"
-              >
-                {statusUpdate.isPending ? t("common.saving", "Saving…") : t("financial.applyStatus", "Apply")}
-              </button>
-            </div>
-          </div>
+          )}
 
           {isCancelled ? (
             <div className="rounded-btn border border-border bg-background p-4 space-y-3">

@@ -18,6 +18,7 @@ import {
   Check,
   Search,
   X,
+  Eye,
 } from "lucide-react";
 import { levelsApi } from "@/lib/api/levels.api";
 import { fieldsApi } from "@/lib/api/fields.api";
@@ -34,6 +35,7 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { ViewToggle } from "@/components/shared/view-toggle";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
+import StudentDetailModal from "@/components/shared/student-detail-modal";
 import { useTranslation } from "@/lib/i18n/context";
 import { formatDate } from "@/lib/utils/format";
 import { useToast } from "@/components/shared/toast";
@@ -171,6 +173,24 @@ function ChildChips({ items, limit = 5 }: { items: string[]; limit?: number }) {
   );
 }
 
+/**
+ * Every chain (level > field > professor > group id) a student is enrolled in,
+ * from the explicit assignment list or the legacy single-group relation.
+ */
+function studentChains(student: any): Array<{ levelId: string; fieldId: string; professorId: string; groupId: string }> {
+  const placements: any[] = student?.assignments?.length
+    ? student.assignments
+    : student?.group
+      ? [{ group: student.group }]
+      : [];
+  return placements.map((a: any) => ({
+    levelId: a.group?.professor?.field?.level?.id ?? "",
+    fieldId: a.group?.professor?.field?.id ?? "",
+    professorId: a.group?.professor?.id ?? "",
+    groupId: a.group?.id ?? a.group_id ?? "",
+  }));
+}
+
 export default function HierarchyEntityPage({ entityType: entityTypeProp, parsedEntityIds }: HierarchyEntityPageProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -191,6 +211,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingEntity, setEditingEntity] = useState<any>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [detailStudentId, setDetailStudentId] = useState<string | null>(null);
   const [deletedOpen, setDeletedOpen] = useState(false);
   /** Layers confirmed so far in the create cascade: [{type, id, name}]. */
   const [parentPath, setParentPath] = useState<Array<{ type: HierarchyEntity; id: string; name: string }>>([]);
@@ -222,6 +243,51 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [formColor, setFormColor] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "nameAsc" | "nameDesc" | "color">("newest");
+  // Student list filters: level > field > professor > group cascade, matching
+  // the assignment picker. A student matches when at least one of his chains
+  // satisfies every selected filter.
+  const [filterLevel, setFilterLevel] = useState("");
+  const [filterField, setFilterField] = useState("");
+  const [filterProf, setFilterProf] = useState("");
+  const [filterGroup, setFilterGroup] = useState("");
+
+  const filterHasActive = !!(filterLevel || filterField || filterProf || filterGroup);
+
+  const filterLevelOptions = useQuery({
+    queryKey: ["levels"],
+    queryFn: () => levelsApi.list(),
+  });
+  const filterFieldOptions = useQuery({
+    queryKey: ["filter-fields", filterLevel],
+    queryFn: () => fieldsApi.list(filterLevel),
+    enabled: !!filterLevel,
+  });
+  const filterProfOptions = useQuery({
+    queryKey: ["filter-professors", filterField],
+    queryFn: () => professorsApi.list(filterField),
+    enabled: !!filterField,
+  });
+  const filterGroupOptions = useQuery({
+    queryKey: ["filter-groups", filterProf],
+    queryFn: () => groupsApi.list(filterProf),
+    enabled: !!filterProf,
+  });
+
+  const changeFilterLevel = (v: string) => {
+    setFilterLevel(v);
+    setFilterField("");
+    setFilterProf("");
+    setFilterGroup("");
+  };
+  const changeFilterField = (v: string) => {
+    setFilterField(v);
+    setFilterProf("");
+    setFilterGroup("");
+  };
+  const changeFilterProf = (v: string) => {
+    setFilterProf(v);
+    setFilterGroup("");
+  };
 
   // Extract entity IDs from URL params
   const entityIds = useMemo(() => {
@@ -661,11 +727,11 @@ const childrenLabel =
       : entityType === "field" ? t("nav.professors", "Professors")
         : "";
 
-  /** Search + sort applied to the current list, keeping the server order. */
+  /** Search + filters + sort applied to the current list, keeping the server order. */
   const items = useMemo(() => {
     const list = entities ?? [];
     const q = search.trim().toLowerCase();
-    const filtered = q
+    let filtered = q
       ? list.filter((entity: any) => {
           const haystack = [
             getEntityName(entity),
@@ -679,6 +745,16 @@ const childrenLabel =
           return haystack.includes(q);
         })
       : list;
+    if (entityType === "student" && filterHasActive) {
+      filtered = filtered.filter((entity: any) =>
+        studentChains(entity).some((c) =>
+          (!filterLevel || c.levelId === filterLevel) &&
+          (!filterField || c.fieldId === filterField) &&
+          (!filterProf || c.professorId === filterProf) &&
+          (!filterGroup || c.groupId === filterGroup),
+        ),
+      );
+    }
     return [...filtered].sort((a: any, b: any) => {
       switch (sortBy) {
         case "nameAsc": return getEntityName(a).localeCompare(getEntityName(b));
@@ -694,7 +770,7 @@ const childrenLabel =
         default: return 0;
       }
     });
-  }, [entities, search, sortBy]);
+  }, [entities, search, sortBy, entityType, filterLevel, filterField, filterProf, filterGroup, filterHasActive]);
 
   const getNextEntityHref = (entity: any): string | null => {
     const nextEntity = getNextEntity(entityType);
@@ -876,11 +952,81 @@ const childrenLabel =
           </select>
         </div>
 
+        {/* Student filters: level > field > professor > group cascade */}
+        {entityType === "student" && (
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={filterLevel}
+              onChange={(e) => changeFilterLevel(e.target.value)}
+              className="input w-auto"
+              aria-label={t("students.allLevels", "All levels")}
+            >
+              <option value="">{t("students.allLevels", "All levels")}</option>
+              {(filterLevelOptions.data ?? []).map((o: any) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+            <select
+              value={filterField}
+              onChange={(e) => changeFilterField(e.target.value)}
+              className="input w-auto"
+              aria-label={t("students.allFields", "All fields")}
+              disabled={!filterLevel}
+            >
+              <option value="">{t("students.allFields", "All fields")}</option>
+              {(filterFieldOptions.data ?? []).map((o: any) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+            <select
+              value={filterProf}
+              onChange={(e) => changeFilterProf(e.target.value)}
+              className="input w-auto"
+              aria-label={t("students.allProfessors", "All professors")}
+              disabled={!filterField}
+            >
+              <option value="">{t("students.allProfessors", "All professors")}</option>
+              {(filterProfOptions.data ?? []).map((o: any) => (
+                <option key={o.id} value={o.id}>{o.full_name}</option>
+              ))}
+            </select>
+            <select
+              value={filterGroup}
+              onChange={(e) => setFilterGroup(e.target.value)}
+              className="input w-auto"
+              aria-label={t("students.allGroups", "All groups")}
+              disabled={!filterProf}
+            >
+              <option value="">{t("students.allGroups", "All groups")}</option>
+              {(filterGroupOptions.data ?? []).map((o: any) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+            {filterHasActive && (
+              <button
+                onClick={() => {
+                  setFilterLevel("");
+                  setFilterField("");
+                  setFilterProf("");
+                  setFilterGroup("");
+                }}
+                className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-secondary hover:border-danger/40 hover:text-danger hover:bg-danger/5 transition-colors"
+              >
+                <X size={12} />
+                {t("hierarchy.clearFilters", "Clear filters")}
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-background border border-border px-1 text-[10px] font-semibold tabular-nums">
+                  {[filterLevel, filterField, filterProf, filterGroup].filter(Boolean).length}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Content */}
         {isLoading ? (
           <PageLoader text={t("common.loading", "Loading…")} />
         ) : !items.length ? (
-          search ? (
+          search || filterHasActive ? (
             <p className="py-8 text-center text-sm text-text-secondary">
               {t("hierarchy.noSearchResults", "No matches for that search.")}
             </p>
@@ -905,7 +1051,13 @@ const childrenLabel =
                 <div
                   key={entity.id}
                   className="card group cursor-pointer hover:shadow-hover transition-shadow relative overflow-hidden"
-                  onClick={() => primaryHref && router.push(primaryHref)}
+                  onClick={() => {
+                    if (entityType === "student") {
+                      setDetailStudentId(entity.id);
+                    } else if (primaryHref) {
+                      router.push(primaryHref);
+                    }
+                  }}
                 >
                   {entity.color && (
                     <>
@@ -1026,7 +1178,11 @@ const childrenLabel =
                   const childCount = getChildCount(entity);
                   const nextLabel = getNextEntity(entityType);
                   return (
-                    <tr key={entity.id} className="hover:bg-background/50 cursor-pointer transition-colors">
+                    <tr
+                      key={entity.id}
+                      className="hover:bg-background/50 cursor-pointer transition-colors"
+                      onClick={() => entityType === "student" && setDetailStudentId(entity.id)}
+                    >
                       <td className="px-4 py-3 font-medium text-primary">
                         <div className="flex items-center gap-2">
                           {entity.color && <span className="h-2.5 w-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: entity.color }} />}
@@ -1056,6 +1212,7 @@ const childrenLabel =
                           {attendanceHref && (
                             <Link
                               href={attendanceHref}
+                              onClick={(e) => e.stopPropagation()}
                               className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors"
                               title={t("fieldsHierarchy.attendanceSheet", "Attendance")}
                             >
@@ -1063,24 +1220,37 @@ const childrenLabel =
                             </Link>
                           )}
                           <button
-                            onClick={() => openEdit(entity)}
+                            onClick={(e) => { e.stopPropagation(); openEdit(entity); }}
                             className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors"
                           >
                             <Pencil size={14} />
                           </button>
                           <button
-                            onClick={() => setDeleteId(entity.id)}
+                            onClick={(e) => { e.stopPropagation(); setDeleteId(entity.id); }}
                             className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-danger hover:bg-red-50 transition-colors"
                           >
                             <Trash2 size={14} />
                           </button>
                           {nextHref && (
-                            <Link href={nextHref} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors">
+                            <Link href={nextHref} onClick={(e) => e.stopPropagation()} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors">
                               <ChevronRight size={14} />
                             </Link>
                           )}
                           {entityType === "student" && !nextHref && (
-                            <Link href={`/students/${entity.id}/payments`} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-gold hover:bg-gold-50 transition-colors">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setDetailStudentId(entity.id); }}
+                              className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors"
+                              title={t("studentDetail.personalInfo", "Details")}
+                            >
+                              <Eye size={14} />
+                            </button>
+                          )}
+                          {entityType === "student" && !nextHref && (
+                            <Link
+                              href={`/students/${entity.id}/payments`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-gold hover:bg-gold-50 transition-colors"
+                            >
                               <DollarSign size={14} />
                             </Link>
                           )}
@@ -1385,6 +1555,12 @@ const childrenLabel =
         onClose={() => setDeleteId(null)}
         onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
         message={entityType === "student" ? undefined : t("deleted.confirm", "It will be archived and can be restored later.")}
+      />
+
+      <StudentDetailModal
+        studentId={detailStudentId ?? ""}
+        isOpen={!!detailStudentId}
+        onClose={() => setDetailStudentId(null)}
       />
 
       <DeletedEntities

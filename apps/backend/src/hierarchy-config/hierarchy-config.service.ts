@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CreateHierarchyConfigDto, UpdateHierarchyConfigDto } from "./dto/hierarchy-config.dto";
@@ -6,9 +6,10 @@ import { Prisma } from "@prisma/client";
 
 const VALID_ENTITIES = ["level", "field", "professor", "group", "student"] as const;
 const MANDATORY_ENTITIES = ["student"] as const;
+const DEFAULT_ENTITY_ORDER = ["level", "field", "professor", "group", "student"] as const;
 
 @Injectable()
-export class HierarchyConfigService {
+export class HierarchyConfigService implements OnModuleInit {
   private readonly logger = new Logger(HierarchyConfigService.name);
   private cachedActive: any = null;
 
@@ -16,6 +17,47 @@ export class HierarchyConfigService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  /** The app depends on an active configuration; make sure one always exists. */
+  async onModuleInit() {
+    await this.ensureDefault();
+  }
+
+  private async ensureDefault(): Promise<void> {
+    const existing = await this.prisma.hierarchy_configurations.findFirst({
+      where: { isDefault: true },
+    });
+
+    if (existing) {
+      if (!existing.isActive) {
+        await this.prisma.$transaction([
+          this.prisma.hierarchy_configurations.updateMany({
+            where: { isActive: true },
+            data: { isActive: false },
+          }),
+          this.prisma.hierarchy_configurations.update({
+            where: { id: existing.id },
+            data: { isActive: true },
+          }),
+        ]);
+        this.cachedActive = { ...existing, isActive: true };
+      } else {
+        this.cachedActive = existing;
+      }
+      return;
+    }
+
+    const created = await this.prisma.hierarchy_configurations.create({
+      data: {
+        name: "Default Hierarchy",
+        entityOrder: DEFAULT_ENTITY_ORDER as unknown as Prisma.InputJsonValue,
+        isDefault: true,
+        isActive: true,
+      },
+    });
+    this.cachedActive = created;
+    this.logger.log(`Created and activated default hierarchy configuration "${created.name}"`);
+  }
 
   async findAll() {
     return this.prisma.hierarchy_configurations.findMany({

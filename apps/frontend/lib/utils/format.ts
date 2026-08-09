@@ -71,16 +71,24 @@ export function getCurrentPeriod(): string {
 /**
  * Tinted background/text/border classes per payment status (§9.12).
  * Single source of truth for status colour so badges, rows and charts agree.
+ *
+ * Every status has its own colour — anything grey means "no status was given":
+ *   paid → green, partially_paid → amber, due_soon → yellow, overdue → red,
+ *   not_paid → blue, cancelled → grey (struck through).
  */
 export function getPaymentStatusColorLight(status: PaymentStatus | string): string {
   switch (status) {
     case "paid":
       return "bg-success-soft text-success-strong border-success/30";
+    case "partially_paid":
+      return "bg-warning-soft text-warning-strong border-warning/30";
     case "due_soon":
       return "bg-gold-50 text-gold-700 border-gold-200";
     case "overdue":
       return "bg-danger-soft text-danger-strong border-danger/30";
+    case "cancelled":
+      return "bg-neutral-soft text-neutral-strong border-border line-through";
     default:
-      return "bg-neutral-soft text-neutral-strong border-border";
+      return "bg-primary-50 text-primary-700 border-primary/30";
   }
 }

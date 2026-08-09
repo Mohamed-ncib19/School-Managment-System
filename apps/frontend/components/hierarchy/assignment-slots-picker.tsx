@@ -81,13 +81,12 @@ function SlotChain({ slot, index, removable, onChange, onRemove }: SlotProps) {
   return (
     <div className="rounded-btn border border-border bg-surface-2/50 p-3 space-y-2 relative">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-          {index === 0
-            ? t("students.assignmentPrimary", "Primary")
-            : t("students.assignmentExtra", "Additional")}{" "}
-          #{index + 1}
-        </span>
-        <div className="flex items-center gap-1.5">
+        {index === 0 && (
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+            {t("students.assignmentPrimary", "Primary")} #1
+          </span>
+        )}
+        <div className="flex items-center gap-1.5 ml-auto">
           <div className="flex items-center gap-1 rounded-btn border border-border bg-surface px-2 py-1">
             <input
               type="number"

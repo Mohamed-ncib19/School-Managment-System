@@ -117,7 +117,7 @@ export default function DashboardPage() {
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Link href="/students" className="card hover:shadow-hover transition-shadow group">
+        <Link href="/hierarchy/student" className="card hover:shadow-hover transition-shadow group">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors">
               <Users size={24} />
