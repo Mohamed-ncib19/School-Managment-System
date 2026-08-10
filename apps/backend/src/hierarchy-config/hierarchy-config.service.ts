@@ -73,7 +73,7 @@ export class HierarchyConfigService implements OnModuleInit {
     });
 
     if (!active) {
-      throw new NotFoundException("No active hierarchy configuration found");
+      throw new NotFoundException("Aucune configuration hiérarchique active trouvée");
     }
 
     this.cachedActive = active;
@@ -84,7 +84,7 @@ export class HierarchyConfigService implements OnModuleInit {
     const config = await this.prisma.hierarchy_configurations.findUnique({
       where: { id },
     });
-    if (!config) throw new NotFoundException("Hierarchy configuration not found");
+    if (!config) throw new NotFoundException("Configuration hiérarchique introuvable");
     return config;
   }
 
@@ -152,11 +152,11 @@ export class HierarchyConfigService implements OnModuleInit {
     const config = await this.findOne(id);
 
     if (config.isDefault) {
-      throw new BadRequestException("Cannot delete the default hierarchy configuration");
+      throw new BadRequestException("Impossible de supprimer la configuration hiérarchique par défaut");
     }
 
     if (config.isActive) {
-      throw new BadRequestException("Cannot delete the active hierarchy configuration. Activate another one first.");
+      throw new BadRequestException("Impossible de supprimer la configuration hiérarchique active. Activez-en une autre d'abord.");
     }
 
     await this.prisma.hierarchy_configurations.delete({ where: { id } });
@@ -169,7 +169,7 @@ export class HierarchyConfigService implements OnModuleInit {
     });
 
     if (!defaultConfig) {
-      throw new NotFoundException("Default hierarchy configuration not found");
+      throw new NotFoundException("Configuration hiérarchique par défaut introuvable");
     }
 
     return this.activate(defaultConfig.id, userId);
@@ -181,17 +181,17 @@ export class HierarchyConfigService implements OnModuleInit {
 
     for (const entity of entityOrder) {
       if (!validSet.has(entity as (typeof VALID_ENTITIES)[number])) {
-        throw new BadRequestException(`Invalid entity: "${entity}". Valid entities: ${VALID_ENTITIES.join(", ")}`);
+        throw new BadRequestException(`Entité invalide : "${entity}". Entités valides : ${VALID_ENTITIES.join(", ")}`);
       }
       if (seen.has(entity)) {
-        throw new BadRequestException(`Duplicate entity: "${entity}"`);
+        throw new BadRequestException(`Entité en double : "${entity}"`);
       }
       seen.add(entity);
     }
 
     for (const mandatory of MANDATORY_ENTITIES) {
       if (!seen.has(mandatory)) {
-        throw new BadRequestException(`Mandatory entity "${mandatory}" must be included in the hierarchy`);
+        throw new BadRequestException(`L'entité obligatoire "${mandatory}" doit être incluse dans la hiérarchie`);
       }
     }
   }

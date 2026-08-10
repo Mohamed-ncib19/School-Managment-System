@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Download, FileSpreadsheet, FileText, Printer } from "lucide-react";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
+import { ErrorState } from "@/components/financial/error-state";
 import { useReport } from "@/hooks/use-financial";
-import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
+import { FinancialTableSkeleton } from "@/components/shared/skeletons";
 import { downloadReport, openReportDocument } from "@/lib/api/financial.api";
 import type { FinancialFilters } from "@/lib/api/financial.api";
 import { cn, formatCurrency } from "@/lib/utils/format";
@@ -38,7 +39,7 @@ export default function FinancialReportsPage() {
   const [exporting, setExporting] = useState<string | null>(null);
 
   const query = { ...filters, type };
-  const { data: report, isLoading } = useReport(query);
+  const { data: report, isLoading, isError, refetch } = useReport(query);
 
   const handleExport = async (format: "pdf" | "excel" | "csv") => {
     setExporting(format);
@@ -124,8 +125,10 @@ export default function FinancialReportsPage() {
           </div>
         </div>
 
-        {isLoading ? (
-          <PageLoader text={t("common.loading", "Loading…")} />
+        {isError ? (
+          <ErrorState onRetry={refetch} />
+        ) : isLoading ? (
+          <FinancialTableSkeleton rows={8} columns={4} />
         ) : !report || report.rows.length === 0 ? (
           <div className="py-16 text-center">
             <FileText size={28} className="mx-auto text-text-secondary mb-3" aria-hidden="true" />

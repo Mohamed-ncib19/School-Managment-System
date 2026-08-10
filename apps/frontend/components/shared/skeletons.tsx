@@ -42,7 +42,7 @@ export function TableSkeleton({
   showHeader?: boolean;
 }) {
   return (
-    <SkeletonRegion label="Loading table data">
+    <SkeletonRegion label="Chargement des données du tableau">
       <div className="table-container">
         <table className="min-w-full">
           {showHeader && (
@@ -83,7 +83,7 @@ export function CardGridSkeleton({ count = 6, columns = 3 }: { count?: number; c
         : "sm:grid-cols-2 lg:grid-cols-3";
 
   return (
-    <SkeletonRegion label="Loading cards">
+    <SkeletonRegion label="Chargement des cartes">
       <div className={`grid grid-cols-1 gap-4 ${gridCols}`}>
         {Array.from({ length: count }).map((_, i) => (
           <div key={i} className="card space-y-3">
@@ -105,7 +105,7 @@ export function CardGridSkeleton({ count = 6, columns = 3 }: { count?: number; c
 
 export function StatCardsSkeleton({ count = 4 }: { count?: number }) {
   return (
-    <SkeletonRegion label="Loading statistics">
+    <SkeletonRegion label="Chargement des statistiques">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: count }).map((_, i) => (
           <div key={i} className="stat-card">
@@ -123,7 +123,7 @@ export function StatCardsSkeleton({ count = 4 }: { count?: number }) {
 
 export function ChartSkeleton({ height = 280 }: { height?: number }) {
   return (
-    <SkeletonRegion label="Loading chart">
+    <SkeletonRegion label="Chargement du graphique">
       <div className="card">
         <Shimmer className="mb-6 h-4 w-40" />
         <div className="flex items-end gap-2" style={{ height }}>
@@ -139,7 +139,7 @@ export function ChartSkeleton({ height = 280 }: { height?: number }) {
 
 export function FormSkeleton({ fields = 5, columns = 1 }: { fields?: number; columns?: number }) {
   return (
-    <SkeletonRegion label="Loading form">
+    <SkeletonRegion label="Chargement du formulaire">
       <div className={`grid gap-4 ${columns === 2 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
         {Array.from({ length: fields }).map((_, i) => (
           <div key={i} className="space-y-2">
@@ -160,7 +160,7 @@ export function FormSkeleton({ fields = 5, columns = 1 }: { fields?: number; col
 export function HierarchySkeleton({ rows = 6 }: { rows?: number }) {
   const indents = [0, 1, 2, 1, 2, 3, 0, 1];
   return (
-    <SkeletonRegion label="Loading hierarchy">
+    <SkeletonRegion label="Chargement de la hiérarchie">
       <div className="space-y-2">
         {Array.from({ length: rows }).map((_, i) => (
           <div
@@ -182,7 +182,7 @@ export function HierarchySkeleton({ rows = 6 }: { rows?: number }) {
 /** Header block plus detail rows, for a single-record page. */
 export function DetailSkeleton({ rows = 6 }: { rows?: number }) {
   return (
-    <SkeletonRegion label="Loading details">
+    <SkeletonRegion label="Chargement des détails">
       <div className="space-y-6">
         <div className="card flex items-center gap-4">
           <Shimmer className="h-16 w-16 rounded-full" />
@@ -211,7 +211,7 @@ export function DetailSkeleton({ rows = 6 }: { rows?: number }) {
 /** Breadcrumb + title + toolbar, so headers don't pop in after the body. */
 export function PageHeaderSkeleton() {
   return (
-    <SkeletonRegion label="Loading page">
+    <SkeletonRegion label="Chargement de la page">
       <div className="space-y-4">
         <Shimmer className="h-3 w-48" />
         <div className="flex items-center gap-3">
@@ -229,7 +229,7 @@ export function PageHeaderSkeleton() {
 /** Full dashboard skeleton: welcome header + 6 stat cards + 2 charts + 2 tables. */
 export function DashboardSkeleton() {
   return (
-    <SkeletonRegion label="Loading dashboard">
+    <SkeletonRegion label="Chargement du tableau de bord">
       <div className="space-y-6">
         <div className="space-y-2">
           <Shimmer className="h-7 w-48" />
@@ -274,7 +274,7 @@ export function DashboardSkeleton() {
 /** Financial dashboard skeleton: filter bar + 8 KPI cards + 4 chart grids. */
 export function FinancialDashboardSkeleton() {
   return (
-    <SkeletonRegion label="Loading financial dashboard">
+    <SkeletonRegion label="Chargement du tableau de bord financier">
       <div className="space-y-6">
         <div className="flex items-center gap-2 flex-wrap">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -309,7 +309,7 @@ export function FinancialDashboardSkeleton() {
 /** Filter bar + table skeleton for financial table pages. */
 export function FinancialTableSkeleton({ rows = 10, columns = 7 }: { rows?: number; columns?: number }) {
   return (
-    <SkeletonRegion label="Loading financial data">
+    <SkeletonRegion label="Chargement des données financières">
       <div className="space-y-4">
         <div className="flex items-center gap-2 flex-wrap">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -335,7 +335,7 @@ export function FinancialTableSkeleton({ rows = 10, columns = 7 }: { rows?: numb
 /** Settings page skeleton: left nav + right content cards. */
 export function SettingsSkeleton() {
   return (
-    <SkeletonRegion label="Loading settings">
+    <SkeletonRegion label="Chargement des paramètres">
       <div className="space-y-6">
         <div className="space-y-2">
           <Shimmer className="h-3 w-32" />
@@ -379,7 +379,7 @@ export function SettingsSkeleton() {
 /** Login page skeleton: centered form card. */
 export function LoginSkeleton() {
   return (
-    <SkeletonRegion label="Loading login">
+    <SkeletonRegion label="Chargement de la page de connexion">
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary via-primary-700 to-primary-900 p-4">
         <div className="w-full max-w-sm">
           <div className="bg-surface rounded-modal shadow-hover p-8 space-y-6">

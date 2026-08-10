@@ -9,7 +9,7 @@ import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import { ErrorState, describeError } from "@/components/shared/error-state";
 import { useToast } from "@/components/shared/toast";
 import { PhoneInput } from "@/components/ui/phone-input";
-import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDate, studentTotalFee, cn } from "@/lib/utils/format";
 import { normalizeTunisianPhone, stripTunisiaPrefix } from "@/lib/utils/phone";
 import type { StudentStatus } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
@@ -189,6 +189,14 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
 
   const isSaving = updateMutation.isPending;
 
+  // One assignment row per enrollment, falling back to the legacy single group
+  // relation for payloads that predate the join table.
+  const assignments: Array<{ id?: string; group?: any; fee?: string | number | null }> = student?.assignments?.length
+    ? student.assignments
+    : student?.group
+      ? [{ id: "primary", group: student.group }]
+      : [];
+
   if (!isOpen) return null;
 
   return (
@@ -246,7 +254,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
             <p className="text-text-secondary text-center py-8">{t("studentDetail.notFound")}</p>
           ) : (
             <div className="space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 items-start">
                 {isEditing && (
                   <>
                     <div>
@@ -264,7 +272,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                   {isEditing ? (
                     <PhoneInput value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
                   ) : (
-                    <p className="text-sm font-medium text-text-primary">{student.phone}</p>
+                    <ValuePill className="font-mono tracking-wide">{student.phone}</ValuePill>
                   )}
                 </div>
                 <div>
@@ -272,7 +280,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                   {isEditing ? (
                     <PhoneInput value={form.parent_phone} onChange={(v) => setForm({ ...form, parent_phone: v })} />
                   ) : (
-                    <p className="text-sm font-medium text-text-primary">{student.parent_phone ?? "—"}</p>
+                    <ValuePill className="font-mono tracking-wide">{student.parent_phone ?? "—"}</ValuePill>
                   )}
                 </div>
                 <div>
@@ -280,20 +288,34 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                   {isEditing ? (
                     <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="input w-full" />
                   ) : (
-                    <p className="text-sm font-medium text-text-primary">{student.email ?? "—"}</p>
+                    <ValuePill className="max-w-64 truncate">{student.email ?? "—"}</ValuePill>
                   )}
+                </div>
+                <div>
+                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.enrollmentDate")}</p>
+                  <ValuePill>{formatDate(student.enrollment_date)}</ValuePill>
                 </div>
                 <div>
                   <p className="text-xs text-text-secondary mb-1">{t("studentDetail.monthlyFee")}</p>
                   {isEditing ? (
                     <input type="number" value={form.monthly_fee} onChange={(e) => setForm({ ...form, monthly_fee: e.target.value })} className="input w-full" />
                   ) : (
-                    <p className="text-sm font-medium text-text-primary">{formatCurrency(student.monthly_fee)}</p>
+                    <div>
+                      <ValuePill tone="accent">{formatCurrency(studentTotalFee(student))}</ValuePill>
+                      {assignments.length > 1 && (
+                        <div className="mt-2 space-y-1.5 min-w-72">
+                          {assignments.map((a) => (
+                            <ValuePill key={a.id ?? "primary"} className="gap-1.5 flex-wrap w-fit">
+                              <AssignmentPath
+                                group={a.group}
+                                fee={a.fee !== undefined ? formatCurrency(Number(a.fee)) : formatCurrency(Number(student.monthly_fee))}
+                              />
+                            </ValuePill>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
-                </div>
-                <div>
-                  <p className="text-xs text-text-secondary mb-1">{t("studentDetail.enrollmentDate")}</p>
-                  <p className="text-sm font-medium text-text-primary">{formatDate(student.enrollment_date)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-text-secondary mb-1">{t("studentDetail.status")}</p>
@@ -319,12 +341,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                     {t("studentDetail.currentAssignment")}
                   </p>
                   <div className="space-y-2">
-                    {(student.assignments?.length
-                      ? student.assignments
-                      : student.group
-                        ? [{ id: "primary", group: student.group }]
-                        : []
-                    ).map((a: any) => (
+                    {assignments.map((a: any) => (
                       <div key={a.id ?? "primary"} className="flex items-center gap-2 text-xs text-text-secondary flex-wrap">
                         <AssignmentPath
                           group={a.group}
@@ -362,6 +379,34 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Read-only value pill for the info grid — the same visual language as the
+ * status badges, so the modal's facts read as labels instead of bare text.
+ *
+ * `tone="accent"` is reserved for the one figure worth standing out (frais).
+ */
+function ValuePill({
+  children,
+  tone = "default",
+  className,
+}: {
+  children: React.ReactNode;
+  tone?: "default" | "accent";
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs font-medium text-text-primary",
+        tone === "accent" && "bg-gold-50 border-gold-200 text-gold-700",
+        className,
+      )}
+    >
+      {children}
+    </span>
   );
 }
 

@@ -36,7 +36,7 @@ export class AttendanceService {
       where: { id: userId },
       select: { role: true },
     });
-    if (!user) throw new ForbiddenException("Account not found");
+    if (!user) throw new ForbiddenException("Compte introuvable");
 
     if (user.role === "super_admin") return;
 
@@ -45,14 +45,14 @@ export class AttendanceService {
       select: { id: true },
     });
     if (profs.length === 0) {
-      throw new ForbiddenException("Only super admins and assigned professors can access attendance sheets");
+      throw new ForbiddenException("Seuls les super administrateurs et les professeurs concernés peuvent accéder aux feuilles de présence");
     }
     const group = await this.prisma.groups.findFirst({
       where: { id: groupId, prof_id: { in: profs.map((p) => p.id) } },
       select: { id: true },
     });
     if (!group) {
-      throw new ForbiddenException("This group is not assigned to your account");
+      throw new ForbiddenException("Ce groupe n'est pas assigné à votre compte");
     }
   }
 
@@ -66,7 +66,7 @@ export class AttendanceService {
 
   async get(id: string) {
     const sheet = await this.prisma.attendance_sheets.findUnique({ where: { id } });
-    if (!sheet) throw new NotFoundException(`Attendance sheet ${id} not found`);
+    if (!sheet) throw new NotFoundException(`Feuille de présence ${id} introuvable`);
     return sheet;
   }
 
@@ -86,7 +86,7 @@ export class AttendanceService {
       select: { id: true, name: true },
     });
     if (!group) {
-      throw new BadRequestException(`Group ${dto.group_id} does not exist`);
+      throw new BadRequestException(`Le groupe ${dto.group_id} n'existe pas`);
     }
 
     const sheet = await this.prisma.attendance_sheets.create({
@@ -128,7 +128,7 @@ export class AttendanceService {
 
   async remove(id: string, userId?: string) {
     const sheet = await this.prisma.attendance_sheets.findUnique({ where: { id } });
-    if (!sheet) throw new NotFoundException(`Attendance sheet ${id} not found`);
+    if (!sheet) throw new NotFoundException(`Feuille de présence ${id} introuvable`);
 
     await this.prisma.attendance_sheets.delete({ where: { id } });
 

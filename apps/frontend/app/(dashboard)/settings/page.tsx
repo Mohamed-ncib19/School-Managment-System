@@ -62,16 +62,16 @@ import { cn } from "@/lib/utils/format";
 import type { LucideIcon } from "lucide-react";
 
 const profileSchema = z.object({
-  full_name: z.string().min(1, "Name is required"),
-  email: z.string().email("Enter a valid email"),
+  full_name: z.string().min(1, "Le nom est obligatoire"),
+  email: z.string().email("Saisissez un e-mail valide"),
 });
 
 const passwordSchema = z.object({
-  current_password: z.string().min(1, "Current password is required"),
-  new_password: z.string().min(6, "Password must be at least 6 characters"),
-  confirm_password: z.string().min(1, "Please confirm your password"),
+  current_password: z.string().min(1, "Le mot de passe actuel est obligatoire"),
+  new_password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères"),
+  confirm_password: z.string().min(1, "Veuillez confirmer le mot de passe"),
 }).refine((data) => data.new_password === data.confirm_password, {
-  message: "Passwords don't match",
+  message: "Les mots de passe ne correspondent pas",
   path: ["confirm_password"],
 });
 
@@ -293,7 +293,7 @@ export default function SettingsPage() {
       setTimeout(() => setSuccess(null), 3000);
     },
     onError: () => {
-      setError("Failed to update profile");
+      setError("Échec de la mise à jour du profil");
       setSuccess(null);
     },
   });
@@ -308,7 +308,7 @@ export default function SettingsPage() {
       setTimeout(() => setSuccess(null), 3000);
     },
     onError: () => {
-      setError("Failed to change password");
+      setError("Échec du changement de mot de passe");
       setSuccess(null);
     },
   });
@@ -515,7 +515,7 @@ export default function SettingsPage() {
                         type="button"
                         onClick={() => setShowPasswords(!showPasswords)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary transition-colors"
-                        aria-label={showPasswords ? "Hide password" : "Show password"}
+                        aria-label={showPasswords ? "Masquer le mot de passe" : "Afficher le mot de passe"}
                       >
                         {showPasswords ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
@@ -540,7 +540,7 @@ export default function SettingsPage() {
                         type="button"
                         onClick={() => setShowPasswords(!showPasswords)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary transition-colors"
-                        aria-label={showPasswords ? "Hide password" : "Show password"}
+                        aria-label={showPasswords ? "Masquer le mot de passe" : "Afficher le mot de passe"}
                       >
                         {showPasswords ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
@@ -565,7 +565,7 @@ export default function SettingsPage() {
                         type="button"
                         onClick={() => setShowPasswords(!showPasswords)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary transition-colors"
-                        aria-label={showPasswords ? "Hide password" : "Show password"}
+                        aria-label={showPasswords ? "Masquer le mot de passe" : "Afficher le mot de passe"}
                       >
                         {showPasswords ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>

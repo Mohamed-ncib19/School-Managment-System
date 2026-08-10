@@ -112,7 +112,7 @@ export class FinancialReportService {
       case "revenue_forecast":
         return { ...base, ...(await this.forecast(academic, range)) };
       default:
-        throw new BadRequestException(`Unknown report type "${type}"`);
+        throw new BadRequestException(`Type de rapport inconnu : "${type}"`);
     }
   }
 

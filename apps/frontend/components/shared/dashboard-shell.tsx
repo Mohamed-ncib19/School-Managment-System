@@ -10,18 +10,18 @@ import ShutdownFailedBanner from "@/components/shared/shutdown-failed-banner";
 
 /** Most specific route first — the first match wins. */
 const TITLES: ReadonlyArray<[RegExp, string]> = [
-  [/^\/hierarchy/, "Hierarchy"],
-  [/^\/attendance-sheet/, "Attendance Sheet"],
-  [/^\/students\/[^/]+\/payments/, "Payment History"],
-  [/^\/payments/, "Payments"],
-  [/^\/import/, "Import Data"],
-  [/^\/audit/, "Audit"],
-  [/^\/settings/, "Settings"],
-  [/^\/dashboard/, "Dashboard"],
+  [/^\/hierarchy/, "Hiérarchie"],
+  [/^\/attendance-sheet/, "Feuille de Présence"],
+  [/^\/students\/[^/]+\/payments/, "Historique des Paiements"],
+  [/^\/payments/, "Paiements"],
+  [/^\/import/, "Import de Données"],
+  [/^\/audit/, "Journal d'Audit"],
+  [/^\/settings/, "Paramètres"],
+  [/^\/dashboard/, "Tableau de bord"],
 ];
 
 function titleFor(pathname: string) {
-  return TITLES.find(([pattern]) => pattern.test(pathname))?.[1] ?? "Dashboard";
+  return TITLES.find(([pattern]) => pattern.test(pathname))?.[1] ?? "Tableau de bord";
 }
 
 /**

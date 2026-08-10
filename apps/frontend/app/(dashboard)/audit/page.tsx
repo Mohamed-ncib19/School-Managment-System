@@ -32,51 +32,51 @@ import type { AuditLog } from "@/types";
  * instead of showing "professor.account_linked".
  */
 const ACTION_LABELS: Record<string, string> = {
-  "auth.login_success": "Signed in",
-  "auth.login_failed": "Failed sign-in",
-  "auth.logout": "Signed out",
-  "auth.change_password_success": "Password changed",
-  "auth.change_password_failed": "Failed password change",
-  "payment.recorded": "Payment recorded",
-  "payment.status_changed": "Payment status changed",
-  "import.students": "Students imported",
-  "student.created": "Student created",
-  "student.updated": "Student updated",
-  "student.status_changed": "Student status changed",
-  "student.moved_group": "Student moved",
-  "student.deleted": "Student deleted",
-  "field.created": "Field created",
-  "field.updated": "Field updated",
-  "field.deleted": "Field deleted",
-  "professor.created": "Professor created",
-  "professor.updated": "Professor updated",
-  "professor.account_linked": "Professor account linked",
-  "professor.deactivated": "Professor deactivated",
-  "professor.restored": "Professor restored",
-  "level.created": "Level created",
-  "level.updated": "Level updated",
-  "level.archived": "Level archived",
-  "level.restored": "Level restored",
-  "group.created": "Class created",
-  "group.updated": "Class updated",
-  "group.archived": "Class archived",
-  "group.restored": "Class restored",
-  "user.profile_updated": "Profile updated",
-  "backup.created": "Backup created",
-  "backup.restored": "Backup restored",
+  "auth.login_success": "Connexion réussie",
+  "auth.login_failed": "Échec de connexion",
+  "auth.logout": "Déconnexion",
+  "auth.change_password_success": "Mot de passe modifié",
+  "auth.change_password_failed": "Échec de changement du mot de passe",
+  "payment.recorded": "Paiement enregistré",
+  "payment.status_changed": "Statut de paiement modifié",
+  "import.students": "Étudiants importés",
+  "student.created": "Étudiant créé",
+  "student.updated": "Étudiant modifié",
+  "student.status_changed": "Statut de l'étudiant modifié",
+  "student.moved_group": "Étudiant transféré",
+  "student.deleted": "Étudiant supprimé",
+  "field.created": "Filière créée",
+  "field.updated": "Filière modifiée",
+  "field.deleted": "Filière supprimée",
+  "professor.created": "Professeur créé",
+  "professor.updated": "Professeur modifié",
+  "professor.account_linked": "Compte professeur lié",
+  "professor.deactivated": "Professeur désactivé",
+  "professor.restored": "Professeur restauré",
+  "level.created": "Niveau créé",
+  "level.updated": "Niveau modifié",
+  "level.archived": "Niveau archivé",
+  "level.restored": "Niveau restauré",
+  "group.created": "Classe créée",
+  "group.updated": "Classe modifiée",
+  "group.archived": "Classe archivée",
+  "group.restored": "Classe restaurée",
+  "user.profile_updated": "Profil modifié",
+  "backup.created": "Sauvegarde créée",
+  "backup.restored": "Sauvegarde restaurée",
 };
 
 const ENTITY_LABELS: Record<string, string> = {
-  student_payment: "Payment",
-  payment: "Payment",
-  students: "Student",
-  student: "Student",
-  field: "Field",
-  professor: "Professor",
-  level: "Level",
-  group: "Class",
-  user: "User",
-  backup: "Backup",
+  student_payment: "Paiement",
+  payment: "Paiement",
+  students: "Étudiant",
+  student: "Étudiant",
+  field: "Filière",
+  professor: "Professeur",
+  level: "Niveau",
+  group: "Classe",
+  user: "Utilisateur",
+  backup: "Sauvegarde",
 };
 
 /** Filter chips. `payment` and `student` are expanded server-side to cover the
@@ -106,8 +106,8 @@ function toneFor(action: string): string {
 }
 
 const formatValue = (value: unknown): string => {
-  if (value === null || value === undefined || value === "") return "empty";
-  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (value === null || value === undefined || value === "") return "vide";
+  if (typeof value === "boolean") return value ? "oui" : "non";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 };
@@ -125,14 +125,14 @@ function ChangeDetail({ log }: { log: AuditLog }) {
     <div className="space-y-4 bg-background/60 px-4 py-4">
       {keys.length > 0 && (
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">Changes</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">Modifications</p>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead>
                 <tr className="text-left text-text-secondary">
-                  <th className="py-1 pr-6 font-medium">Field</th>
-                  <th className="py-1 pr-6 font-medium">Before</th>
-                  <th className="py-1 font-medium">After</th>
+                  <th className="py-1 pr-6 font-medium">Champ</th>
+                  <th className="py-1 pr-6 font-medium">Avant</th>
+                  <th className="py-1 font-medium">Après</th>
                 </tr>
               </thead>
               <tbody>
@@ -155,7 +155,7 @@ function ChangeDetail({ log }: { log: AuditLog }) {
 
       {Object.keys(extraMeta).length > 0 && (
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">Context</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">Contexte</p>
           <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
             {Object.entries(extraMeta).map(([key, value]) => (
               <div key={key} className="flex gap-2">
@@ -280,7 +280,7 @@ export default function AuditLogPage() {
         </div>
         {meta && (
           <span className="rounded-full bg-neutral-soft px-3 py-1 text-xs font-medium text-text-secondary dark:bg-white/10">
-            {meta.total.toLocaleString()} {meta.total === 1 ? "entry" : "entries"}
+            {meta.total.toLocaleString()} {meta.total === 1 ? "entrée" : "entrées"}
           </span>
         )}
       </div>
@@ -294,15 +294,15 @@ export default function AuditLogPage() {
               type="search"
               value={searchInput}
               onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
-              placeholder="Search action, person, target, IP..."
-              aria-label="Search the audit history"
+              placeholder="Rechercher une action, une personne, une cible, une IP…"
+              aria-label="Rechercher dans l'historique d'audit"
               className="input pl-9 pr-8 text-sm"
             />
             {searchInput && (
               <button
                 type="button"
                 onClick={() => { setSearchInput(""); setPage(1); }}
-                aria-label="Clear search"
+                aria-label="Effacer la recherche"
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-secondary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-200"
               >
                 <X size={14} />
@@ -313,27 +313,27 @@ export default function AuditLogPage() {
           <select
             value={actorFilter}
             onChange={(e) => { setActorFilter(e.target.value); setPage(1); }}
-            aria-label="Filter by administrator"
+            aria-label="Filtrer par administrateur"
             className="input w-auto min-w-[150px] text-sm"
           >
-            <option value="">All administrators</option>
+            <option value="">Tous les administrateurs</option>
             {options?.actors?.map((actor) => (
               <option key={actor.id} value={actor.id}>{actor.full_name}</option>
             ))}
           </select>
 
           <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-            From
-            <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className="input w-auto py-1.5 text-sm" aria-label="From date" />
+            Du
+            <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className="input w-auto py-1.5 text-sm" aria-label="Date de début" />
           </label>
           <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-            To
-            <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="input w-auto py-1.5 text-sm" aria-label="To date" />
+            Au
+            <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="input w-auto py-1.5 text-sm" aria-label="Date de fin" />
           </label>
 
           {hasFilters && (
             <button type="button" onClick={resetFilters} className="btn btn-secondary px-3 py-1.5 text-xs">
-              <X size={13} /> Clear
+              <X size={13} /> Effacer
             </button>
           )}
         </div>
@@ -367,8 +367,8 @@ export default function AuditLogPage() {
         <ErrorState error={error} onRetry={() => refetch()} isRetrying={isFetching} />
       ) : logs.length === 0 ? (
         <EmptyState
-          message={hasFilters ? "No entries match these filters." : t("audit.noEntries")}
-          actionLabel={hasFilters ? "Clear filters" : undefined}
+          message={hasFilters ? "Aucune entrée ne correspond à ces filtres." : t("audit.noEntries")}
+          actionLabel={hasFilters ? "Effacer les filtres" : undefined}
           onAction={hasFilters ? resetFilters : undefined}
         />
       ) : (
@@ -376,15 +376,15 @@ export default function AuditLogPage() {
           {/* Dimmed while a filter/page change is in flight, instead of blanking. */}
           <div className={`table-container overflow-x-auto transition-opacity ${isFetching ? "opacity-60" : "opacity-100"}`}>
             <table className="min-w-full text-sm">
-              <caption className="sr-only">Administrative audit history</caption>
+              <caption className="sr-only">Historique d'audit administratif</caption>
               <thead>
                 <tr className="bg-background">
                   <SortHeader column="action">{t("audit.action")}</SortHeader>
                   <SortHeader column="entity_type">{t("audit.entity")}</SortHeader>
                   <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase text-text-secondary">{t("audit.actor")}</th>
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase text-text-secondary">Target</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase text-text-secondary">Cible</th>
                   <SortHeader column="created_at">{t("audit.date")}</SortHeader>
-                  <th scope="col" className="w-10 px-2 py-3"><span className="sr-only">Details</span></th>
+                  <th scope="col" className="w-10 px-2 py-3"><span className="sr-only">Détails</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -421,7 +421,7 @@ export default function AuditLogPage() {
                               type="button"
                               onClick={(e) => { e.stopPropagation(); setExpanded(isOpen ? null : log.id); }}
                               aria-expanded={isOpen}
-                              aria-label={isOpen ? "Hide details" : "Show details"}
+                              aria-label={isOpen ? "Masquer les détails" : "Afficher les détails"}
                               className="rounded p-1 text-text-secondary transition-transform hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-200"
                             >
                               <ChevronDown size={15} className={isOpen ? "rotate-180 transition-transform" : "transition-transform"} />

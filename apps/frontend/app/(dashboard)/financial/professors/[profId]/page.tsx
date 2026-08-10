@@ -9,8 +9,9 @@ import { ChartCard } from "@/components/financial/chart-card";
 import { GroupedBarChart } from "@/components/financial/charts";
 import { RecordPayrollModal } from "@/components/financial/record-payroll-modal";
 import { CompensationModal } from "@/components/financial/compensation-modal";
+import { ErrorState } from "@/components/financial/error-state";
 import { SettlementDocumentsModal } from "@/components/financial/settlement-documents-modal";
-import { openPayrollDocument, openReceipt } from "@/lib/api/financial.api";
+import { openReceipt } from "@/lib/api/financial.api";
 import { payrollStatusClasses, SERIES } from "@/lib/charts/theme";
 import { cn, formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -31,9 +32,17 @@ export default function ProfessorFinancialPage() {
   const [settlementOpen, setSettlementOpen] = useState(false);
   const [settledPayout, setSettledPayout] = useState<string | undefined>(undefined);
 
-  const { data, isLoading } = useProfessorFinancials(profId, period || undefined);
+  const { data, isLoading, isError, refetch } = useProfessorFinancials(profId, period || undefined);
   const { data: documents } = useProfessorDocuments(profId, period || undefined);
   const regenerate = useRegenerateDocuments();
+
+  if (isError) {
+    return (
+      <div className="space-y-4">
+        <ErrorState onRetry={refetch} className="py-16" />
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (
@@ -267,18 +276,6 @@ export default function ProfessorFinancialPage() {
                           >
                             <Printer size={13} aria-hidden="true" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const settlement = payoutDocs.find((doc) => doc.type === "school_settlement");
-                              if (settlement) openPayrollDocument(settlement.id).catch(() => {});
-                            }}
-                            disabled={!payoutDocs.some((doc) => doc.type === "school_settlement")}
-                            aria-label={t("financial.printSettlement", "Print settlement report")}
-                            className="btn btn-secondary text-xs disabled:opacity-40"
-                          >
-                            <FileText size={13} aria-hidden="true" />
-                          </button>
                           {payoutDocs.length > 0 && (
                             <button
                               type="button"
@@ -297,61 +294,6 @@ export default function ProfessorFinancialPage() {
                     </tr>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <h4 className="text-xs font-semibold text-text-secondary uppercase mb-3">
-          {t("financial.documentsHistory", "Settlement documents")}
-        </h4>
-        {!documents || documents.length === 0 ? (
-          <p className="text-sm text-text-secondary">
-            {t("financial.noDocuments", "No settlement documents yet — they are generated automatically with each payroll payment.")}
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("payments.type", "Type")}
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("financial.receiptNumber", "No.")}
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("payments.period", "Period")}
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("financial.generatedOn", "Generated on")}
-                  </th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {documents.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-background/50">
-                    <td className="px-3 py-2 text-text-primary">{doc.title}</td>
-                    <td className="px-3 py-2 text-text-secondary font-mono text-xs">{doc.document_no}</td>
-                    <td className="px-3 py-2 text-text-secondary">
-                      {doc.period ? formatPeriod(doc.period) : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-text-secondary">{formatDate(doc.generated_at)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openPayrollDocument(doc.id).catch(() => {})}
-                        aria-label={t("financial.printDocument", "Print document")}
-                        className="btn btn-secondary text-xs"
-                      >
-                        <Printer size={13} aria-hidden="true" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
               </tbody>
             </table>
           </div>

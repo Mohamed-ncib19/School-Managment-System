@@ -52,11 +52,11 @@ export class BackupService {
   private getDbConfig() {
     const dbUrl = process.env.DATABASE_URL;
     if (!dbUrl) {
-      throw new BadRequestException("DATABASE_URL is not configured");
+      throw new BadRequestException("DATABASE_URL n'est pas configurée");
     }
     const match = dbUrl.match(/^postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
     if (!match) {
-      throw new BadRequestException("DATABASE_URL is not a valid PostgreSQL connection string");
+      throw new BadRequestException("DATABASE_URL n'est pas une chaîne de connexion PostgreSQL valide");
     }
     return {
       user: match[1],
@@ -155,7 +155,7 @@ export class BackupService {
     const dbConfig = this.getDbConfig();
     const pgDump = this.findBinary("pg_dump");
     if (!pgDump) {
-      throw new BadRequestException("pg_dump not found — PostgreSQL tools are not installed");
+      throw new BadRequestException("pg_dump introuvable — les outils PostgreSQL ne sont pas installés");
     }
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -176,11 +176,11 @@ export class BackupService {
         windowsHide: true,
       });
     } catch (err: any) {
-      throw new BadRequestException(`pg_dump failed: ${err.message || err.stderr || err}`);
+      throw new BadRequestException(`Échec de pg_dump : ${err.message || err.stderr || err}`);
     }
 
     if (!fs.existsSync(target)) {
-      throw new BadRequestException("Backup was not created — pg_dump reported success but produced no file");
+      throw new BadRequestException("La sauvegarde n'a pas été créée — pg_dump a réussi mais n'a produit aucun fichier");
     }
 
     const stat = fs.statSync(target);
@@ -192,7 +192,7 @@ export class BackupService {
 
     return {
       success: true,
-      message: `Backup created: ${filename} (${Math.round(stat.size / 1024)} KB)`,
+      message: `Sauvegarde créée : ${filename} (${Math.round(stat.size / 1024)} Ko)`,
       backup: {
         id: filename,
         filename,
@@ -208,14 +208,14 @@ export class BackupService {
     const dumps = this.listDumpFiles();
     const dump = dumps.find((d) => d.name === backupId);
     if (!dump) {
-      throw new NotFoundException(`Backup not found: ${backupId}`);
+      throw new NotFoundException(`Sauvegarde introuvable : ${backupId}`);
     }
 
     const backupPath = path.join(this.backupDir, dump.name);
     const dbConfig = this.getDbConfig();
     const pgRestore = this.findBinary("pg_restore");
     if (!pgRestore) {
-      throw new BadRequestException("pg_restore not found — PostgreSQL tools are not installed");
+      throw new BadRequestException("pg_restore introuvable — les outils PostgreSQL ne sont pas installés");
     }
 
     this.logger.log(`Restoring from backup '${backupId}'`);
@@ -233,12 +233,12 @@ export class BackupService {
         windowsHide: true,
       });
     } catch (err: any) {
-      throw new BadRequestException(`pg_restore failed: ${err.message || err.stderr || err}`);
+      throw new BadRequestException(`Échec de pg_restore : ${err.message || err.stderr || err}`);
     }
 
     return {
       success: true,
-      message: `Database restored from ${backupId}`,
+      message: `Base de données restaurée depuis ${backupId}`,
       restoredFrom: backupId,
       safetyBackup: safetyResult.backup.filename,
     };

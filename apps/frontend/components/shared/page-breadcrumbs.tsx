@@ -175,7 +175,7 @@ export default function PageBreadcrumbs({ pathname }: { pathname: string }) {
   if (route.kind === "none") return null;
 
   return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 min-w-0 text-sm">
+    <nav aria-label="Fil d'Ariane" className="flex items-center gap-1.5 min-w-0 text-sm">
       <Link href="/dashboard" className="text-text-secondary hover:text-primary font-medium transition-colors whitespace-nowrap">
         {t("nav.dashboard")}
       </Link>

@@ -35,7 +35,7 @@ export function DropdownMenu({ children, className }: DropdownMenuProps) {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="p-1 rounded-btn hover:bg-background text-text-secondary hover:text-text-primary transition-colors"
-        aria-label="More options"
+        aria-label="Plus d'options"
       >
         <MoreHorizontal size={16} />
       </button>

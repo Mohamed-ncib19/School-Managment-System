@@ -66,6 +66,15 @@ export interface PeriodEntitlement {
  *   is owed whether or not anybody paid, so it cannot be derived by summing
  *   per-transaction splits; the fixed models contribute nothing per transaction
  *   and their whole value appears here instead.
+ *
+ *   Percentage and hybrid entitlements are priced live: how much was collected
+ *   this period comes from the ledger, but the professor's share is computed
+ *   with the percentage in force *now*. A change of rate — per-professor or the
+ *   academy default — shows on the payroll screen and on new settlement
+ *   documents immediately, instead of waiting for future collections. Only
+ *   `custom` formulas keep their frozen per-transaction splits (their inputs
+ *   are not reproducible later), and the historical monthly breakdown always
+ *   reads the snapshots, so closed months stay stable.
  */
 @Injectable()
 export class RevenueCalculationService {
@@ -228,31 +237,82 @@ export class RevenueCalculationService {
   /**
    * What one professor earned in one period.
    *
-   * Percentage and hybrid arrangements read their collections element straight
-   * off the ledger — those figures were fixed at collection time and are not
-   * recomputed here, so past months stay stable when a rate changes. The fixed
-   * element is evaluated against the professor's current roster, since a salary
-   * is a statement about the arrangement rather than about any one payment.
+   * Percentage and hybrid arrangements price the *open* period live: the
+   * collections element is the current percentage applied to the period's net
+   * collections, so an override change reflects on the payroll screen the
+   * moment it is saved. Custom rules keep their frozen per-transaction splits,
+   * and closed months (the monthly breakdown) always read the ledger snapshot.
    */
   async periodEntitlement(profId: string, period: string): Promise<PeriodEntitlement> {
-    const [rule, counts, collected] = await Promise.all([
+    const [rule, counts, collected, net] = await Promise.all([
       this.ruleFor(profId),
       this.rosterCounts(profId),
       this.collectedSharesFor(profId, period),
+      this.collectedAmountFor(profId, period),
     ]);
 
+    const fromCollections = this.fromCollectionsFor(rule, net, collected);
     const fixedComponent = this.fixedComponentFor(rule, counts);
 
     return {
       profId,
       period,
       model: rule.model,
-      fromCollections: collected,
+      fromCollections,
       fixedComponent,
-      total: round2(collected.plus(fixedComponent)),
+      total: round2(fromCollections.plus(fixedComponent)),
       studentCount: counts.studentCount,
       groupCount: counts.groupCount,
     };
+  }
+
+  /**
+   * Live pricing of one amount under a rule — the same arithmetic the open
+   * period entitlements use, exposed for the settlement documents so the
+   * split printed on a quittance can never disagree with the payroll screen.
+   *
+   * Percentage and hybrid are priced with the rule in force now. The frozen
+   * ledger splits stay authoritative for `custom` formulas, whose inputs
+   * (student count, formula internals) are not reproducible later; the
+   * pure-fixed models have no per-transaction element at all.
+   */
+  shareFor(rule: CompensationRule, amount: Money): Money {
+    switch (rule.model) {
+      case "percentage":
+      case "hybrid":
+        return round2(this.clamp(percentOf(amount, rule.percentage ?? ZERO), amount));
+      default:
+        return ZERO;
+    }
+  }
+
+  /**
+   * The collections element of an entitlement.
+   *
+   * Percentage and hybrid read the ledger only for how much was collected;
+   * the professor's share is priced with the rule in force now. `custom` falls
+   * back to the shares snapshotted at collection time, and the pure-fixed
+   * models contribute nothing per transaction.
+   */
+  private fromCollectionsFor(rule: CompensationRule, net: Money, snapshot: Money): Money {
+    switch (rule.model) {
+      case "percentage":
+      case "hybrid":
+        return this.shareFor(rule, net);
+      case "custom":
+        return snapshot;
+      default:
+        return ZERO;
+    }
+  }
+
+  /** Net collections attributed to a professor in a period — refunds netted off. */
+  private async collectedAmountFor(profId: string, period: string): Promise<Money> {
+    const agg = await this.prisma.payment_transactions.aggregate({
+      where: { prof_id: profId, period },
+      _sum: { amount: true },
+    });
+    return round2(money(agg._sum.amount));
   }
 
   private fixedComponentFor(
@@ -313,7 +373,7 @@ export class RevenueCalculationService {
       this.prisma.payment_transactions.groupBy({
         by: ["prof_id"],
         where: { prof_id: { in: profIds }, period },
-        _sum: { professor_share: true },
+        _sum: { professor_share: true, amount: true },
       }),
       this.prisma.groups.groupBy({
         by: ["prof_id"],
@@ -338,6 +398,9 @@ export class RevenueCalculationService {
 
     const sharesByProf = new Map(
       shares.filter((s) => s.prof_id).map((s) => [s.prof_id as string, money(s._sum.professor_share)]),
+    );
+    const netByProf = new Map(
+      shares.filter((s) => s.prof_id).map((s) => [s.prof_id as string, round2(money(s._sum.amount))]),
     );
     const groupsByProf = new Map(
       groupCounts.filter((g) => g.prof_id).map((g) => [g.prof_id as string, g._count._all]),
@@ -374,7 +437,8 @@ export class RevenueCalculationService {
         studentCount: studentsByProf.get(profId) ?? 0,
         groupCount: groupsByProf.get(profId) ?? 0,
       };
-      const fromCollections = round2(sharesByProf.get(profId) ?? ZERO);
+      const snapshot = round2(sharesByProf.get(profId) ?? ZERO);
+      const fromCollections = this.fromCollectionsFor(rule, round2(netByProf.get(profId) ?? ZERO), snapshot);
       const fixedComponent = this.fixedComponentFor(rule, counts);
 
       result.set(profId, {

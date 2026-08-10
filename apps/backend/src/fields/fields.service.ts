@@ -42,7 +42,7 @@ export class FieldsService {
 
   async getField(id: string) {
     const field = await this.prisma.fields.findUnique({ where: { id }, include: { level: true } });
-    if (!field) throw new NotFoundException(`Field ${id} not found`);
+    if (!field) throw new NotFoundException(`Filière ${id} introuvable`);
     return field;
   }
 
@@ -137,7 +137,7 @@ export class FieldsService {
   async hardDeleteField(id: string, userId?: string) {
     const field = await this.getField(id);
     if (field.is_active) {
-      throw new ConflictException(`Field "${field.name}" is still active - archive it first`);
+      throw new ConflictException(`La filière "${field.name}" est toujours active - archivez-la d'abord`);
     }
     const counts = await hardDeleteHierarchy(this.prisma, "field", id);
     await this.auditService.record({

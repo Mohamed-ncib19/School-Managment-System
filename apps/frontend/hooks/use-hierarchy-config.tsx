@@ -23,11 +23,11 @@ interface HierarchyConfigContextValue {
 const HierarchyConfigContext = createContext<HierarchyConfigContextValue | null>(null);
 
 const ENTITY_LABELS: Record<HierarchyEntity, string> = {
-  level: "Levels",
-  field: "Fields",
-  professor: "Professors",
-  group: "Groups",
-  student: "Students",
+  level: "Niveaux",
+  field: "Spécialités",
+  professor: "Professeurs",
+  group: "Groupes",
+  student: "Étudiants",
 };
 
 const DEFAULT_ENTITY_ORDER: HierarchyEntity[] = ["level", "field", "professor", "group", "student"];

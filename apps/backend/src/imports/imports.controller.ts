@@ -52,14 +52,14 @@ export class ImportsController {
       limits: { fileSize: MAX_UPLOAD_BYTES },
       fileFilter: (_req, file, cb) => {
         if (!/\.xlsx$/i.test(file.originalname)) {
-          return cb(new BadRequestException("Only .xlsx workbooks are supported"), false);
+          return cb(new BadRequestException("Seuls les classeurs .xlsx sont pris en charge"), false);
         }
         cb(null, true);
       },
     }),
   )
   async importStudents(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
-    if (!file) throw new BadRequestException("No file was uploaded");
+    if (!file) throw new BadRequestException("Aucun fichier téléversé");
     return this.imports.importStudents(file.buffer, req.user.id);
   }
 
@@ -77,14 +77,14 @@ export class ImportsController {
       limits: { fileSize: MAX_UPLOAD_BYTES },
       fileFilter: (_req, file, cb) => {
         if (!/\.xlsx$/i.test(file.originalname)) {
-          return cb(new BadRequestException("Only .xlsx workbooks are supported"), false);
+          return cb(new BadRequestException("Seuls les classeurs .xlsx sont pris en charge"), false);
         }
         cb(null, true);
       },
     }),
   )
   async previewStudents(@UploadedFile() file: Express.Multer.File) {
-    if (!file) throw new BadRequestException("No file was uploaded");
+    if (!file) throw new BadRequestException("Aucun fichier téléversé");
     return this.imports.previewStudents(file.buffer);
   }
 
@@ -95,7 +95,7 @@ export class ImportsController {
     @Req() req: any,
   ) {
     if (!body.rows || !Array.isArray(body.rows) || body.rows.length === 0) {
-      throw new BadRequestException("No rows to import");
+      throw new BadRequestException("Aucune ligne à importer");
     }
     return this.imports.importStudentsFromRows(body.rows, req.user.id);
   }

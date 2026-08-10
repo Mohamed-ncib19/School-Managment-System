@@ -93,18 +93,18 @@ export function ConfirmDeleteDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 id="confirm-delete-title" className="mb-2 text-h4 font-bold text-text-primary">
-          Delete {entityName}
+          Supprimer {entityName}
         </h3>
         {error ? (
           <p id="confirm-delete-body" role="alert" className="mb-6 text-sm text-danger">{error}</p>
         ) : (
           <p id="confirm-delete-body" className="mb-6 text-sm text-text-secondary">
-            {message ?? "Are you sure? This action cannot be undone."}
+            {message ?? "Êtes-vous sûr ? Cette action ne peut pas être annulée."}
           </p>
         )}
         <div className="flex justify-end gap-3">
           <button ref={cancelRef} className="btn btn-secondary text-sm" onClick={onClose} disabled={isDeleting}>
-            {error ? "Close" : "Cancel"}
+            {error ? "Fermer" : "Annuler"}
           </button>
           {!error && (
             <button
@@ -113,7 +113,7 @@ export function ConfirmDeleteDialog({
               disabled={isDeleting}
               aria-busy={isDeleting || undefined}
             >
-              {isDeleting ? "Deleting..." : "Delete"}
+              {isDeleting ? "Suppression..." : "Supprimer"}
             </button>
           )}
         </div>

@@ -87,7 +87,7 @@ export class BrandingController {
         if (!ALLOWED_TYPES[file.mimetype]) {
           return cb(
             new BadRequestException(
-              "Unsupported image type. Use PNG, JPG or WebP (SVG is not accepted).",
+              "Type d'image non pris en charge. Utilisez PNG, JPG ou WebP (le SVG n'est pas accepté).",
             ),
             false,
           );
@@ -97,9 +97,9 @@ export class BrandingController {
     }),
   )
   async upload(@UploadedFile() file: Express.Multer.File | undefined, @CurrentUser("id") userId: string) {
-    if (!file) throw new BadRequestException("No file uploaded (field name: file)");
+    if (!file) throw new BadRequestException("Aucun fichier téléversé (champ : file)");
     if (file.size > MAX_BYTES) {
-      throw new BadRequestException(`Image must be under ${Math.floor(MAX_BYTES / 1024 / 1024)} MB`);
+      throw new BadRequestException(`L'image doit faire moins de ${Math.floor(MAX_BYTES / 1024 / 1024)} Mo`);
     }
 
     const current = await this.settings.get();
@@ -141,7 +141,7 @@ export class BrandingController {
   async remove(@CurrentUser("id") userId: string) {
     const current = await this.settings.get();
     if (!current.logo_path) {
-      throw new NotFoundException("No logo is set");
+      throw new NotFoundException("Aucun logo n'est défini");
     }
 
     const file = join(process.cwd(), current.logo_path);

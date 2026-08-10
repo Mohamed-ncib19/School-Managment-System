@@ -26,7 +26,7 @@ export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarPro
         <button
           onClick={onToggleSidebar}
           className="lg:hidden h-10 w-10 flex items-center justify-center rounded-btn hover:bg-neutral-soft dark:hover:bg-white/10 transition-colors shrink-0"
-          aria-label="Toggle sidebar"
+          aria-label="Basculer la barre latérale"
         >
           <Menu size={20} />
         </button>
@@ -41,7 +41,7 @@ export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarPro
         <button
           onClick={toggleTheme}
           className="h-9 w-9 flex items-center justify-center rounded-btn bg-background border border-border hover:bg-neutral-soft dark:hover:bg-white/10 transition-colors"
-          aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          aria-label={theme === "light" ? "Passer en mode sombre" : "Passer en mode clair"}
         >
           {theme === "light" ? (
             <Moon size={16} className="text-text-secondary" />

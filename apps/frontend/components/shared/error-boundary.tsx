@@ -50,9 +50,9 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-warning-soft text-warning-strong dark:bg-warning-dark-soft dark:text-warning-dark-strong">
           <AlertTriangle size={22} />
         </div>
-        <p className="text-sm font-medium text-text-primary">This section could not be displayed</p>
+        <p className="text-sm font-medium text-text-primary">Cette section n'a pas pu être affichée</p>
         <p className="mt-1 max-w-md text-xs text-text-secondary">
-          The rest of the application is still working. Reloading this section usually clears it.
+          Le reste de l'application fonctionne normalement. Recharger cette section la rétablit généralement.
         </p>
         {process.env.NODE_ENV !== "production" && (
           <pre className="mt-4 max-w-full overflow-x-auto rounded-input bg-neutral-soft p-3 text-left text-[11px] text-text-secondary dark:bg-white/5">
@@ -61,7 +61,7 @@ export class ErrorBoundary extends Component<Props, State> {
         )}
         <div className="mt-4 flex gap-2">
           <button type="button" onClick={this.reset} className="btn btn-secondary text-xs">
-            <RefreshCw size={14} /> Reload section
+            <RefreshCw size={14} /> Recharger la section
           </button>
           <button type="button" onClick={() => (window.location.href = "/dashboard")} className="btn btn-primary text-xs">
             <Home size={14} /> Go to dashboard

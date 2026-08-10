@@ -329,19 +329,21 @@ export function useRegenerateDocuments() {
 // Transactions, reports, settings
 // ---------------------------------------------------------------------------
 
-export function useLedger(query: Record<string, unknown> = {}) {
+export function useLedger(query: Record<string, unknown> = {}, enabled = true) {
   return useQuery<LedgerPage>({
     queryKey: financialKeys.ledger(query),
     queryFn: () => financialApi.ledger(query),
     placeholderData: (previous) => previous,
+    enabled,
   });
 }
 
-export function useFinancialActivity(query: Record<string, unknown> = {}) {
+export function useFinancialActivity(query: Record<string, unknown> = {}, enabled = true) {
   return useQuery({
     queryKey: financialKeys.activity(query),
     queryFn: () => financialApi.activity(query),
     placeholderData: (previous) => previous,
+    enabled,
   });
 }
 

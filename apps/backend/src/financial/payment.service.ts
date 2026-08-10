@@ -249,7 +249,7 @@ export class PaymentService {
       where: { id: paymentId },
       include: PAYMENT_INCLUDE_FULL,
     });
-    if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
+    if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
     return this.present(payment);
   }
 
@@ -375,14 +375,14 @@ export class PaymentService {
   async refund(paymentId: string, userId: string, dto: RefundTransactionDto) {
     const amount = money(dto.amount);
     if (amount.lessThanOrEqualTo(0)) {
-      throw new BadRequestException("A refund amount must be greater than zero");
+      throw new BadRequestException("Le montant du remboursement doit être supérieur à zéro");
     }
 
     const payment = await this.requirePayment(paymentId);
     const alreadyPaid = money(payment.paid_amount);
     if (amount.greaterThan(alreadyPaid)) {
       throw new BadRequestException(
-        `Cannot refund ${toAmount(amount)} — only ${toAmount(alreadyPaid)} has been collected against this invoice`,
+        `Impossible de rembourser ${toAmount(amount)} — seul ${toAmount(alreadyPaid)} a été encaissé sur cette facture`,
       );
     }
 
@@ -409,14 +409,14 @@ export class PaymentService {
   async correct(paymentId: string, userId: string, dto: CorrectTransactionDto) {
     const delta = money(dto.amount);
     if (delta.isZero()) {
-      throw new BadRequestException("A correction of zero changes nothing");
+      throw new BadRequestException("Une correction de zéro ne change rien");
     }
 
     const payment = await this.requirePayment(paymentId);
     const resulting = money(payment.paid_amount).plus(delta);
     if (resulting.isNegative()) {
       throw new BadRequestException(
-        `That correction would take the collected total to ${toAmount(resulting)}, which cannot be negative`,
+        `Cette correction porterait le total encaissé à ${toAmount(resulting)}, ce qui ne peut pas être négatif`,
       );
     }
 
@@ -458,7 +458,7 @@ export class PaymentService {
 
     if (payment.status === "cancelled") {
       throw new BadRequestException(
-        "This invoice is cancelled. Reopen it before recording anything against it.",
+        "Cette facture est annulée. Rouvrez-la avant d'enregistrer quoi que ce soit.",
       );
     }
 
@@ -476,15 +476,15 @@ export class PaymentService {
       if (amount.lessThanOrEqualTo(0)) {
         throw new BadRequestException(
           outstanding.lessThanOrEqualTo(0)
-            ? "This invoice is already settled in full"
-            : "A payment amount must be greater than zero",
+            ? "Cette facture est déjà réglée en totalité"
+            : "Le montant du paiement doit être supérieur à zéro",
         );
       }
       // Overpayment is almost always a keying slip, and letting it through would
       // put the invoice into a state no status describes.
       if (amount.greaterThan(outstanding)) {
         throw new BadRequestException(
-          `That is more than the ${toAmount(outstanding)} outstanding on this invoice`,
+          `C'est plus que le solde de ${toAmount(outstanding)} restant sur cette facture`,
         );
       }
     }
@@ -645,11 +645,11 @@ export class PaymentService {
 
     if (money(payment.paid_amount).greaterThan(0)) {
       throw new BadRequestException(
-        "This invoice has money against it. Refund the collected amount before cancelling.",
+        "Cette facture a déjà un encaissement. Remboursez le montant encaissé avant d'annuler.",
       );
     }
     if (payment.status === "cancelled") {
-      throw new BadRequestException("This invoice is already cancelled");
+      throw new BadRequestException("Cette facture est déjà annulée");
     }
 
     const updated = await this.prisma.student_payments.update({
@@ -678,7 +678,7 @@ export class PaymentService {
   async reopen(paymentId: string, userId: string) {
     const payment = await this.requirePayment(paymentId);
     if (payment.status !== "cancelled") {
-      throw new BadRequestException("Only a cancelled invoice can be reopened");
+      throw new BadRequestException("Seule une facture annulée peut être rouverte");
     }
 
     await this.prisma.student_payments.update({
@@ -739,7 +739,7 @@ export class PaymentService {
       where: { id: paymentId },
       include: PAYMENT_INCLUDE_FULL,
     });
-    if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
+    if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
     return payment;
   }
 

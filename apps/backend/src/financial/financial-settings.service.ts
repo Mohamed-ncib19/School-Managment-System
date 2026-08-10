@@ -46,7 +46,7 @@ export class FinancialSettingsService {
     if (dto.custom_formula_check) {
       const check = validateFormula(dto.custom_formula_check);
       if (!check.valid) {
-        throw new BadRequestException(`Invalid formula: ${check.error}`);
+        throw new BadRequestException(`Formule invalide : ${check.error}`);
       }
     }
 
@@ -56,7 +56,7 @@ export class FinancialSettingsService {
       !existing.default_fixed_amount
     ) {
       throw new BadRequestException(
-        "A custom default model needs a formula. Set one per professor, or choose another default model.",
+        "Un modèle par défaut personnalisé nécessite une formule. Définissez-en une par professeur, ou choisissez un autre modèle par défaut.",
       );
     }
 

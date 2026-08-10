@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useFinancialSettings, useUpdateFinancialSettings } from "@/hooks/use-financial";
+import { ErrorState } from "@/components/financial/error-state";
 import { financialApi } from "@/lib/api/financial.api";
 import { formatCurrency } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -41,7 +42,7 @@ const MONTHS = Array.from({ length: 12 }, (_, index) => index + 1);
  */
 export default function FinancialSettingsPage() {
   const { t } = useTranslation();
-  const { data: settings, isLoading } = useFinancialSettings();
+  const { data: settings, isLoading, isError, refetch } = useFinancialSettings();
   const update = useUpdateFinancialSettings();
 
   const [form, setForm] = useState<Partial<FinancialSettings>>({});
@@ -134,6 +135,14 @@ export default function FinancialSettingsPage() {
         {Array.from({ length: 3 }).map((_, index) => (
           <div key={index} className="h-40 rounded-card bg-neutral-soft dark:bg-white/10 animate-pulse" />
         ))}
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-4">
+        <ErrorState onRetry={refetch} className="py-16" />
       </div>
     );
   }

@@ -20,7 +20,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, "jwt") {
       select: { id: true, email: true, role: true, is_active: true, full_name: true },
     });
     if (!user || !user.is_active) {
-      throw new UnauthorizedException("Account is inactive or does not exist");
+      throw new UnauthorizedException("Le compte est inactif ou n'existe pas");
     }
     return user;
   }

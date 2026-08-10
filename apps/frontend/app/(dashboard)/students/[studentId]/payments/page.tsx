@@ -195,7 +195,9 @@ export default function StudentPaymentsPage() {
             not set. Changing it means recording money. */}
         <StatusBadge status={p.status} />
       </td>
-      <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? t("studentPayments.dash")}</td>
+      {/* Cash is the default method: the school records everything in cash, so
+          an invoice without a recorded collection still reads as cash. */}
+      <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? "Cash"}</td>
       <td className="px-4 py-3 text-right">
         <div className="flex items-center justify-end gap-2">
           {p.status === "paid" && student && (

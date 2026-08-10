@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Search, Wallet } from "lucide-react";
 import { usePayroll } from "@/hooks/use-financial";
 import { useFields, useLevels } from "@/hooks/use-queries";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { EmptyState } from "@/components/shared/empty-state";
-import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
+import { ErrorState } from "@/components/financial/error-state";
+import { FinancialTableSkeleton } from "@/components/shared/skeletons";
 import { payrollStatusClasses } from "@/lib/charts/theme";
 import { cn, formatCurrency } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -35,6 +37,7 @@ const STATUSES = [
  */
 export default function ProfessorPaymentsPage() {
   const { t } = useTranslation();
+  const router = useRouter();
   const [period, setPeriod] = useState(currentPeriod());
   const [levelId, setLevelId] = useState("");
   const [fieldId, setFieldId] = useState("");
@@ -56,13 +59,17 @@ export default function ProfessorPaymentsPage() {
     [period, levelId, fieldId, status, debouncedSearch],
   );
 
-  const { data, isLoading } = usePayroll(query);
+  const { data, isLoading, isError, refetch } = usePayroll(query);
   const rows = data?.data ?? [];
   const totals = data?.meta?.totals;
 
   return (
     <div className="space-y-4">
-      <div className="card flex items-center gap-3 flex-wrap">
+      {isError ? (
+        <ErrorState onRetry={refetch} />
+      ) : (
+        <>
+          <div className="card flex items-center gap-3 flex-wrap">
         <input
           type="month"
           aria-label={t("payments.period", "Period")}
@@ -122,7 +129,7 @@ export default function ProfessorPaymentsPage() {
       )}
 
       {isLoading ? (
-        <PageLoader text={t("common.loading", "Loading…")} />
+        <FinancialTableSkeleton />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<Wallet size={24} />}
@@ -168,7 +175,11 @@ export default function ProfessorPaymentsPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {rows.map((row) => (
-                  <tr key={row.professor.id} className="hover:bg-background/50 transition-colors">
+                  <tr
+                    key={row.professor.id}
+                    className="hover:bg-background/50 cursor-pointer transition-colors"
+                    onClick={() => router.push(`/financial/professors/${row.professor.id}?period=${row.period}`)}
+                  >
                     <td className="px-3 py-2.5">
                       <Link
                         href={`/financial/professors/${row.professor.id}?period=${row.period}`}
@@ -212,6 +223,8 @@ export default function ProfessorPaymentsPage() {
             </table>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

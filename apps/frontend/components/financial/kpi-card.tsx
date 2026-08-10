@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils/format";
 
@@ -23,6 +24,8 @@ interface KpiCardProps {
   /** Optional 0-100 meter, for rate-style cards. */
   meter?: number;
   loading?: boolean;
+  /** Link to the screen that acts on this figure, when there is a clear one. */
+  href?: string;
 }
 
 /**
@@ -32,11 +35,11 @@ interface KpiCardProps {
  * recedes. The tone tints the icon and the value only — never the card body,
  * which would turn a dashboard of eight cards into a traffic light.
  */
-export function KpiCard({ label, value, icon: Icon, tone = "neutral", hint, meter, loading }: KpiCardProps) {
+export function KpiCard({ label, value, icon: Icon, tone = "neutral", hint, meter, loading, href }: KpiCardProps) {
   const styles = TONE_STYLES[tone];
 
-  return (
-    <div className="card flex flex-col gap-3">
+  const body = (
+    <div className="flex flex-col gap-3">
       <div className="flex items-start gap-3">
         <div className={cn("h-10 w-10 shrink-0 rounded-btn flex items-center justify-center", styles.icon)}>
           <Icon size={18} aria-hidden="true" />
@@ -69,4 +72,14 @@ export function KpiCard({ label, value, icon: Icon, tone = "neutral", hint, mete
       )}
     </div>
   );
+
+  if (href) {
+    return (
+      <Link href={href} className="card flex flex-col gap-3 transition-colors hover:border-primary/50">
+        {body}
+      </Link>
+    );
+  }
+
+  return <div className="card flex flex-col gap-3">{body}</div>;
 }

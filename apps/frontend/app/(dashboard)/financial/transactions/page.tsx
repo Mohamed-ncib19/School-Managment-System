@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, History, Receipt, Search } from "lucide-react";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
+import { ErrorState } from "@/components/financial/error-state";
 import { useFinancialActivity, useLedger } from "@/hooks/use-financial";
-import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
+import { FinancialTableSkeleton } from "@/components/shared/skeletons";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { EmptyState } from "@/components/shared/empty-state";
 import type { FinancialFilters } from "@/lib/api/financial.api";
@@ -43,11 +44,17 @@ export default function TransactionsPage() {
     [filters.from, filters.to, debouncedSearch, page],
   );
 
-  const { data: ledger, isLoading: ledgerLoading } = useLedger(ledgerQuery);
-  const { data: activity, isLoading: activityLoading } = useFinancialActivity(activityQuery);
+  /** Each tab owns its query: the other one stays disabled until shown. */
+  const { data: ledger, isLoading: ledgerLoading, isError: ledgerError, refetch: refetchLedger } = useLedger(
+    ledgerQuery,
+    tab === "ledger",
+  );
+  const { data: activity, isLoading: activityLoading, isError: activityError, refetch: refetchActivity } =
+    useFinancialActivity(activityQuery, tab === "activity");
 
   const isLoading = tab === "ledger" ? ledgerLoading : activityLoading;
   const meta = tab === "ledger" ? ledger?.meta : activity?.meta;
+  const refetch = tab === "ledger" ? refetchLedger : refetchActivity;
 
   return (
     <div className="space-y-4">
@@ -136,8 +143,10 @@ export default function TransactionsPage() {
         </div>
       )}
 
-      {isLoading ? (
-        <PageLoader text={t("common.loading", "Loading…")} />
+      {(tab === "ledger" ? ledgerError : activityError) ? (
+        <ErrorState onRetry={refetch} />
+      ) : isLoading ? (
+        <FinancialTableSkeleton />
       ) : tab === "ledger" ? (
         (ledger?.data.length ?? 0) === 0 ? (
           <EmptyState message={t("financial.noTransactions", "No transactions in this window.")} />

@@ -48,7 +48,7 @@ export class ProfessorsService {
       where: { id },
       include: { field: { include: { level: true } } },
     });
-    if (!prof) throw new NotFoundException(`Professor ${id} not found`);
+    if (!prof) throw new NotFoundException(`Professeur ${id} introuvable`);
     return prof;
   }
 
@@ -61,7 +61,7 @@ export class ProfessorsService {
     user_id?: string;
   }, userId?: string) {
     const phone = normalizeTunisianPhone(dto.phone);
-    if (!phone) throw new BadRequestException("Professor phone must be 8 digits, e.g. +216 22 123 456");
+    if (!phone) throw new BadRequestException("Le téléphone du professeur doit comprendre 8 chiffres, ex. +216 22 123 456");
     const prof = await this.prisma.professors.create({
       data: {
         field_id: dto.field_id,
@@ -106,7 +106,7 @@ export class ProfessorsService {
     if (dto.full_name !== undefined) data.full_name = dto.full_name;
     if (dto.phone !== undefined) {
       const phone = normalizeTunisianPhone(dto.phone);
-      if (!phone) throw new BadRequestException("Professor phone must be 8 digits, e.g. +216 22 123 456");
+      if (!phone) throw new BadRequestException("Le téléphone du professeur doit comprendre 8 chiffres, ex. +216 22 123 456");
       data.phone = phone;
     }
     if (dto.email !== undefined) data.email = dto.email;
@@ -166,7 +166,7 @@ export class ProfessorsService {
   async hardDeleteProfessor(id: string, userId?: string) {
     const prof = await this.getProfessor(id);
     if (prof.is_active) {
-      throw new ConflictException(`Professor "${prof.full_name}" is still active - deactivate them first`);
+      throw new ConflictException(`Le professeur "${prof.full_name}" est toujours actif - désactivez-le d'abord`);
     }
     const counts = await hardDeleteHierarchy(this.prisma, "professor", id);
     await this.auditService.record({

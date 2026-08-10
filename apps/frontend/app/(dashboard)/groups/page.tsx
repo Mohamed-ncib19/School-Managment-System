@@ -280,7 +280,7 @@ export default function GroupsPage() {
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-1">
                               {prof && field && prof.field?.level?.id && (
-                                <Link href={`/attendance-sheet/${group.id}`} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors" aria-label="Generate attendance sheet" title="Generate Monthly Attendance Sheet">
+                                <Link href={`/attendance-sheet/${group.id}`} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors" aria-label="Générer la feuille de présence" title="Générer la feuille de présence mensuelle">
                                   <Printer size={14} />
                                 </Link>
                               )}

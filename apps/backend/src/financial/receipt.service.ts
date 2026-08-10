@@ -36,7 +36,7 @@ export class ReceiptService {
         transactions: { orderBy: { paid_at: "asc" } },
       },
     });
-    if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
+    if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
 
     const settings = await this.settings.get();
     const student = payment.student;
@@ -127,7 +127,7 @@ export class ReceiptService {
         recorder: { select: { full_name: true } },
       },
     });
-    if (!payout) throw new NotFoundException(`Payroll payment ${payoutId} not found`);
+    if (!payout) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
     const settings = await this.settings.get();
     const fmt = this.formatters(settings.currency, settings.currency_locale);

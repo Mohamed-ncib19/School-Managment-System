@@ -148,7 +148,7 @@ async function main() {
             const enrollment = new Date();
             enrollment.setMonth(enrollment.getMonth() - enrolledMonthsAgo);
             enrollment.setDate(between(1, 28));
-            const monthlyFee = between(6, 18) * 25;
+            const monthlyFee = 50;
 
             studentRows.push({
               id: studentId,
@@ -176,6 +176,7 @@ async function main() {
               paymentRows.push({
                 id: randomUUID(),
                 student_id: studentId,
+                group_id: groupId,
                 period,
                 amount_due: monthlyFee,
                 due_date: dueDate,

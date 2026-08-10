@@ -165,9 +165,9 @@ export default function ProfessorsPage() {
                   </div>
                   <div className="flex items-center gap-1">
                     {prof.is_active ? (
-                      <span className="text-xs font-medium text-success-strong">Active</span>
+                      <span className="text-xs font-medium text-success-strong">Actif</span>
                     ) : (
-                      <span className="text-xs font-medium text-text-secondary">Inactive</span>
+                      <span className="text-xs font-medium text-text-secondary">Inactif</span>
                     )}
                     <button
                       onClick={(e) => { e.stopPropagation(); setDeleteId(prof.id); }}
@@ -224,7 +224,7 @@ export default function ProfessorsPage() {
                         <span>{prof.field?.name ?? "—"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3">{prof.is_active ? <span className="text-xs font-medium text-success-strong">Active</span> : <span className="text-xs font-medium text-text-secondary">Inactive</span>}</td>
+                    <td className="px-4 py-3">{prof.is_active ? <span className="text-xs font-medium text-success-strong">Actif</span> : <span className="text-xs font-medium text-text-secondary">Inactif</span>}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button

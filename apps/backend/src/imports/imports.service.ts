@@ -61,11 +61,11 @@ export class ImportsService {
     try {
       await workbook.xlsx.load(buffer as any);
     } catch {
-      throw new BadRequestException("Could not read that file â€” is it a valid .xlsx workbook?");
+      throw new BadRequestException("Impossible de lire ce fichier — est-ce un classeur .xlsx valide ?");
     }
 
     const sheet = workbook.worksheets[0];
-    if (!sheet) throw new BadRequestException("The workbook has no sheets.");
+    if (!sheet) throw new BadRequestException("Ce classeur ne contient aucune feuille.");
 
     const columnMap: Record<string, string> = {};
     const headerRow = sheet.getRow(1);
@@ -190,11 +190,11 @@ export class ImportsService {
     try {
       await workbook.xlsx.load(buffer as any);
     } catch {
-      throw new BadRequestException("Could not read that file â€” is it a valid .xlsx workbook?");
+      throw new BadRequestException("Impossible de lire ce fichier — est-ce un classeur .xlsx valide ?");
     }
 
     const sheet = workbook.worksheets[0];
-    if (!sheet) throw new BadRequestException("The workbook has no sheets.");
+    if (!sheet) throw new BadRequestException("Ce classeur ne contient aucune feuille.");
 
     const { map: columnMap } = this.mapColumns(sheet);
     const { rows, errors } = this.parseRows(sheet, columnMap);

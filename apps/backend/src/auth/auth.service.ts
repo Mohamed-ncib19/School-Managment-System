@@ -55,16 +55,16 @@ export class AuthService {
     const user = await this.prisma.users.findUnique({ where: { email } });
     if (!user) {
       await this.recordFailedLogin("user_not_found", email, null, ipAddress, userAgent);
-      throw new UnauthorizedException("Invalid credentials");
+      throw new UnauthorizedException("Identifiants invalides");
     }
     const valid = await compare(password, user.password_hash);
     if (!valid) {
       await this.recordFailedLogin("invalid_password", email, user.id, ipAddress, userAgent);
-      throw new UnauthorizedException("Invalid credentials");
+      throw new UnauthorizedException("Identifiants invalides");
     }
     if (!user.is_active) {
       await this.recordFailedLogin("account_deactivated", email, user.id, ipAddress, userAgent);
-      throw new UnauthorizedException("Your account has been deactivated");
+      throw new UnauthorizedException("Votre compte a été désactivé");
     }
     const { password_hash, ...result } = user;
     await this.auditService.record({
@@ -109,7 +109,7 @@ export class AuthService {
   }) {
     const existing = await this.prisma.users.findUnique({ where: { email: data.email } });
     if (existing) {
-      throw new ConflictException("Super admin with this email already exists");
+      throw new ConflictException("Un super administrateur avec cet e-mail existe déjà");
     }
     const password_hash = await hash(data.password, 10);
     const user = await this.prisma.users.create({
@@ -124,13 +124,13 @@ export class AuthService {
       where: { id: userId },
       select: { id: true, email: true, full_name: true, role: true, is_active: true },
     });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw new NotFoundException("Utilisateur introuvable");
     return user;
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw new NotFoundException("Utilisateur introuvable");
 
     const valid = await compare(currentPassword, user.password_hash);
     if (!valid) {
@@ -142,7 +142,7 @@ export class AuthService {
         actorId: userId,
         meta: { reason: "incorrect_current_password" },
       });
-      throw new UnauthorizedException("Current password is incorrect");
+      throw new UnauthorizedException("Le mot de passe actuel est incorrect");
     }
 
     const password_hash = await hash(newPassword, 10);

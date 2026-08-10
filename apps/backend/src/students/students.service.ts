@@ -20,7 +20,7 @@ export class StudentsService {
     }
     const parsed = new Date(trimmed);
     if (isNaN(parsed.getTime())) {
-      throw new BadRequestException(`Invalid date: ${value}`);
+      throw new BadRequestException(`Date invalide : ${value}`);
     }
     return parsed;
   }
@@ -44,7 +44,7 @@ export class StudentsService {
           ? [{ group_id: dto.group_id }]
           : [];
     if (provided.length === 0) {
-      throw new BadRequestException("A student must be assigned to at least one group");
+      throw new BadRequestException("Un étudiant doit être assigné à au moins un groupe");
     }
     const seen = new Set<string>();
     return provided.filter((a) => {
@@ -258,7 +258,7 @@ export class StudentsService {
         payments: true,
       },
     });
-    if (!student) throw new NotFoundException(`Student ${id} not found`);
+    if (!student) throw new NotFoundException(`Étudiant ${id} introuvable`);
     return student;
   }
 
@@ -276,12 +276,12 @@ export class StudentsService {
     monthly_fee: number;
   }, userId: string) {
     const phone = normalizeTunisianPhone(dto.phone);
-    if (!phone) throw new BadRequestException("Student phone must be 8 digits, e.g. +216 22 123 456");
+    if (!phone) throw new BadRequestException("Le téléphone de l'étudiant doit comprendre 8 chiffres, ex. +216 22 123 456");
     const parentPhone = dto.parent_phone
       ? normalizeTunisianPhone(dto.parent_phone)
       : undefined;
     if (dto.parent_phone && !parentPhone) {
-      throw new BadRequestException("Parent phone must be 8 digits, e.g. +216 22 123 456");
+      throw new BadRequestException("Le téléphone du parent doit comprendre 8 chiffres, ex. +216 22 123 456");
     }
     const enrollments = this.resolveEnrollments(dto);
     const enrollmentDate = this.parseDate(dto.enrollment_date);
@@ -346,13 +346,13 @@ export class StudentsService {
     if (dto.last_name !== undefined) data.last_name = dto.last_name;
     if (dto.phone !== undefined) {
       const phone = normalizeTunisianPhone(dto.phone);
-      if (!phone) throw new BadRequestException("Student phone must be 8 digits, e.g. +216 22 123 456");
+      if (!phone) throw new BadRequestException("Le téléphone de l'étudiant doit comprendre 8 chiffres, ex. +216 22 123 456");
       data.phone = phone;
     }
     if (dto.parent_phone !== undefined) {
       const parentPhone = dto.parent_phone ? normalizeTunisianPhone(dto.parent_phone) : null;
       if (dto.parent_phone && !parentPhone) {
-        throw new BadRequestException("Parent phone must be 8 digits, e.g. +216 22 123 456");
+        throw new BadRequestException("Le téléphone du parent doit comprendre 8 chiffres, ex. +216 22 123 456");
       }
       data.parent_phone = parentPhone;
     }
@@ -398,10 +398,10 @@ export class StudentsService {
       where: { id: studentId },
       select: { id: true, group_id: true, first_name: true, last_name: true },
     });
-    if (!student) throw new NotFoundException(`Student ${studentId} not found`);
+    if (!student) throw new NotFoundException(`Étudiant ${studentId} introuvable`);
 
     if (student.group_id === targetGroupId) {
-      throw new BadRequestException("Student is already in this group");
+      throw new BadRequestException("L'étudiant est déjà dans ce groupe");
     }
 
     const targetGroup = await this.prisma.groups.findUnique({
@@ -409,7 +409,7 @@ export class StudentsService {
       select: { id: true, is_active: true },
     });
     if (!targetGroup || !targetGroup.is_active) {
-      throw new NotFoundException(`Target group ${targetGroupId} not found`);
+      throw new NotFoundException(`Groupe cible ${targetGroupId} introuvable`);
     }
 
     const updated = await this.prisma.students.update({
@@ -491,7 +491,7 @@ export class StudentsService {
     const student = await this.prisma.students.findUnique({
       where: { id: studentId },
     });
-    if (!student) throw new NotFoundException(`Student ${studentId} not found`);
+    if (!student) throw new NotFoundException(`Étudiant ${studentId} introuvable`);
     return this.prisma.student_payments.findMany({
       where: { student_id: studentId },
       orderBy: { period: "desc" },

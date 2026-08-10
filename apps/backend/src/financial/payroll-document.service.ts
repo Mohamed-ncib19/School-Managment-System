@@ -5,7 +5,7 @@ import { PayrollDocumentType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { FinancialSettingsService } from "./financial-settings.service";
-import { RevenueCalculationService } from "./revenue-calculation.service";
+import { RevenueCalculationService, type CompensationRule } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
 import { Money, ZERO, money, percentOf, round2, sum, toAmount } from "./money.util";
 import { periodOfDate, parsePeriod } from "./period.util";
@@ -70,6 +70,10 @@ export interface SettlementSnapshot {
    */
   pending: {
     student_count: number;
+    /** Distinct students billed in the period (any status) — `student_count`
+     * compares against this, so paid + unpaid always add back to the roster
+     * that actually received an invoice, including non-active students. */
+    billed_student_count: number;
     invoice_count: number;
     amount_due: string;
     amount_paid: string;
@@ -170,11 +174,20 @@ export class PayrollDocumentService {
       this.settings.get(),
     ]);
 
-    if (!professor) throw new NotFoundException(`Professor ${profId} not found`);
+    if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
     const revenue = round2(money(shares._sum.amount));
-    const professorShare = round2(money(shares._sum.professor_share));
-    const schoolShare = round2(money(shares._sum.school_share));
+    let professorShare = round2(money(shares._sum.professor_share));
+    let schoolShare = round2(money(shares._sum.school_share));
+    // Percentage and hybrid settlements are priced live: the split printed on
+    // the document is the percentage in force now applied to the period's net
+    // collections, so a change of rate is reflected on the quittance the moment
+    // it is saved — no need to wait for the next collection. Pure-fixed and
+    // custom keep the frozen ledger splits recorded at collection time.
+    if (rule.model === "percentage" || rule.model === "hybrid") {
+      professorShare = this.revenue.shareFor(rule, revenue);
+      schoolShare = round2(revenue.minus(professorShare));
+    }
     const amountPaid = round2(money(paid._sum.amount));
     const earned = entitlement.total;
     const balance = round2(earned.minus(amountPaid));
@@ -237,7 +250,7 @@ export class PayrollDocumentService {
         school_share: toAmount(schoolShare),
         verified: professorShare.plus(schoolShare).equals(revenue),
       },
-      groups: await this.groupBreakdown(db, profId, target),
+      groups: await this.groupBreakdown(db, profId, target, rule),
       pending: await this.pendingForProfessor(db, profId, target, rule, revenue, earned),
     };
   }
@@ -264,15 +277,21 @@ export class PayrollDocumentService {
       where: {
         period,
         group: { prof_id: profId },
-        status: { in: ["not_paid", "due_soon", "overdue", "partially_paid"] },
       },
-      select: { amount_due: true, paid_amount: true, student_id: true },
+      select: { amount_due: true, paid_amount: true, student_id: true, status: true },
     });
+
+    // Every distinct student billed this period, whatever their status: a
+    // paused (or withdrawn) student still gets an invoice, so the roster of
+    // active students alone would make paid + unpaid not add back to the bills.
+    const billedStudentCount = new Set(invoices.map((i) => i.student_id)).size;
 
     // An unpaid invoice of 0,00 DT is nothing owed — it must not make the
     // receipt claim a student still owes money.
     const unsettled = invoices.filter(
-      (i) => round2(money(i.amount_due).minus(money(i.paid_amount))).greaterThan(0),
+      (i) =>
+        i.status !== "paid" &&
+        round2(money(i.amount_due).minus(money(i.paid_amount))).greaterThan(0),
     );
 
     const students = new Set(unsettled.map((i) => i.student_id));
@@ -290,6 +309,7 @@ export class PayrollDocumentService {
 
     return {
       student_count: students.size,
+      billed_student_count: billedStudentCount,
       invoice_count: unsettled.length,
       amount_due: toAmount(due),
       amount_paid: toAmount(paid),
@@ -303,7 +323,7 @@ export class PayrollDocumentService {
   }
 
   /** Per-group rows for the settlement table, mirroring the Excel workbook. */
-  private async groupBreakdown(db: Db, profId: string, period: string) {
+  private async groupBreakdown(db: Db, profId: string, period: string, rule: CompensationRule) {
     const txns = await db.payment_transactions.findMany({
       where: { prof_id: profId, period },
       select: {
@@ -339,14 +359,24 @@ export class PayrollDocumentService {
       row.schoolShare = row.schoolShare.plus(money(txn.school_share));
     }
 
+    const liveSplit = rule.model === "percentage" || rule.model === "hybrid";
+
     return Array.from(byGroup.values())
-      .map((row) => ({
-        group: row.group,
-        students: row.students.size,
-        revenue: toAmount(round2(row.revenue)),
-        professor_share: toAmount(round2(row.professorShare)),
-        school_share: toAmount(round2(row.schoolShare)),
-      }))
+      .map((row) => {
+        let professorShare = round2(row.professorShare);
+        let schoolShare = round2(row.schoolShare);
+        if (liveSplit) {
+          professorShare = this.revenue.shareFor(rule, row.revenue);
+          schoolShare = round2(row.revenue.minus(professorShare));
+        }
+        return {
+          group: row.group,
+          students: row.students.size,
+          revenue: toAmount(round2(row.revenue)),
+          professor_share: toAmount(professorShare),
+          school_share: toAmount(schoolShare),
+        };
+      })
       .sort((a, b) => a.group.localeCompare(b.group, "fr"));
   }
 
@@ -418,7 +448,7 @@ export class PayrollDocumentService {
         recorder: { select: { full_name: true } },
       },
     });
-    if (!payout) throw new NotFoundException(`Payroll payment ${payoutId} not found`);
+    if (!payout) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
     const period = payout.period ?? periodOfDate(payout.paid_at);
     const snapshot = await this.settlementForPeriod(payout.prof_id, period, tx);
@@ -504,7 +534,7 @@ export class PayrollDocumentService {
   /** Re-issues the pair of documents, e.g. after a payout was corrected. */
   async regenerate(payoutId: string, userId: string) {
     const payout = await this.prisma.payroll_payments.findUnique({ where: { id: payoutId } });
-    if (!payout) throw new NotFoundException(`Payroll payment ${payoutId} not found`);
+    if (!payout) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
     return this.prisma.$transaction((tx) => this.generateForPayout(tx, payoutId, userId));
   }
@@ -582,7 +612,7 @@ export class PayrollDocumentService {
       where: { id: docId },
       include: { generator: { select: { full_name: true } } },
     });
-    if (!doc) throw new NotFoundException(`Settlement document ${docId} not found`);
+    if (!doc) throw new NotFoundException(`Document de règlement ${docId} introuvable`);
 
     const snapshot = doc.data as unknown as SettlementSnapshot;
     const logo = await this.inlineLogo(logoUrl);
@@ -614,21 +644,25 @@ export class PayrollDocumentService {
   /** The professor's copy — the official payroll receipt handed to them. */
   private professorReceiptHtml(s: SettlementSnapshot, logoUrl?: string | null): string {
     const fmt = this.formatters(s);
+    // Two distinct claims make up what a professor is owed:
+    //   1. `balance` — collections already received from students but not yet
+    //      handed to the professor (the true "solde restant");
+    //   2. `pendingShare` — the projected share of students who have not paid
+    //      at all yet. Kept separate on the receipt: the first is money the
+    //      academy is holding, the second is only a projection.
     const balance = Number(s.totals.remaining_balance);
     const pending = s.pending;
     const hasPending = !!pending && pending.invoice_count > 0;
     const pendingShare = hasPending ? Number(pending.professor_potential) : 0;
-    // The "rest" a professor still expects includes the share of students who
-    // have not paid yet — the receipt must not claim "règlement soldé" while
-    // their fees are still owed.
-    const projectedBalance = balance + pendingShare;
     const pendingStudentWord = (n: number) => (n > 1 ? "étudiants non réglés" : "étudiant non réglé");
-    const balanceDate =
+    const collectedNote =
+      balance > 0
+        ? "encaissements déjà payés par les étudiants, pas encore versés au professeur"
+        : "règlement entièrement versé";
+    const pendingNote =
       hasPending && pendingShare > 0
-        ? `${pending!.student_count} ${pendingStudentWord(pending!.student_count)} — à régler aux prochains encaissements`
-        : balance > 0
-          ? "à régler sur les prochains encaissements"
-          : "règlement soldé";
+        ? `+ ${fmt.money(pendingShare.toFixed(2))} à venir sur ${pending!.student_count} ${pendingStudentWord(pending!.student_count)}`
+        : "";
 
     return this.shell(s, {
       title: s.document.title,
@@ -669,8 +703,9 @@ export class PayrollDocumentService {
           </div>
           <div class="settled-box">
             <div class="label">Solde restant</div>
-            <div class="value ${projectedBalance > 0 ? "negative" : ""}">${fmt.money(projectedBalance.toFixed(2))}</div>
-            <div class="date">${balanceDate}</div>
+            <div class="value ${balance > 0 ? "negative" : ""}">${fmt.money(balance.toFixed(2))}</div>
+            <div class="date">${collectedNote}</div>
+            ${pendingNote ? `<div class="date">${pendingNote}</div>` : ""}
           </div>
         </div>
 
@@ -678,13 +713,15 @@ export class PayrollDocumentService {
         <h2 class="section">Étudiants non encore payés</h2>
         <table class="data">
           <tbody>
-            <tr><td>Étudiants non réglés</td><td class="right">${pending.student_count} / ${s.totals.student_count}</td></tr>
+            <tr><td>Étudiants non réglés</td><td class="right">${pending.student_count} / ${pending.billed_student_count}</td></tr>
+            <tr><td>Étudiants ayant réglé</td><td class="right">${pending.billed_student_count - pending.student_count}</td></tr>
+            <tr><td>Gain professeur sur ces non-réglés</td><td class="right">${fmt.money(pending.professor_potential)}</td></tr>
           </tbody>
           <tfoot>
             <tr><td>Gain professeur total prévu</td><td class="right">${fmt.money(pending.projected_earned)}</td></tr>
           </tfoot>
         </table>
-        <p class="projection-note">Gain prévisionnel si tous les étudiants non réglés paient — ${fmt.money(s.totals.total_earned)} actuels + ${fmt.money(pending.professor_potential)} à venir.</p>
+        <p class="projection-note">Prévisionnel si tous les étudiants non réglés paient — ${fmt.money(s.totals.total_earned)} acquis (encaissements déjà versés compris) + ${fmt.money(pending.professor_potential)} à venir.</p>
         ` : ""}
 
         <div class="signatures">

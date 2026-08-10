@@ -1181,7 +1181,14 @@ const childrenLabel =
                     <tr
                       key={entity.id}
                       className="hover:bg-background/50 cursor-pointer transition-colors"
-                      onClick={() => entityType === "student" && setDetailStudentId(entity.id)}
+                      onClick={() => {
+                        if (entityType === "student") {
+                          setDetailStudentId(entity.id);
+                        } else {
+                          const href = nextHref ?? attendanceHref;
+                          if (href) router.push(href);
+                        }
+                      }}
                     >
                       <td className="px-4 py-3 font-medium text-primary">
                         <div className="flex items-center gap-2">

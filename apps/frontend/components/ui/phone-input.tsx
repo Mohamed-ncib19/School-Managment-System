@@ -14,6 +14,11 @@ interface PhoneInputProps {
   className?: string;
 }
 
+/** 22123456 → "22 123 456" — readable groups, applied only to the display. */
+function formatDigits(digits: string): string {
+  return [digits.slice(0, 2), digits.slice(2, 5), digits.slice(5, 8)].filter(Boolean).join(" ");
+}
+
 /**
  * Tunisian phone input: a fixed "+216" prefix the user cannot remove, and an
  * 8-digit field that only accepts digits. The stored value is the bare 8
@@ -29,6 +34,7 @@ export function PhoneInput({
   className,
 }: PhoneInputProps) {
   const digits = value.replace(/\D/g, "").slice(0, 8);
+  const display = formatDigits(digits);
 
   return (
     <div
@@ -50,8 +56,8 @@ export function PhoneInput({
         required={required}
         disabled={disabled}
         placeholder={placeholder}
-        maxLength={8}
-        value={digits}
+        maxLength={10}
+        value={display}
         onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 8))}
         className="min-w-0 flex-1 bg-transparent py-2.5 outline-none placeholder:text-text-secondary disabled:opacity-50"
       />

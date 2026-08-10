@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronRight, Home } from "lucide-react";
 import { ChartCard } from "@/components/financial/chart-card";
+import { ErrorState } from "@/components/financial/error-state";
 import { FinancialFilterBar } from "@/components/financial/financial-filters";
 import { BreakdownBarChart, TimeSeriesChart } from "@/components/financial/charts";
 import {
@@ -13,7 +14,6 @@ import {
   useRevenueSeries,
 } from "@/hooks/use-financial";
 import { useHierarchyConfig } from "@/hooks/use-hierarchy-config";
-import { FinancialDashboardSkeleton } from "@/components/shared/skeletons";
 import type { FinancialFilters } from "@/lib/api/financial.api";
 import { SEQUENTIAL, SERIES } from "@/lib/charts/theme";
 import { cn, formatCurrency } from "@/lib/utils/format";
@@ -62,7 +62,7 @@ export default function RevenueAnalyticsPage() {
     ...trail.reduce((acc, crumb) => ({ ...acc, ...crumb.filter }), {} as Record<string, string>),
   };
 
-  const { data: revenue, isLoading: revenueLoading } = useRevenueSeries(filters);
+  const { data: revenue, isLoading: revenueLoading, isError, refetch } = useRevenueSeries(filters);
   const { data: collection, isLoading: collectionLoading } = useCollectionTrend(filters);
   const { data: late, isLoading: lateLoading } = useLatePaymentTrend(filters);
   const { data: performance, isLoading: perfLoading } = useProfessorPerformance({ ...filters, limit: 10 });
@@ -99,6 +99,8 @@ export default function RevenueAnalyticsPage() {
   return (
     <div className="space-y-4">
       <FinancialFilterBar value={filters} onChange={setFilters} />
+
+      {isError && <ErrorState onRetry={refetch} />}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <ChartCard

@@ -26,38 +26,38 @@ export function describeError(error: unknown): { title: string; detail: string; 
       : undefined;
 
   if (status === 400 && serverMessage) {
-    return { kind: "unknown", title: "Please check the details", detail: serverMessage };
+    return { kind: "unknown", title: "Veuillez vérifier les détails", detail: serverMessage };
   }
 
   if (err?.code === "ERR_NETWORK" || err?.message === "Network Error") {
     return {
       kind: "network",
-      title: "Cannot reach the server",
-      detail: "The application server is not responding. Check that it is running, then try again.",
+      title: "Impossible de joindre le serveur",
+      detail: "Le serveur de l'application ne répond pas. Vérifiez qu'il est en cours d'exécution, puis réessayez.",
     };
   }
   if (status === 401) {
-    return { kind: "auth", title: "Your session has expired", detail: "Sign in again to continue." };
+    return { kind: "auth", title: "Votre session a expiré", detail: "Connectez-vous à nouveau pour continuer." };
   }
   if (status === 403) {
-    return { kind: "auth", title: "You do not have access", detail: serverMessage ?? "This action requires additional permissions." };
+    return { kind: "auth", title: "Vous n'avez pas accès", detail: serverMessage ?? "Cette action nécessite des autorisations supplémentaires." };
   }
   if (status === 404) {
-    return { kind: "notfound", title: "Not found", detail: serverMessage ?? "The record you asked for no longer exists." };
+    return { kind: "notfound", title: "Introuvable", detail: serverMessage ?? "L'enregistrement demandé n'existe plus." };
   }
   if (status === 429) {
-    return { kind: "server", title: "Too many requests", detail: serverMessage ?? "Please wait a moment and try again." };
+    return { kind: "server", title: "Trop de requêtes", detail: serverMessage ?? "Patientez un instant puis réessayez." };
   }
   if (status && status >= 500) {
-    return { kind: "server", title: "The server ran into a problem", detail: serverMessage ?? "This has been recorded. Try again in a moment." };
+    return { kind: "server", title: "Le serveur a rencontré un problème", detail: serverMessage ?? "L'incident a été enregistré. Réessayez dans un instant." };
   }
   if (status && status >= 400) {
-    return { kind: "unknown", title: "That request could not be completed", detail: serverMessage ?? "Please check the details and try again." };
+    return { kind: "unknown", title: "La requête n'a pas pu être effectuée", detail: serverMessage ?? "Vérifiez les détails puis réessayez." };
   }
   return {
     kind: "unknown",
-    title: "Something went wrong",
-    detail: serverMessage ?? err?.message ?? "An unexpected error occurred.",
+    title: "Une erreur est survenue",
+    detail: serverMessage ?? err?.message ?? "Une erreur inattendue s'est produite.",
   };
 }
 
@@ -103,7 +103,7 @@ export function ErrorState({
           className="btn btn-secondary mt-4 text-xs disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RefreshCw size={14} className={isRetrying ? "animate-spin" : ""} />
-          {isRetrying ? "Retrying..." : "Try again"}
+          {isRetrying ? "Nouvelle tentative..." : "Réessayer"}
         </button>
       )}
     </div>

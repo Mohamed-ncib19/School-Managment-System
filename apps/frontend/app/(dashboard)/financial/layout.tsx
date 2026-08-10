@@ -10,18 +10,24 @@ import {
   FileBarChart,
   History,
   Settings,
+  ShieldOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
+import { isFeatureEnabled, useSystemSettings } from "@/hooks/use-system-settings";
+import type { FeatureKey } from "@/hooks/use-system-settings";
+import type { LucideIcon } from "lucide-react";
 
-const SECTIONS = [
-  { href: "/financial", label: "financial.nav.dashboard", icon: LayoutDashboard, exact: true },
-  { href: "/financial/payments", label: "financial.nav.studentPayments", icon: Users },
-  { href: "/financial/professors", label: "financial.nav.professorPayments", icon: UserCheck },
-  { href: "/financial/analytics", label: "financial.nav.analytics", icon: TrendingUp },
-  { href: "/financial/reports", label: "financial.nav.reports", icon: FileBarChart },
-  { href: "/financial/transactions", label: "financial.nav.transactions", icon: History },
-  { href: "/financial/settings", label: "financial.nav.settings", icon: Settings },
+type FinancialSection = { href: string; label: string; icon: LucideIcon; exact?: boolean; feature: FeatureKey };
+
+const SECTIONS: FinancialSection[] = [
+  { href: "/financial", label: "financial.nav.dashboard", icon: LayoutDashboard, exact: true, feature: "financial.dashboard" },
+  { href: "/financial/payments", label: "financial.nav.studentPayments", icon: Users, feature: "financial.studentPayments" },
+  { href: "/financial/professors", label: "financial.nav.professorPayments", icon: UserCheck, feature: "financial.professorPayments" },
+  { href: "/financial/analytics", label: "financial.nav.analytics", icon: TrendingUp, feature: "financial.analytics" },
+  { href: "/financial/reports", label: "financial.nav.reports", icon: FileBarChart, feature: "financial.reports" },
+  { href: "/financial/transactions", label: "financial.nav.transactions", icon: History, feature: "financial.transactions" },
+  { href: "/financial/settings", label: "financial.nav.settings", icon: Settings, feature: "financial.settings" },
 ];
 
 /**
@@ -35,6 +41,17 @@ const SECTIONS = [
 export default function FinancialLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { t } = useTranslation();
+  const { data: system } = useSystemSettings();
+
+  const activeSection = [...SECTIONS]
+    .sort((a, b) => b.href.length - a.href.length)
+    .find((section) =>
+      section.exact ? pathname === section.href : pathname === section.href || pathname.startsWith(section.href + "/"),
+    );
+
+  const disabled = activeSection
+    ? !isFeatureEnabled(system?.features, activeSection.feature)
+    : false;
 
   return (
     <div className="space-y-6">
@@ -74,7 +91,24 @@ export default function FinancialLayout({ children }: { children: React.ReactNod
         </ul>
       </nav>
 
-      {children}
+      {disabled ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-surface-secondary/40 px-6 py-16 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-surface-secondary text-2xl text-text-tertiary">
+            <ShieldOff />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-text-primary">{t("financial.disabled.title", "Module disabled")}</p>
+            <p className="mx-auto mt-1 max-w-sm text-xs text-text-secondary">
+              {t(
+                "financial.disabled.hint",
+                "This section is turned off in System Settings. Enable it there to access this screen.",
+              )}
+            </p>
+          </div>
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }

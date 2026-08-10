@@ -87,7 +87,7 @@ export function getPaymentStatusColorLight(status: PaymentStatus | string): stri
     case "overdue":
       return "bg-danger-soft text-danger-strong border-danger/30";
     case "cancelled":
-      return "bg-neutral-soft text-neutral-strong border-border line-through";
+      return "bg-danger-soft text-danger-strong border-danger/30 line-through";
     default:
       return "bg-primary-50 text-primary-700 border-primary/30";
   }

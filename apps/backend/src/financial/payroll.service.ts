@@ -150,7 +150,7 @@ export class PayrollService {
         compensation: true,
       },
     });
-    if (!professor) throw new NotFoundException(`Professor ${profId} not found`);
+    if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
     const targetPeriod = period ?? periodOfDate(new Date());
 
@@ -290,11 +290,11 @@ export class PayrollService {
    */
   async recordPayment(profId: string, userId: string, dto: RecordPayrollDto) {
     const professor = await this.prisma.professors.findUnique({ where: { id: profId } });
-    if (!professor) throw new NotFoundException(`Professor ${profId} not found`);
+    if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
     const amount = money(dto.amount);
     if (amount.lessThanOrEqualTo(0)) {
-      throw new BadRequestException("A payroll amount must be greater than zero");
+      throw new BadRequestException("Le montant du versement doit être supérieur à zéro");
     }
 
     const period = dto.period ?? periodOfDate(new Date());
@@ -313,7 +313,7 @@ export class PayrollService {
     const outstanding = round2(entitlement.total.minus(alreadyPaid));
     if (amount.greaterThan(outstanding)) {
       throw new BadRequestException(
-        `That is more than the ${toAmount(outstanding)} outstanding to this professor for ${period}`,
+        `C'est plus que le montant de ${toAmount(outstanding)} dû à ce professeur pour ${period}`,
       );
     }
 
@@ -369,10 +369,10 @@ export class PayrollService {
       where: { id: payoutId },
       include: { professor: { select: { full_name: true } } },
     });
-    if (!existing) throw new NotFoundException(`Payroll payment ${payoutId} not found`);
+    if (!existing) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
     if (dto.amount !== undefined && !dto.reason) {
-      throw new BadRequestException("Changing a payroll amount needs a reason");
+      throw new BadRequestException("Modifier le montant d'un versement nécessite une raison");
     }
 
     const updated = await this.prisma.payroll_payments.update({
@@ -402,7 +402,7 @@ export class PayrollService {
       where: { id: payoutId },
       include: { professor: { select: { full_name: true } } },
     });
-    if (!existing) throw new NotFoundException(`Payroll payment ${payoutId} not found`);
+    if (!existing) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
     await this.prisma.payroll_payments.delete({ where: { id: payoutId } });
 
@@ -427,14 +427,14 @@ export class PayrollService {
 
   async upsertCompensation(profId: string, userId: string, dto: UpsertCompensationDto) {
     const professor = await this.prisma.professors.findUnique({ where: { id: profId } });
-    if (!professor) throw new NotFoundException(`Professor ${profId} not found`);
+    if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
     if (dto.model === "custom") {
       if (!dto.custom_formula) {
-        throw new BadRequestException("A custom model needs a formula");
+        throw new BadRequestException("Un modèle personnalisé nécessite une formule");
       }
       const check = validateFormula(dto.custom_formula);
-      if (!check.valid) throw new BadRequestException(`Invalid formula: ${check.error}`);
+      if (!check.valid) throw new BadRequestException(`Formule invalide : ${check.error}`);
     }
 
     if (
@@ -444,7 +444,7 @@ export class PayrollService {
         dto.model === "hybrid") &&
       (dto.fixed_amount === undefined || dto.fixed_amount === null)
     ) {
-      throw new BadRequestException(`The ${dto.model} model needs a fixed amount`);
+      throw new BadRequestException(`Le modèle ${dto.model} nécessite un montant fixe`);
     }
 
     const existing = await this.prisma.professor_compensations.findUnique({ where: { prof_id: profId } });
@@ -497,7 +497,7 @@ export class PayrollService {
       where: { prof_id: profId },
       include: { professor: { select: { full_name: true } } },
     });
-    if (!existing) throw new NotFoundException("This professor has no override to remove");
+    if (!existing) throw new NotFoundException("Ce professeur n'a aucun modèle à supprimer");
 
     await this.prisma.professor_compensations.delete({ where: { prof_id: profId } });
 

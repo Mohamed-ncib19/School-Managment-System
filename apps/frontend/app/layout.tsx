@@ -53,10 +53,10 @@ async function systemName(): Promise<string | null> {
  */
 export async function generateMetadata(): Promise<Metadata> {
   const [version, name] = await Promise.all([faviconVersion(), systemName()]);
-  const title = name ? `${name} | School Management System` : "School Management System";
+  const title = name ? `${name} | Système de Gestion Scolaire` : "Système de Gestion Scolaire";
   const metadata: Metadata = {
     title,
-    description: "Intern Management System",
+    description: "Système de gestion scolaire",
   };
   metadata.icons = version
     ? { icon: `/icon?v=${version}` }

@@ -5,7 +5,7 @@ import { AuthGuard } from "@nestjs/passport";
 export class JwtAuthGuard extends AuthGuard("jwt") {
   handleRequest(err: any, user: any) {
     if (err || !user) {
-      throw err || new UnauthorizedException("Invalid or expired token");
+      throw err || new UnauthorizedException("Jeton invalide ou expiré");
     }
     return user;
   }

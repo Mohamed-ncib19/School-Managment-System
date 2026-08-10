@@ -63,7 +63,7 @@ export class GroupsService {
       where: { id },
       include: GroupsService.HIERARCHY_INCLUDE,
     });
-    if (!group) throw new NotFoundException(`Group ${id} not found`);
+    if (!group) throw new NotFoundException(`Groupe ${id} introuvable`);
     return group;
   }
 
@@ -164,7 +164,7 @@ export class GroupsService {
   async hardDeleteGroup(id: string, userId?: string) {
     const group = await this.getGroup(id);
     if (group.is_active) {
-      throw new ConflictException(`Group "${group.name}" is still active - archive it first`);
+      throw new ConflictException(`Le groupe "${group.name}" est toujours actif - archivez-le d'abord`);
     }
     const counts = await hardDeleteHierarchy(this.prisma, "group", id);
     await this.auditService.record({

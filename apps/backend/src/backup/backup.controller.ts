@@ -33,7 +33,7 @@ export class BackupController {
   @Post("restore/:id")
   @ApiOperation({ summary: "Restore database from a named backup (replaces current data)" })
   async restoreBackup(@Param("id") id: string) {
-    if (!id) throw new BadRequestException("Backup ID is required");
+    if (!id) throw new BadRequestException("L'identifiant de la sauvegarde est requis");
     return this.backupService.restoreBackup(id);
   }
 }

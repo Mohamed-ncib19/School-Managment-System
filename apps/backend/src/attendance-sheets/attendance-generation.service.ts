@@ -49,10 +49,10 @@ export class AttendanceGenerationService {
 
   /** The full context one register is generated from, in one pass. */
   async generate(groupId: string, month: number, year: number, sessionsCount = DEFAULT_SESSIONS_PER_MONTH): Promise<AttendanceContext> {
-    if (month < 1 || month > 12) throw new BadRequestException("month must be between 1 and 12");
-    if (year < 2000) throw new BadRequestException("year must be >= 2000");
+    if (month < 1 || month > 12) throw new BadRequestException("le mois doit être compris entre 1 et 12");
+    if (year < 2000) throw new BadRequestException("l'année doit être supérieure ou égale à 2000");
     if (sessionsCount < 1 || sessionsCount > 31) {
-      throw new BadRequestException("sessions_count must be between 1 and 31");
+      throw new BadRequestException("sessions_count doit être compris entre 1 et 31");
     }
 
     const group = await this.prisma.groups.findUnique({
@@ -66,7 +66,7 @@ export class AttendanceGenerationService {
         },
       },
     });
-    if (!group) throw new NotFoundException(`Group ${groupId} not found`);
+    if (!group) throw new NotFoundException(`Groupe ${groupId} introuvable`);
 
     const professor = group.professor;
     const students: AttendanceStudent[] = [...group.assignments]

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { execFile, spawn } from "child_process";
-import { mkdirSync, openSync } from "fs";
+import { mkdirSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 
@@ -90,14 +90,18 @@ export class UpdatesService {
   }
 
   /**
-   * Launch the platform's update engine (a visible console on Windows) that
-   * stops the servers, pulls, installs, migrates and restarts on its own. The
-   * HTTP response is sent before the engine gets round to stopping this
+   * Launch the platform's update engine in its own visible console (Windows)
+   * that stops the servers, pulls, installs, migrates and restarts on its own.
+   * The HTTP response is sent before the engine gets round to stopping this
    * process.
    *
-   * Like the shutdown engine, the spawned process must NOT be `detached` with
-   * `stdio: "ignore"` — that combination freezes PowerShell on Windows. The
-   * engine output is piped to logs\update-<timestamp>.log instead.
+   * The engine must NOT inherit the backend's console: the API runs in a
+   * minimized window, which would hide the whole progress flow. `cmd /c start`
+   * therefore gives the engine a fresh console the moment it launches, with
+   * its native output mirrored to logs\update-<timestamp>.log for later
+   * inspection (PowerShell's Write-Host UI stays on the new window). Like the
+   * shutdown engine, do NOT spawn it detached with `stdio: "ignore"` — that
+   * combination freezes PowerShell on Windows.
    */
   async applyUpdate(): Promise<{ ok: boolean; started: boolean }> {
     const root = await this.git(["rev-parse", "--show-toplevel"]);
@@ -110,14 +114,19 @@ export class UpdatesService {
 
     try {
       if (isWindows) {
-        const logFd = openSync(this.openLog(root, "update"), "a");
-        spawn(
-          process.env.SystemRoot
-            ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-            : "powershell.exe",
-          ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
-          { cwd: root, stdio: ["ignore", logFd, logFd], windowsHide: true },
-        ).unref();
+        const logFile = this.openLog(root, "update");
+        const ps = process.env.SystemRoot
+          ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+          : "powershell.exe";
+        const updateCmd =
+          `start "SCHOOL MANAGEMENT SYSTEM - Update" /D "${root}" ` +
+          `"${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${script}" ` +
+          `>> "${logFile}" 2>&1`;
+        spawn("cmd.exe", ["/d", "/c", updateCmd], {
+          cwd: root,
+          stdio: "ignore",
+          windowsHide: false,
+        }).unref();
       } else {
         spawn("/bin/sh", [script], { cwd: root, detached: true, stdio: "ignore" }).unref();
       }

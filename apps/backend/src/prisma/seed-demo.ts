@@ -1,4 +1,4 @@
-﻿import { PrismaClient, PaymentStatus, StudentStatus } from "@prisma/client";
+﻿import { PrismaClient, CompensationModel, StudentStatus } from "@prisma/client";
 import { randomUUID } from "crypto";
 
 const prisma = new PrismaClient();
@@ -91,6 +91,11 @@ async function main() {
   const assignmentRows: { student_id: string; group_id: string; fee: number }[] = [];
   const paymentRows: any[] = [];
 
+  /** Every group with the field it hangs from, for cross-field enrollments. */
+  const groupFields: Array<{ groupId: string; fieldId: string }> = [];
+  /** Every student with their primary group's field and enrollment date. */
+  const studentRefs: Array<{ studentId: string; fieldId: string; enrollment: Date }> = [];
+
   for (const levelName of LEVEL_NAMES) {
     const levelId = randomUUID();
     levelRows.push({ id: levelId, name: levelName });
@@ -127,6 +132,7 @@ async function main() {
             capacity: between(12, 20),
             schedule_notes: pick(["Mon/Wed 17:00", "Tue/Thu 18:30", "Sat 09:00", "Sun 14:00"]),
           });
+          groupFields.push({ groupId, fieldId });
 
           // 5-9 students per group.
           const count = between(5, 9);
@@ -136,7 +142,9 @@ async function main() {
             const enrollment = new Date();
             enrollment.setMonth(enrollment.getMonth() - enrolledMonthsAgo);
             enrollment.setDate(between(1, 28));
-            const monthlyFee = between(6, 18) * 25; // 150 - 450
+            const monthlyFee = 50;
+
+            studentRefs.push({ studentId, fieldId, enrollment });
 
             studentRows.push({
               id: studentId,
@@ -152,19 +160,13 @@ async function main() {
             });
             assignmentRows.push({ student_id: studentId, group_id: groupId, fee: monthlyFee });
 
-            // Three months of billing history, newest last.
-            for (let back = 2; back >= 0; back--) {
-              const { period, year, month } = periodOf(back);
+            // One invoice for the current month.
+            {
+              const { period, year, month } = periodOf(0);
               const dueDate = new Date(year, month, Math.min(enrollment.getDate(), 28));
 
-              let status: PaymentStatus;
-              if (back > 0) {
-                // Settled history, with the occasional straggler.
-                status = rand() > 0.12 ? "paid" : "overdue";
-              } else {
-                const roll = rand();
-                status = roll > 0.62 ? "paid" : roll > 0.42 ? "not_paid" : roll > 0.22 ? "due_soon" : "overdue";
-              }
+              const roll = rand();
+              const status = roll > 0.62 ? "paid" : roll > 0.42 ? "not_paid" : roll > 0.22 ? "due_soon" : "overdue";
 
               const isPaid = status === "paid";
               const paidAt = isPaid ? new Date(dueDate.getTime() - between(0, 6) * 86_400_000) : null;
@@ -172,6 +174,7 @@ async function main() {
               paymentRows.push({
                 id: randomUUID(),
                 student_id: studentId,
+                group_id: groupId,
                 period,
                 amount_due: monthlyFee,
                 due_date: dueDate,
@@ -188,6 +191,75 @@ async function main() {
     }
   }
 
+  // ── Cross-field enrollments ────────────────────────────────────────────
+  // A share of students also joins a group in a different field (hence a
+  // different professor), with its own invoice per period. The primary group
+  // stays `students.group_id` for dashboard roll-ups.
+  const crossEnrolled = studentRefs.filter(() => rand() > 0.85);
+  for (const s of crossEnrolled) {
+    const candidates = groupFields.filter((g) => g.fieldId !== s.fieldId);
+    if (candidates.length === 0) continue;
+    const secondGroup = pick(candidates);
+    const secondFee = 50;
+
+    assignmentRows.push({ student_id: s.studentId, group_id: secondGroup.groupId, fee: secondFee });
+
+    {
+      const { period, year, month } = periodOf(0);
+      const dueDate = new Date(year, month, Math.min(s.enrollment.getDate(), 28));
+      const isPaid = rand() > 0.55;
+      const isLate = !isPaid && rand() > 0.4;
+      paymentRows.push({
+        id: randomUUID(),
+        student_id: s.studentId,
+        group_id: secondGroup.groupId,
+        period,
+        amount_due: secondFee,
+        due_date: dueDate,
+        status: isPaid ? "paid" : isLate ? "overdue" : "not_paid",
+        paid_amount: isPaid ? secondFee : null,
+        paid_at: isPaid ? new Date(dueDate.getTime() - between(0, 6) * 86_400_000) : null,
+        recorded_by: isPaid ? admin.id : null,
+        payment_method: isPaid ? "cash" : null,
+      });
+    }
+  }
+
+  // ── Payment transactions ───────────────────────────────────────────────
+  // Every paid invoice gets its ledger row, exactly like a real collection, so
+  // professor payouts and revenue roll-ups reflect the money coming in. The
+  // split mirrors the academy default rule: 60% professor / 40% academy.
+  const PROFESSOR_PERCENT = 60;
+  const groupProfMap: Record<string, string> = {};
+  for (const g of groupRows) groupProfMap[g.id] = g.prof_id;
+
+  let receiptCounter = 0;
+  const transactionRows = paymentRows
+    .filter((p) => p.status === "paid")
+    .map((p) => {
+      receiptCounter++;
+      const amount = Number(p.paid_amount);
+      const profShare = Math.round((amount * PROFESSOR_PERCENT) / 100 * 100) / 100;
+      return {
+        id: randomUUID(),
+        payment_id: p.id,
+        type: "payment" as const,
+        amount: p.paid_amount,
+        method: "cash" as const,
+        receipt_number: `RCP-${new Date(p.paid_at).getFullYear()}-${String(receiptCounter).padStart(6, "0")}`,
+        paid_at: p.paid_at,
+        recorded_by: admin.id,
+        notes: null,
+        reason: null,
+        professor_share: profShare,
+        school_share: Math.round((amount - profShare) * 100) / 100,
+        compensation_model: "percentage" as CompensationModel,
+        compensation_snapshot: JSON.stringify({ model: "percentage", percentage: PROFESSOR_PERCENT }),
+        prof_id: groupProfMap[p.group_id] ?? null,
+        period: p.period,
+      };
+    });
+
   // Bulk inserts, parent tables first.
   await prisma.levels.createMany({ data: levelRows });
   await prisma.fields.createMany({ data: fieldRows });
@@ -196,11 +268,16 @@ async function main() {
   await prisma.students.createMany({ data: studentRows });
   await prisma.student_assignments.createMany({ data: assignmentRows });
   await prisma.student_payments.createMany({ data: paymentRows, skipDuplicates: true });
+  await prisma.payment_transactions.createMany({ data: transactionRows, skipDuplicates: true });
 
   const paid = paymentRows.filter((p) => p.status === "paid").length;
   console.log("Demo data seeded:");
   console.log(`  ${levelRows.length} levels, ${fieldRows.length} fields, ${profRows.length} professors, ${groupRows.length} groups`);
-  console.log(`  ${studentRows.length} students, ${paymentRows.length} payments (${paid} paid)`);
+  console.log(`  ${studentRows.length} students, ${paymentRows.length} payments (${paid} paid), ${transactionRows.length} ledger transactions`);
+  const crossCount = assignmentRows.length - studentRows.length;
+  if (crossCount > 0) {
+    console.log(`  ${crossCount} students also enrolled in a second field (${assignmentRows.length} enrollments total)`);
+  }
 }
 
 main()

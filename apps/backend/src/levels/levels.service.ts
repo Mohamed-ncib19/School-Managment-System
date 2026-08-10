@@ -20,7 +20,7 @@ export class LevelsService {
       },
     });
     if (existing) {
-      throw new ConflictException(`A level named "${existing.name}" already exists`);
+      throw new ConflictException(`Un niveau nommé "${existing.name}" existe déjà`);
     }
   }
 
@@ -46,7 +46,7 @@ export class LevelsService {
 
   async getLevel(id: string) {
     const level = await this.prisma.levels.findUnique({ where: { id } });
-    if (!level) throw new NotFoundException(`Level ${id} not found`);
+    if (!level) throw new NotFoundException(`Niveau ${id} introuvable`);
     return level;
   }
 
@@ -130,7 +130,7 @@ export class LevelsService {
   async hardDeleteLevel(id: string, userId?: string) {
     const level = await this.getLevel(id);
     if (level.is_active) {
-      throw new ConflictException(`Level "${level.name}" is still active - archive it first`);
+      throw new ConflictException(`Le niveau "${level.name}" est toujours actif - archivez-le d'abord`);
     }
     const counts = await hardDeleteHierarchy(this.prisma, "level", id);
     await this.auditService.record({

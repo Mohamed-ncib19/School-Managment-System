@@ -211,6 +211,8 @@
     "monthsAhead": "Mois",
     "studentName": "Nom de l'étudiant",
     "group": "Groupe",
+    "structure": "Niveau / Filière",
+    "assignment": "Professeur / Groupe",
     "period": "Période",
     "dueDate": "Date d'échéance",
     "amountDue": "Montant dû",
@@ -241,6 +243,7 @@
     "dueSoonCount": "Dû bientôt",
     "actions": "Actions",
     "viewDetails": "Détails",
+    "type": "Type",
     "enterAmount": "Saisir le montant payé",
     "notes": "Notes (optionnel)",
     "notesPlaceholder": "Ajouter des notes de paiement...",
@@ -635,6 +638,10 @@
     "deleteProfessor": "Supprimer le professeur",
     "editGroup": "Modifier le groupe",
     "editProfessor": "Modifier le professeur",
+    "hierarchy": "Hiérarchie",
+    "searchGroups": "Rechercher par groupe ou nom de professeur…",
+    "searchLevels": "Rechercher les niveaux…",
+    "searchProfessors": "Rechercher par nom, téléphone ou e-mail…",
     "field": "Filière",
     "save": "Enregistrer",
     "viewProfessors": "Voir les professeurs"
@@ -655,6 +662,7 @@
     "studentName": "Nom de l'étudiant",
     "phone": "Téléphone",
     "noStudents": "Aucun étudiant dans ce groupe",
+    "groupNotFound": "Groupe introuvable.",
     "presence": "Présence",
     "teacherSignature": "Signature de l'enseignant",
     "adminSignature": "Signature de l'administrateur",
@@ -917,6 +925,15 @@
       "custom": "Personnalisé"
     },
     "academyDefault": "valeur par défaut de l'académie",
+    "error": {
+      "title": "Impossible de charger les données financières",
+      "hint": "Le serveur est peut-être occupé ou injoignable. Vérifiez que le backend est démarré, puis réessayez.",
+      "retry": "Réessayer"
+    },
+    "disabled": {
+      "title": "Module désactivé",
+      "hint": "Cette section est désactivée dans les Paramètres du système. Activez-la pour accéder à cet écran."
+    },
     "activityTrail": "Journal d'activité",
     "adjustment": "Ajustement (négatif pour réduire)",
     "applyStatus": "Appliquer",

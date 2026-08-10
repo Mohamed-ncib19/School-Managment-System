@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Plus, Printer, RefreshCw, Search } from "lucide-react";
 import {
   useFinancialPayments,
@@ -11,6 +12,7 @@ import {
 import { useFields, useGroups, useLevels, useProfessors, useStudentSearch } from "@/hooks/use-queries";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { PaymentActionsModal } from "@/components/financial/payment-actions-modal";
+import { ErrorState } from "@/components/financial/error-state";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { openReceipt } from "@/lib/api/financial.api";
@@ -23,6 +25,7 @@ const STATUSES: { value: string; label: string }[] = [
   { value: "", label: "payments.all" },
   { value: "not_paid", label: "payments.statuses.not_paid" },
   { value: "due_soon", label: "payments.statuses.due_soon" },
+  { value: "overdue", label: "payments.statuses.overdue" },
   { value: "partially_paid", label: "payments.statuses.partially_paid" },
   { value: "paid", label: "payments.statuses.paid" },
   { value: "cancelled", label: "payments.statuses.cancelled" },
@@ -67,8 +70,23 @@ const QUICK: { value: string; label: string; apply: () => Record<string, string>
  * total that silently means "this page only" is worse than no total.
  */
 export default function StudentPaymentsPage() {
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <StudentPaymentsInner />
+    </Suspense>
+  );
+}
+
+function StudentPaymentsInner() {
   const { t } = useTranslation();
-  const [status, setStatus] = useState("");
+  const searchParams = useSearchParams();
+
+  /**
+   * The dashboard's KPI cards deep-link here with a status (`?status=not_paid`,
+   * `?status=overdue`). Read it once on mount so those links land on the right
+   * chip; everything else the user does stays in-memory.
+   */
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "");
   const [levelId, setLevelId] = useState("");
   const [fieldId, setFieldId] = useState("");
   const [profId, setProfId] = useState("");
@@ -350,18 +368,14 @@ export default function StudentPaymentsPage() {
       )}
 
       {isError ? (
-        <div className="card p-6 flex flex-col items-center gap-3 text-center">
-          <p className="font-medium text-danger-strong">{t("financial.paymentsLoadError", "Couldn't load payments.")}</p>
-          <p className="text-xs text-text-secondary max-w-md">
-            {t("financial.paymentsLoadErrorHint", "The server may be busy or unreachable. Make sure the backend is running, then retry.")}
-          </p>
-          <button type="button" onClick={() => refetch()} className="btn btn-secondary text-xs">
-            <RefreshCw size={14} aria-hidden="true" />
-            {t("financial.retry", "Retry")}
-          </button>
-        </div>
+        <ErrorState
+          title={t("financial.paymentsLoadError", "Couldn't load payments.")}
+          hint={t("financial.paymentsLoadErrorHint", "The server may be busy or unreachable. Make sure the backend is running, then retry.")}
+          retryLabel={t("financial.retry", "Retry")}
+          onRetry={() => refetch()}
+        />
       ) : isLoading ? (
-        <PageLoader text={t("common.loading", "Loading…")} />
+        <FinancialTableSkeleton />
       ) : rows.length === 0 ? (
         <EmptyState message={t("payments.noPaymentsYet", "No payments match these filters.")} />
       ) : (
@@ -371,10 +385,8 @@ export default function StudentPaymentsPage() {
               <thead>
                 <tr className="bg-background">
                   <Th>{t("payments.studentName", "Student")}</Th>
-                  <Th>{t("nav.levels", "Level")}</Th>
-                  <Th>{t("nav.fields", "Field")}</Th>
-                  <Th>{t("nav.professors", "Professor")}</Th>
-                  <Th>{t("students.group", "Group")}</Th>
+                  <Th>{t("payments.structure", "Level / Field")}</Th>
+                  <Th>{t("payments.assignment", "Professor / Group")}</Th>
                   <Th>{t("payments.period", "Period")}</Th>
                   <Th>{t("payments.dueDate", "Due")}</Th>
                   <Th>{t("financial.receiptNumber", "Receipt")}</Th>
@@ -397,42 +409,42 @@ export default function StudentPaymentsPage() {
                       </Link>
                     </td>
                      <td className="px-3 py-2.5 text-text-secondary">
-                       <div className="flex flex-wrap gap-1">
-                         {(payment.context.levels?.length ? payment.context.levels : payment.context.level ? [payment.context.level] : []).map((lv) => (
-                           <span key={lv.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                             {lv.name}
-                           </span>
-                         ))}
+                       <div className="flex flex-col gap-1">
+                         <div className="flex flex-wrap gap-1">
+                           {(payment.context.levels?.length ? payment.context.levels : payment.context.level ? [payment.context.level] : []).map((lv) => (
+                             <span key={lv.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                               {lv.name}
+                             </span>
+                           ))}
+                         </div>
+                         <div className="flex flex-wrap gap-1">
+                           {(payment.context.fields?.length ? payment.context.fields : payment.context.field ? [payment.context.field] : []).map((f) => (
+                             <span key={f.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                               {f.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: f.color }} />}
+                               {f.name}
+                             </span>
+                           ))}
+                         </div>
                        </div>
                      </td>
                      <td className="px-3 py-2.5 text-text-secondary">
-                       <div className="flex flex-wrap gap-1">
-                         {(payment.context.fields?.length ? payment.context.fields : payment.context.field ? [payment.context.field] : []).map((f) => (
-                           <span key={f.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                             {f.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: f.color }} />}
-                             {f.name}
-                           </span>
-                         ))}
-                       </div>
-                     </td>
-                     <td className="px-3 py-2.5 text-text-secondary">
-                       <div className="flex flex-wrap gap-1">
-                         {(payment.context.professors?.length ? payment.context.professors : payment.context.professor ? [payment.context.professor] : []).map((p) => (
-                           <span key={p.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                             {p.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />}
-                             {p.name}
-                           </span>
-                         ))}
-                       </div>
-                     </td>
-                     <td className="px-3 py-2.5 text-text-secondary">
-                       <div className="flex flex-wrap gap-1">
-                         {(payment.context.groups?.length ? payment.context.groups : payment.context.group ? [payment.context.group] : []).map((g) => (
-                           <span key={g.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                             {g.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: g.color }} />}
-                             {g.name}
-                           </span>
-                         ))}
+                       <div className="flex flex-col gap-1">
+                         <div className="flex flex-wrap gap-1">
+                           {(payment.context.professors?.length ? payment.context.professors : payment.context.professor ? [payment.context.professor] : []).map((p) => (
+                             <span key={p.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                               {p.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />}
+                               {p.name}
+                             </span>
+                           ))}
+                         </div>
+                         <div className="flex flex-wrap gap-1">
+                           {(payment.context.groups?.length ? payment.context.groups : payment.context.group ? [payment.context.group] : []).map((g) => (
+                             <span key={g.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
+                               {g.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: g.color }} />}
+                               {g.name}
+                             </span>
+                           ))}
+                         </div>
                        </div>
                      </td>
                     <td className="px-3 py-2.5 text-text-secondary">{formatPeriod(payment.period)}</td>
