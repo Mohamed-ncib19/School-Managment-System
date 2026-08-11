@@ -201,9 +201,8 @@ export default function ProfessorFinancialPage() {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <SummaryTile label={t("financial.revenueGenerated", "Revenus")} value={formatCurrency(current.revenue_generated)} />
-        <SummaryTile label={t("financial.payroll.totalEarned", "Total acquis")} value={formatCurrency(current.total_earned)} />
         <SummaryTile
           label={t("financial.payroll.alreadyPaid", "Déjà versé")}
           value={formatCurrency(current.already_paid)}

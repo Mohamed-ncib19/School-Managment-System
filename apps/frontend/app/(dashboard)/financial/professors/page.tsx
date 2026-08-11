@@ -163,8 +163,7 @@ export default function ProfessorPaymentsPage() {
           </div>
 
           {totals && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <SummaryTile label={t("financial.payroll.totalEarned", "Total gagné")} value={formatCurrency(totals.earned)} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <SummaryTile
                 label={t("financial.payroll.alreadyPaid", "Déjà versé")}
                 value={formatCurrency(totals.paid)}
@@ -173,7 +172,7 @@ export default function ProfessorPaymentsPage() {
               <SummaryTile
                 label={t("financial.payroll.outstanding", "Reste à verser")}
                 value={formatCurrency(totals.balance)}
-                tone="danger"
+                tone={Number(totals.balance) > 0 ? "danger" : "neutral"}
               />
             </div>
           )}
@@ -196,7 +195,6 @@ export default function ProfessorPaymentsPage() {
                       <Th>{t("nav.professors", "Professeur")}</Th>
                       <Th>{t("payments.structure", "Niveau / Filière")}</Th>
                       <Th right>{t("nav.students", "Étudiants")}</Th>
-                      <Th right>{t("financial.payroll.earned", "Acquis")}</Th>
                       <Th right>{t("financial.payroll.paid", "Versé")}</Th>
                       <Th right title={t("financial.payroll.restHint")}>
                         {t("financial.payroll.remainingBalance", "Reste")}
@@ -261,7 +259,6 @@ function ProfessorRow({ row, onOpen }: { row: PayrollRow; onOpen: () => void }) 
         {level && field ? `${level} · ${field}` : (level ?? field ?? "—")}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums text-text-secondary">{row.student_count}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums font-medium">{formatCurrency(row.total_earned)}</td>
       <td className="px-3 py-2.5 text-right tabular-nums text-success-strong">{formatCurrency(row.already_paid)}</td>
       <td className="px-3 py-2.5 text-right tabular-nums">
         {Number(row.remaining_balance) > 0 ? (
