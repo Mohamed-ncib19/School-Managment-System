@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   Users,
   CircleDollarSign,
@@ -15,9 +16,6 @@ import {
 import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { PageLoader } from "@/components/shared/skeletons";
-import { RevenueChart } from "@/components/charts/revenue-chart";
-import { PaymentsByStatusChart } from "@/components/charts/payments-by-status-chart";
-import { StudentsByFieldChart } from "@/components/charts/students-by-field-chart";
 import { useHierarchySummary, useRecentStudents } from "@/hooks/use-queries";
 import {
   useFinancialDashboard,
@@ -27,6 +25,19 @@ import {
 } from "@/hooks/use-financial";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
+
+const RevenueChart = dynamic(() => import("@/components/charts/revenue-chart").then((m) => m.RevenueChart), {
+  ssr: false,
+  loading: () => <div className="h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" />,
+});
+const PaymentsByStatusChart = dynamic(
+  () => import("@/components/charts/payments-by-status-chart").then((m) => m.PaymentsByStatusChart),
+  { ssr: false, loading: () => <div className="h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" /> },
+);
+const StudentsByFieldChart = dynamic(
+  () => import("@/components/charts/students-by-field-chart").then((m) => m.StudentsByFieldChart),
+  { ssr: false, loading: () => <div className="h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" /> },
+);
 
 export default function DashboardPage() {
   const { data: recentStudents } = useRecentStudents(5, { refetchInterval: 60000 });
