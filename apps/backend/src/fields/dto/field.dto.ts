@@ -7,7 +7,7 @@ import { ENTITY_COLOR_PATTERN, ENTITY_COLOR_MESSAGE } from "../../common/color.u
  * ValidationPipe only validates when the parameter type is a decorated class.
  * With an inline TypeScript type the emitted metadata is `Object`, so both
  * validation and `whitelist` stripping were silently skipped - a name sent as a
- * number reached Prisma and surfaced as HTTP 500 instead of a clean 400.
+ * number reached the database and surfaced as HTTP 500 instead of a clean 400.
  */
 export class CreateFieldDto {
   @ApiProperty({ format: "uuid", description: "Level this field belongs to" })

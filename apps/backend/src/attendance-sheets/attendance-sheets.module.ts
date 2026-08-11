@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { PrismaModule } from "../prisma/prisma.module";
+import { DbModule } from "../db/db.module";
 import { AuditModule } from "../audit/audit.module";
 import { AttendanceService } from "./attendance.service";
 import { AttendanceGenerationService } from "./attendance-generation.service";
@@ -8,7 +8,7 @@ import { AttendanceExportService } from "./attendance-export.service";
 import { AttendanceSheetsController } from "./attendance-sheets.controller";
 
 @Module({
-  imports: [PrismaModule, AuditModule],
+  imports: [DbModule, AuditModule],
   providers: [
     AttendanceService,
     AttendanceGenerationService,

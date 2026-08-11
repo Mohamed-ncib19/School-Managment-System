@@ -1,4 +1,5 @@
-import { Prisma } from "@prisma/client";
+import { eq, sql, SQL } from "drizzle-orm";
+import { paymentTransactions, professors, studentPayments, students } from "../db/schema";
 import { DateRange, parseBoundary, quickRange, defaultRangeFor, type Granularity } from "./period.util";
 
 /**
@@ -28,15 +29,19 @@ export interface AcademicFilter {
  * Students are scoped by their enrollments: a student registered in two groups
  * matches a filter on either one, because both enrollments bill and collect.
  */
-export function studentWhere(filter: AcademicFilter): Prisma.studentsWhereInput | undefined {
-  if (filter.studentId) return { id: filter.studentId };
-  if (filter.groupId) return { assignments: { some: { group_id: filter.groupId } } };
-  if (filter.profId) return { assignments: { some: { group: { prof_id: filter.profId } } } };
+export function studentWhere(filter: AcademicFilter): SQL | undefined {
+  if (filter.studentId) return eq(students.id, filter.studentId);
+  if (filter.groupId) {
+    return sql`exists(select 1 from student_assignments sa where sa.student_id = ${students.id} and sa.group_id = ${filter.groupId})`;
+  }
+  if (filter.profId) {
+    return sql`exists(select 1 from student_assignments sa join groups g on g.id = sa.group_id where sa.student_id = ${students.id} and g.prof_id = ${filter.profId})`;
+  }
   if (filter.fieldId) {
-    return { assignments: { some: { group: { professor: { field_id: filter.fieldId } } } } };
+    return sql`exists(select 1 from student_assignments sa join groups g on g.id = sa.group_id join professors p on p.id = g.prof_id where sa.student_id = ${students.id} and p.field_id = ${filter.fieldId})`;
   }
   if (filter.levelId) {
-    return { assignments: { some: { group: { professor: { field: { level_id: filter.levelId } } } } } };
+    return sql`exists(select 1 from student_assignments sa join groups g on g.id = sa.group_id join professors p on p.id = g.prof_id join fields f on f.id = p.field_id where sa.student_id = ${students.id} and f.level_id = ${filter.levelId})`;
   }
   return undefined;
 }
@@ -49,32 +54,55 @@ export function studentWhere(filter: AcademicFilter): Prisma.studentsWhereInput 
  * what makes per-group scoping include a multi-group student's secondary
  * invoices.
  */
-export function paymentWhere(filter: AcademicFilter): Prisma.student_paymentsWhereInput {
-  if (filter.studentId) return { student_id: filter.studentId };
-  if (filter.groupId) return { group_id: filter.groupId };
-  if (filter.profId) return { group: { prof_id: filter.profId } };
-  if (filter.fieldId) return { group: { professor: { field_id: filter.fieldId } } };
-  if (filter.levelId) return { group: { professor: { field: { level_id: filter.levelId } } } };
-  return {};
+export function paymentWhere(filter: AcademicFilter): SQL | undefined {
+  if (filter.studentId) return eq(studentPayments.student_id, filter.studentId);
+  if (filter.groupId) return eq(studentPayments.group_id, filter.groupId);
+  if (filter.profId) {
+    return sql`exists(select 1 from groups where groups.id = ${studentPayments.group_id} and groups.prof_id = ${filter.profId})`;
+  }
+  if (filter.fieldId) {
+    return sql`exists(select 1 from groups g join professors p on p.id = g.prof_id where g.id = ${studentPayments.group_id} and p.field_id = ${filter.fieldId})`;
+  }
+  if (filter.levelId) {
+    return sql`exists(select 1 from groups g join professors p on p.id = g.prof_id join fields f on f.id = p.field_id where g.id = ${studentPayments.group_id} and f.level_id = ${filter.levelId})`;
+  }
+  return undefined;
 }
 
 /** The same filter expressed against the ledger. */
-export function transactionWhere(filter: AcademicFilter): Prisma.payment_transactionsWhereInput {
+export function transactionWhere(filter: AcademicFilter): SQL | undefined {
   // The ledger denormalises `prof_id`, so anything pinned at or above the
   // professor can be answered without joining through the invoice at all.
-  if (filter.profId && !filter.groupId && !filter.studentId) return { prof_id: filter.profId };
-
-  const payment = paymentWhere(filter);
-  return Object.keys(payment).length > 0 ? { payment } : {};
+  if (filter.profId && !filter.groupId && !filter.studentId) return eq(paymentTransactions.prof_id, filter.profId);
+  if (filter.studentId) {
+    return sql`exists(select 1 from student_payments sp2 where sp2.id = ${paymentTransactions.payment_id} and sp2.student_id = ${filter.studentId})`;
+  }
+  if (filter.groupId) {
+    return sql`exists(select 1 from student_payments sp2 where sp2.id = ${paymentTransactions.payment_id} and sp2.group_id = ${filter.groupId})`;
+  }
+  if (filter.profId) {
+    return sql`exists(select 1 from student_payments sp2 join groups g on g.id = sp2.group_id where sp2.id = ${paymentTransactions.payment_id} and g.prof_id = ${filter.profId})`;
+  }
+  if (filter.fieldId) {
+    return sql`exists(select 1 from student_payments sp2 join groups g on g.id = sp2.group_id join professors p on p.id = g.prof_id where sp2.id = ${paymentTransactions.payment_id} and p.field_id = ${filter.fieldId})`;
+  }
+  if (filter.levelId) {
+    return sql`exists(select 1 from student_payments sp2 join groups g on g.id = sp2.group_id join professors p on p.id = g.prof_id join fields f on f.id = p.field_id where sp2.id = ${paymentTransactions.payment_id} and f.level_id = ${filter.levelId})`;
+  }
+  return undefined;
 }
 
 /** The same filter expressed against `professors`. */
-export function professorWhere(filter: AcademicFilter): Prisma.professorsWhereInput {
-  if (filter.profId) return { id: filter.profId };
-  if (filter.groupId) return { groups: { some: { id: filter.groupId } } };
-  if (filter.fieldId) return { field_id: filter.fieldId };
-  if (filter.levelId) return { field: { level_id: filter.levelId } };
-  return {};
+export function professorWhere(filter: AcademicFilter): SQL | undefined {
+  if (filter.profId) return eq(professors.id, filter.profId);
+  if (filter.groupId) {
+    return sql`exists(select 1 from groups where groups.prof_id = ${professors.id} and groups.id = ${filter.groupId})`;
+  }
+  if (filter.fieldId) return eq(professors.field_id, filter.fieldId);
+  if (filter.levelId) {
+    return sql`exists(select 1 from fields where fields.id = ${professors.field_id} and fields.level_id = ${filter.levelId})`;
+  }
+  return undefined;
 }
 
 /**

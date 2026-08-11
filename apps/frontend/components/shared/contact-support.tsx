@@ -89,10 +89,10 @@ export default function ContactSupport({ collapsed }: { collapsed: boolean }) {
     <>
       <button
         onClick={() => setShow(true)}
-        className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-all duration-150 w-full ${
+        className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 w-full ${
           collapsed
-            ? "justify-center px-0 text-gold hover:bg-gold/15"
-            : "border border-gold/50 bg-gold/15 text-gold hover:bg-gold hover:text-primary hover:shadow-sm"
+            ? "justify-center px-0 text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
+            : "border border-border bg-surface text-text-primary hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
         }`}
         aria-label={t("support.contactAria")}
         title={t("support.contact")}

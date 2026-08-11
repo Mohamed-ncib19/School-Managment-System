@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import Decimal from "decimal.js";
 import { Money, money } from "./money.util";
 
 /**
@@ -69,7 +69,7 @@ function tokenize(input: string): Token[] {
       if ((literal.match(/\./g) ?? []).length > 1) {
         throw new FormulaError(`Malformed number "${literal}"`);
       }
-      tokens.push({ kind: "number", value: new Prisma.Decimal(literal) });
+      tokens.push({ kind: "number", value: new Decimal(literal) });
       continue;
     }
 
@@ -114,7 +114,7 @@ function toRpn(tokens: Token[]): Token[] {
           throw new FormulaError(`Operator "${token.value}" has no left-hand operand`);
         }
         // Unary: push an implicit zero and carry on as a binary operation.
-        output.push({ kind: "number", value: new Prisma.Decimal(0) });
+        output.push({ kind: "number", value: new Decimal(0) });
       }
 
       while (operators.length > 0) {
@@ -214,11 +214,11 @@ export function evaluateFormula(expression: string, scope: FormulaScope): Money 
  */
 export function validateFormula(expression: string): { valid: boolean; error?: string } {
   const probe: FormulaScope = {
-    amount: new Prisma.Decimal(100),
-    percentage: new Prisma.Decimal(60),
-    fixed: new Prisma.Decimal(50),
-    students: new Prisma.Decimal(10),
-    groups: new Prisma.Decimal(2),
+    amount: new Decimal(100),
+    percentage: new Decimal(60),
+    fixed: new Decimal(50),
+    students: new Decimal(10),
+    groups: new Decimal(2),
   };
 
   try {

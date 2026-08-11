@@ -17,7 +17,7 @@
   launcher in updates.service.ts.
 
   All data-safe: it never touches the database contents beyond the additive
-  prisma migrate deploy.
+  drizzle-kit push.
 
   Invoked detached by the backend: UpdateNow in the app -> this script.
 #>
@@ -32,10 +32,12 @@ $ScriptsDir = $PSScriptRoot
 
 . (Join-Path $ScriptsDir "ui.ps1")
 Initialize-Ui -TotalSteps 8
+Set-UiProgressFile (Join-Path $Root "logs\update-progress.json")
 
 function Fail {
   param([string]$Message)
   Write-Host ""
+  Write-UiProgress -State "failed" -Label $Message
   Write-Panel -Title "UPDATE FAILED" -Colour Red -Icon fail -Note (Get-UiElapsed) -Rows @(
     $Message,
     "---",
@@ -221,30 +223,19 @@ Wait-BackgroundJob -Job $installJob -Label "Installing packages (pnpm)" -Timeout
 Write-Ok "Dependencies up to date"
 
 # ---------------------------------------------------------------------------
-# 6. Prisma client + migrations
+# 6. Database schema (drizzle-kit push is idempotent and additive)
 # ---------------------------------------------------------------------------
-Write-Step "Generating the Prisma client"
+Write-Step "Syncing the database schema"
 Push-Location $BackendDir
-$genOk = $false
 for ($attempt = 1; $attempt -le 5; $attempt++) {
-  pnpm exec prisma generate 2>&1 | Out-Null
-  if ($LASTEXITCODE -eq 0) { $genOk = $true; break }
-  Write-Info "prisma generate failed (attempt $attempt/5) - retrying..."
+  pnpm exec drizzle-kit push --force 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { break }
+  Write-Info "drizzle-kit push failed (attempt $attempt/5) - retrying..."
   Start-Sleep -Seconds 3
 }
 Pop-Location
-if (-not $genOk) { Fail "prisma generate failed after 5 attempts." }
-Write-Ok "Prisma client regenerated"
-
-Write-Step "Applying the new migrations"
-Push-Location $BackendDir
-pnpm run db:migrate 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  Write-Warn2 "Migration reported an issue - the data is safe; see the log file."
-} else {
-  Write-Ok "Migrations applied (additive only)"
-}
-Pop-Location
+if ($LASTEXITCODE -ne 0) { Fail "drizzle-kit push failed after 5 attempts." }
+Write-Ok "Database schema is up to date"
 
 # ---------------------------------------------------------------------------
 # 7. Restart - only the servers that were running before the update. The
@@ -274,4 +265,5 @@ Write-Panel -Title "UPDATE COMPLETE" -Colour Green -Note ("done in " + (Get-UiEl
   "Data|untouched - additive migrations only",
   "Log|logs\update-*.log"
 )
+Write-UiProgress -State "done" -Label "Update complete"
 exit 0

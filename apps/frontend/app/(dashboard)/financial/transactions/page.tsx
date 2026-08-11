@@ -58,6 +58,12 @@ export default function TransactionsPage() {
 
   return (
     <div className="space-y-4">
+      <div>
+        <h1 className="text-h2 font-bold text-text-primary mb-1">{t("financial.transactions", "Transactions")}</h1>
+        <p className="text-sm text-text-secondary">
+          {t("financial.transactionsSub", "Grand livre des mouvements et historique d'activité")}
+        </p>
+      </div>
       <div className="flex items-center gap-1 border-b border-border -mb-px">
         {(
           [
@@ -128,7 +134,12 @@ export default function TransactionsPage() {
                 setPage(1);
               }}
               aria-pressed={type === option.value}
-              className={cn("btn text-xs", type === option.value ? "btn-primary" : "btn-secondary")}
+              className={cn(
+                "inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                type === option.value
+                  ? "bg-surface text-text-primary border-border shadow-dropdown font-semibold"
+                  : "border-transparent text-text-secondary hover:bg-black/[0.04] hover:text-text-primary dark:hover:bg-white/[0.06]",
+              )}
             >
               {t(option.label)}
             </button>
@@ -172,7 +183,11 @@ export default function TransactionsPage() {
                 <tbody className="divide-y divide-border">
                   {ledger!.data.map((row) => (
                     <tr key={row.id} className="hover:bg-background/50">
-                      <td className="px-3 py-2.5 text-text-secondary whitespace-nowrap">{formatDate(row.paid_at)}</td>
+                      <td className="timeline-cell pl-7 px-3 py-2.5 text-text-secondary whitespace-nowrap">
+                        <span aria-hidden="true" className="timeline-stem" />
+                        <span aria-hidden="true" className="timeline-dot" />
+                        {formatDate(row.paid_at)}
+                      </td>
                       <td className="px-3 py-2.5 font-mono text-xs text-text-secondary">{row.receipt_number ?? "—"}</td>
                       <td className="px-3 py-2.5">
                         <span
@@ -232,10 +247,12 @@ export default function TransactionsPage() {
                   <Th>{t("audit.ip", "IP")}</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {activity!.data.map((log: any) => (
-                  <tr key={log.id} className="hover:bg-background/50 align-top">
-                    <td className="px-3 py-2.5 text-text-secondary whitespace-nowrap">
+<tbody className="divide-y divide-border">
+                  {activity!.data.map((log: any) => (
+                    <tr key={log.id} className="hover:bg-background/50 align-top">
+                    <td className="timeline-cell pl-7 px-3 py-2.5 text-text-secondary whitespace-nowrap">
+                      <span aria-hidden="true" className="timeline-stem" />
+                      <span aria-hidden="true" className="timeline-dot" />
                       {new Date(log.created_at).toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5 text-text-primary">
@@ -271,7 +288,7 @@ export default function TransactionsPage() {
               type="button"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={meta.page <= 1}
-              className="btn btn-secondary text-xs disabled:opacity-40"
+              className="btn btn-secondary text-xs px-3 py-1.5 disabled:opacity-40"
             >
               <ChevronLeft size={14} aria-hidden="true" />
               {t("common.previous", "Previous")}
@@ -280,7 +297,7 @@ export default function TransactionsPage() {
               type="button"
               onClick={() => setPage((p) => p + 1)}
               disabled={meta.page >= meta.totalPages}
-              className="btn btn-secondary text-xs disabled:opacity-40"
+              className="btn btn-secondary text-xs px-3 py-1.5 disabled:opacity-40"
             >
               {t("common.next", "Next")}
               <ChevronRight size={14} aria-hidden="true" />

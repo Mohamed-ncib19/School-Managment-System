@@ -4,8 +4,11 @@ import { useEffect, useRef } from "react";
 import { useUpdateStore } from "@/hooks/use-update-store";
 import { updatesApi, UpdateStatus } from "@/lib/api/updates.api";
 import { useTranslation } from "@/lib/i18n/context";
+import UpdateProgressTracker from "./update-progress";
 
 const SNOOZE_KEY = "update-snoozed-sha";
+const PROGRESS_POLL_MS = 2_000;
+const PROGRESS_MAX_MS = 25 * 60_000;
 
 /**
  * Polls the backend's update check while the dashboard is open. When a newer
@@ -17,6 +20,8 @@ const SNOOZE_KEY = "update-snoozed-sha";
  * snoozed for this session). "Update now" calls /api/updates/apply, which the
  * backend answers before launching the update script; that script stops the
  * servers, pulls, migrates and restarts the app - so this page simply dies.
+ * While the engine runs, /api/updates/progress is polled and rendered by
+ * UpdateProgressTracker (shared with the Settings section).
  *
  * Status, dialog state and apply live in use-update-store so the navbar
  * indicator and the Settings section drive the same dialog.
@@ -27,6 +32,7 @@ export default function UpdateNotifier() {
   const open = useUpdateStore((s) => s.open);
   const applying = useUpdateStore((s) => s.applying);
   const failed = useUpdateStore((s) => s.failed);
+  const progress = useUpdateStore((s) => s.progress);
   const snoozed = useRef<string | null>(null);
 
   const track = (result: UpdateStatus | null) => {
@@ -68,6 +74,34 @@ export default function UpdateNotifier() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // While an update is being applied, follow the engine's progress journal
+  // until it reports a terminal state (done / failed / stalled). The engine
+  // stops these servers, so a terminal "done" is what the next boot sees.
+  useEffect(() => {
+    if (!applying) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startedAt = Date.now();
+
+    const poll = async () => {
+      if (cancelled) return;
+      const p = await useUpdateStore.getState().refreshProgress();
+      if (!p) return;
+      if (p.state === "done" || p.state === "failed" || p.state === "stalled") {
+        useUpdateStore.setState({ applying: false, failed: p.state !== "done" });
+      } else if (Date.now() - startedAt > PROGRESS_MAX_MS) {
+        useUpdateStore.setState({ applying: false, failed: true });
+      }
+    };
+
+    void poll();
+    timer = setInterval(poll, PROGRESS_POLL_MS);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [applying]);
+
   const updateLater = () => {
     const sha = useUpdateStore.getState().status?.latest?.sha;
     if (sha) {
@@ -83,15 +117,19 @@ export default function UpdateNotifier() {
 
   const updateNow = async () => {
     const store = useUpdateStore.getState();
-    store.setApplying(true);
     store.setFailed(false);
+    store.setProgress(null);
+    store.setApplying(true);
     try {
       const result = await updatesApi.apply();
-      if (!result.ok || !result.started) store.setFailed(true);
+      if (!result.ok || !result.started) {
+        store.setApplying(false);
+        store.setFailed(true);
+      }
     } catch {
+      store.setApplying(false);
       store.setFailed(true);
     }
-    store.setApplying(false);
   };
 
   if (!open || !status?.latest) return null;
@@ -118,9 +156,10 @@ export default function UpdateNotifier() {
             {t("updates.failed")}
           </p>
         )}
-        {!failed && applying && (
+        {applying && !progress && (
           <p className="mb-4 text-sm text-text-secondary">{t("updates.applying")}</p>
         )}
+        {progress && progress.state !== "idle" && <UpdateProgressTracker />}
 
         <div className="flex justify-end gap-3">
           {!applying && (

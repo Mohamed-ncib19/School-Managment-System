@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, asc, desc, eq, gte, ilike, inArray, lte, or, sql, SQL } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { auditLogs, users } from "../db/schema";
 import { getAuditContext, asUuidOrNull } from "./audit-context";
 
 /** A single administrative action worth recording. */
@@ -61,13 +62,13 @@ const REDACTED_KEYS = new Set([
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly db: DbService) {}
 
   /**
-   * Strips secrets and makes the value safe for a JSONB column (Decimal, Date
-   * and BigInt do not survive JSON.stringify unaided).
+   * Strips secrets and makes the value safe for a JSONB column (Date and
+   * Decimal do not survive JSON.stringify unaided).
    */
-  private sanitize(value: unknown): Prisma.InputJsonValue | undefined {
+  private sanitize(value: unknown): Record<string, unknown> | null | undefined {
     if (value === null || value === undefined) return undefined;
 
     const walk = (input: unknown, depth: number): unknown => {
@@ -77,7 +78,7 @@ export class AuditService {
       if (input instanceof Date) return input.toISOString();
       if (typeof input === "bigint") return input.toString();
       if (typeof input === "object" && input !== null && "toFixed" in (input as any) && "d" in (input as any)) {
-        // Prisma.Decimal - keep full precision as a string.
+        // decimal.js Money - keep full precision as a string.
         return String(input);
       }
       if (Array.isArray(input)) return input.slice(0, 200).map((item) => walk(item, depth + 1));
@@ -95,7 +96,7 @@ export class AuditService {
     try {
       const walked = walk(value, 0);
       if (walked === null || walked === undefined) return undefined;
-      return walked as Prisma.InputJsonValue;
+      return walked as Record<string, unknown>;
     } catch {
       return undefined;
     }
@@ -112,21 +113,19 @@ export class AuditService {
     const ctx = getAuditContext();
 
     try {
-      await this.prisma.audit_logs.create({
-        data: {
-          actor_user_id: asUuidOrNull(entry.actorId ?? ctx?.actorId ?? null),
-          actor_label: entry.actorLabel ?? ctx?.actorLabel ?? null,
-          actor_role: entry.actorRole ?? ctx?.actorRole ?? null,
-          action: entry.action,
-          entity_type: entry.entityType,
-          entity_id: asUuidOrNull(entry.entityId),
-          entity_label: entry.entityLabel ?? null,
-          prev_values: this.sanitize(entry.prevValues),
-          new_values: this.sanitize(entry.newValues),
-          ip_address: entry.ipAddress ?? ctx?.ipAddress ?? null,
-          user_agent: entry.userAgent ?? ctx?.userAgent ?? null,
-          meta: this.sanitize(entry.meta),
-        },
+      await this.db.client.insert(auditLogs).values({
+        actor_user_id: asUuidOrNull(entry.actorId ?? ctx?.actorId ?? null),
+        actor_label: entry.actorLabel ?? ctx?.actorLabel ?? null,
+        actor_role: entry.actorRole ?? ctx?.actorRole ?? null,
+        action: entry.action,
+        entity_type: entry.entityType,
+        entity_id: asUuidOrNull(entry.entityId),
+        entity_label: entry.entityLabel ?? null,
+        prev_values: this.sanitize(entry.prevValues),
+        new_values: this.sanitize(entry.newValues),
+        ip_address: entry.ipAddress ?? ctx?.ipAddress ?? null,
+        user_agent: entry.userAgent ?? ctx?.userAgent ?? null,
+        meta: this.sanitize(entry.meta),
       });
       if (ctx) ctx.logged = true;
     } catch (err) {
@@ -162,7 +161,7 @@ export class AuditService {
   async listLogs(params: ListLogsParams) {
     const { page, limit, entityType, action, actorUserId, search, from, to } = params;
 
-    const where: Prisma.audit_logsWhereInput = {};
+    const conditions: SQL[] = [];
 
     // The UI groups payments under "payment" while rows are stored as
     // "student_payment", and importer rows use the plural "students".
@@ -172,54 +171,99 @@ export class AuditService {
         student: ["student", "students"],
       };
       const values = aliases[entityType] ?? [entityType];
-      where.entity_type = values.length > 1 ? { in: values } : values[0];
+      conditions.push(
+        values.length > 1 ? inArray(auditLogs.entity_type, values) : eq(auditLogs.entity_type, values[0]),
+      );
     }
 
-    if (action) where.action = { contains: action, mode: "insensitive" };
-    if (actorUserId) where.actor_user_id = actorUserId;
+    if (action) conditions.push(ilike(auditLogs.action, `%${action}%`));
+    if (actorUserId) conditions.push(eq(auditLogs.actor_user_id, actorUserId));
 
-    if (from || to) {
-      where.created_at = {};
-      if (from) {
-        const parsed = new Date(from);
-        if (!isNaN(parsed.getTime())) where.created_at.gte = parsed;
-      }
-      if (to) {
-        const parsed = new Date(to);
-        // A bare date means "through the end of that day".
-        if (!isNaN(parsed.getTime())) {
-          if (/^\d{4}-\d{2}-\d{2}$/.test(to)) parsed.setHours(23, 59, 59, 999);
-          where.created_at.lte = parsed;
-        }
+    if (from) {
+      const parsed = new Date(from);
+      if (!isNaN(parsed.getTime())) conditions.push(gte(auditLogs.created_at, parsed));
+    }
+    if (to) {
+      const parsed = new Date(to);
+      // A bare date means "through the end of that day".
+      if (!isNaN(parsed.getTime())) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(to)) parsed.setHours(23, 59, 59, 999);
+        conditions.push(lte(auditLogs.created_at, parsed));
       }
     }
 
     if (search && search.trim()) {
       const term = search.trim();
-      where.OR = [
-        { action: { contains: term, mode: "insensitive" } },
-        { entity_type: { contains: term, mode: "insensitive" } },
-        { entity_label: { contains: term, mode: "insensitive" } },
-        { actor_label: { contains: term, mode: "insensitive" } },
-        { ip_address: { contains: term, mode: "insensitive" } },
-        { actor: { is: { full_name: { contains: term, mode: "insensitive" } } } },
-        { actor: { is: { email: { contains: term, mode: "insensitive" } } } },
+      const searchGroups: SQL[] = [
+        ilike(auditLogs.action, `%${term}%`),
+        ilike(auditLogs.entity_type, `%${term}%`),
+        ilike(auditLogs.entity_label, `%${term}%`),
+        ilike(auditLogs.actor_label, `%${term}%`),
+        ilike(auditLogs.ip_address, `%${term}%`),
       ];
+      // Actor matches resolve through the joined users table. An empty match
+      // list must render as a false branch, not an invalid `IN ()`.
+      const actorMatches = (
+        await this.db.client
+          .select({ id: users.id })
+          .from(users)
+          .where(or(ilike(users.full_name, `%${term}%`), ilike(users.email, `%${term}%`)))
+      ).map((u) => u.id);
+      searchGroups.push((actorMatches.length > 0 ? inArray(auditLogs.actor_user_id, actorMatches) : sql`FALSE`) as SQL);
+      conditions.push(or(...searchGroups) as SQL);
     }
 
-    const sortBy = SORTABLE.has(params.sortBy ?? "") ? params.sortBy! : "created_at";
-    const sortDir = params.sortDir === "asc" ? "asc" : "desc";
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-    const [data, total] = await Promise.all([
-      this.prisma.audit_logs.findMany({
-        where,
-        include: { actor: { select: { id: true, full_name: true, email: true, role: true } } },
-        orderBy: { [sortBy]: sortDir },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.audit_logs.count({ where }),
-    ]);
+    const sortable = SORTABLE.has(params.sortBy ?? "") ? params.sortBy! : "created_at";
+    const sortDir = params.sortDir === "asc" ? asc : desc;
+    const sortCol =
+      sortable === "action"
+        ? auditLogs.action
+        : sortable === "entity_type"
+          ? auditLogs.entity_type
+          : auditLogs.created_at;
+
+    const rows = await this.db.client
+      .select({
+        id: auditLogs.id,
+        actorUserId: auditLogs.actor_user_id,
+        action: auditLogs.action,
+        entityType: auditLogs.entity_type,
+        entityId: auditLogs.entity_id,
+        meta: auditLogs.meta,
+        createdAt: auditLogs.created_at,
+        actorLabel: auditLogs.actor_label,
+        actorRole: auditLogs.actor_role,
+        entityLabel: auditLogs.entity_label,
+        prevValues: auditLogs.prev_values,
+        newValues: auditLogs.new_values,
+        ipAddress: auditLogs.ip_address,
+        userAgent: auditLogs.user_agent,
+        actorId: users.id,
+        actorFullName: users.full_name,
+        actorEmail: users.email,
+        actorRoleJoin: users.role,
+      })
+      .from(auditLogs)
+      .leftJoin(users, eq(users.id, auditLogs.actor_user_id))
+      .where(where)
+      .orderBy(sortDir(sortCol))
+      .limit(limit)
+      .offset((page - 1) * limit);
+
+    const [countRow] = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(auditLogs)
+      .where(where ?? sql`true`);
+    const total = countRow.count;
+
+    const data = rows.map(({ actorId, actorFullName, actorEmail, actorRoleJoin, ...rest }) => ({
+      ...rest,
+      actor: !actorId
+        ? null
+        : { id: actorId, full_name: actorFullName, email: actorEmail, role: actorRoleJoin },
+    }));
 
     return {
       data,
@@ -230,20 +274,15 @@ export class AuditService {
   /** Distinct actions and actors, so the UI can offer real filter options. */
   async listFilterOptions() {
     const [actions, entityTypes, actors] = await Promise.all([
-      this.prisma.audit_logs.findMany({
-        distinct: ["action"],
-        select: { action: true },
-        orderBy: { action: "asc" },
-      }),
-      this.prisma.audit_logs.findMany({
-        distinct: ["entity_type"],
-        select: { entity_type: true },
-        orderBy: { entity_type: "asc" },
-      }),
-      this.prisma.users.findMany({
-        select: { id: true, full_name: true, email: true },
-        orderBy: { full_name: "asc" },
-      }),
+      this.db.client.selectDistinct({ action: auditLogs.action }).from(auditLogs).orderBy(asc(auditLogs.action)),
+      this.db.client
+        .selectDistinct({ entity_type: auditLogs.entity_type })
+        .from(auditLogs)
+        .orderBy(asc(auditLogs.entity_type)),
+      this.db.client
+        .select({ id: users.id, full_name: users.full_name, email: users.email })
+        .from(users)
+        .orderBy(asc(users.full_name)),
     ]);
 
     return {

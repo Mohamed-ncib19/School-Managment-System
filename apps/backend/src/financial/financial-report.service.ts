@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { paymentTransactions, payrollPayments, studentAssignments, studentPayments, students } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { AnalyticsService } from "./analytics.service";
@@ -64,7 +66,7 @@ export interface ReportTable {
 @Injectable()
 export class FinancialReportService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
     private readonly revenue: RevenueCalculationService,
     private readonly analytics: AnalyticsService,
@@ -118,17 +120,21 @@ export class FinancialReportService {
 
   /** Every movement of money in the window, one row per transaction. */
   private async collections(academic: AcademicFilter, range: DateRange) {
-    const rows = await this.prisma.payment_transactions.findMany({
-      where: { ...transactionWhere(academic), paid_at: { gte: range.from, lte: range.to } },
-      orderBy: { paid_at: "asc" },
-      include: {
-        recorder: { select: { full_name: true } },
-        payment: {
-          include: {
+    const rows = await this.db.client.query.paymentTransactions.findMany({
+      where: and(
+        transactionWhere(academic),
+        gte(paymentTransactions.paid_at, range.from),
+        lte(paymentTransactions.paid_at, range.to),
+      ),
+      orderBy: (t, { asc }) => [asc(t.paid_at)],
+      with: {
+        user: { columns: { full_name: true } },
+        studentPayment: {
+          with: {
             student: true,
             group: {
-              include: {
-                professor: { include: { field: { include: { level: true } } } },
+              with: {
+                professor: { with: { field: { with: { level: true } } } },
               },
             },
           },
@@ -141,9 +147,9 @@ export class FinancialReportService {
     let schoolTotal = ZERO;
 
     const data = rows.map((row) => {
-      const student = row.payment?.student;
+      const student = row.studentPayment?.student;
       // The invoice's own group — the enrollment the money was billed under.
-      const group = row.payment?.group;
+      const group = row.studentPayment?.group;
       const professor = group?.professor;
       const field = professor?.field;
 
@@ -164,7 +170,7 @@ export class FinancialReportService {
         amount: toAmount(money(row.amount)),
         professor_share: toAmount(money(row.professor_share)),
         school_share: toAmount(money(row.school_share)),
-        recorded_by: row.recorder?.full_name ?? "—",
+        recorded_by: row.user?.full_name ?? "—",
       };
     });
 
@@ -201,15 +207,15 @@ export class FinancialReportService {
 
   /** Everything still owed, oldest first. */
   private async outstanding(academic: AcademicFilter) {
-    const rows = await this.prisma.student_payments.findMany({
-      where: {
-        ...paymentWhere(academic),
-        status: { in: ["not_paid", "due_soon", "overdue", "partially_paid"] },
-      },
-      orderBy: { due_date: "asc" },
-      include: {
+    const rows = await this.db.client.query.studentPayments.findMany({
+      where: and(
+        paymentWhere(academic),
+        inArray(studentPayments.status, ["not_paid", "due_soon", "overdue", "partially_paid"]),
+      ),
+      orderBy: (p, { asc }) => [asc(p.due_date)],
+      with: {
         student: true,
-        group: { include: { professor: { include: { field: { include: { level: true } } } } } },
+        group: { with: { professor: { with: { field: { with: { level: true } } } } } },
       },
     });
 
@@ -272,13 +278,13 @@ export class FinancialReportService {
   private async professorPayroll(academic: AcademicFilter, period?: string) {
     const targetPeriod = period ?? periodOfDate(new Date());
 
-    const professors = await this.prisma.professors.findMany({
+    const profRows = await this.db.client.query.professors.findMany({
       where: professorWhere(academic),
-      include: { field: { include: { level: true } } },
-      orderBy: { full_name: "asc" },
+      with: { field: { with: { level: true } } },
+      orderBy: (p, { asc }) => [asc(p.full_name)],
     });
 
-    if (professors.length === 0) {
+    if (profRows.length === 0) {
       return {
         title: `Masse salariale — ${targetPeriod}`,
         columns: [{ key: "professor", label: "Professeur" }],
@@ -288,23 +294,26 @@ export class FinancialReportService {
       };
     }
 
-    const profIds = professors.map((p) => p.id);
+    const profIds = profRows.map((p) => p.id);
     const [entitlements, payouts] = await Promise.all([
       this.revenue.periodEntitlements(profIds, targetPeriod),
-      this.prisma.payroll_payments.groupBy({
-        by: ["prof_id"],
-        where: { prof_id: { in: profIds }, period: targetPeriod },
-        _sum: { amount: true },
-      }),
+      this.db.client
+        .select({
+          prof_id: payrollPayments.prof_id,
+          sum_amount: sql<string | null>`sum(${payrollPayments.amount})`,
+        })
+        .from(payrollPayments)
+        .where(and(inArray(payrollPayments.prof_id, profIds), eq(payrollPayments.period, targetPeriod)))
+        .groupBy(payrollPayments.prof_id),
     ]);
 
-    const paidMap = new Map(payouts.map((p) => [p.prof_id, money(p._sum.amount)]));
+    const paidMap = new Map(payouts.map((p) => [p.prof_id, money(p.sum_amount)]));
 
     let earnedTotal = ZERO;
     let paidTotal = ZERO;
     let balanceTotal = ZERO;
 
-    const data = professors.map((professor) => {
+    const data = profRows.map((professor) => {
       const entitlement = entitlements.get(professor.id);
       const earned = entitlement?.total ?? ZERO;
       const paid = round2(paidMap.get(professor.id) ?? ZERO);
@@ -467,32 +476,41 @@ export class FinancialReportService {
    * and the footnotes say so rather than letting a reader mistake it for one.
    */
   private async forecast(academic: AcademicFilter, range: DateRange) {
-    const studentFilter = studentWhere(academic);
-
     // Projected billing is the sum of every active enrollment's fee, since each
     // enrollment raises its own invoice each month.
     const [enrollmentAgg, studentCount, historic] = await Promise.all([
-      this.prisma.student_assignments.aggregate({
-        where: { student: { status: "active", ...(studentFilter ? studentFilter : {}) } },
-        _sum: { fee: true },
-      }),
-      this.prisma.students.count({
-        where: { status: "active", ...(studentFilter ? studentFilter : {}) },
-      }),
-      this.prisma.student_payments.aggregate({
-        where: {
-          ...paymentWhere(academic),
-          due_date: { gte: range.from, lte: range.to },
-          status: { not: "cancelled" },
-        },
-        _sum: { amount_due: true, paid_amount: true },
-      }),
+      this.db.client
+        .select({ sum_fee: sql<string | null>`sum(${studentAssignments.fee})` })
+        .from(studentAssignments)
+        .innerJoin(students, eq(studentAssignments.student_id, students.id))
+        .where(and(eq(students.status, "active"), studentWhere(academic)))
+        .then((r) => r[0]),
+      this.db.client
+        .select({ c: sql<number>`count(*)::int` })
+        .from(students)
+        .where(and(eq(students.status, "active"), studentWhere(academic)))
+        .then((r) => r[0].c),
+      this.db.client
+        .select({
+          sum_amount_due: sql<string | null>`sum(${studentPayments.amount_due})`,
+          sum_paid_amount: sql<string | null>`sum(${studentPayments.paid_amount})`,
+        })
+        .from(studentPayments)
+        .where(
+          and(
+            paymentWhere(academic),
+            gte(studentPayments.due_date, range.from),
+            lte(studentPayments.due_date, range.to),
+            ne(studentPayments.status, "cancelled"),
+          ),
+        )
+        .then((r) => r[0]),
     ]);
 
-    const monthlyBilling = round2(money(enrollmentAgg._sum.fee));
+    const monthlyBilling = round2(money(enrollmentAgg.sum_fee));
     const rate = ratePercent(
-      round2(money(historic._sum.paid_amount)),
-      round2(money(historic._sum.amount_due)),
+      round2(money(historic.sum_paid_amount)),
+      round2(money(historic.sum_amount_due)),
     );
     const factor = money(rate).dividedBy(100);
 

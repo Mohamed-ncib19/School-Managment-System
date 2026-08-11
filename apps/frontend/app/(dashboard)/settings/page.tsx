@@ -55,6 +55,7 @@ import { useFinancialSettings, useUploadLogo, useRemoveLogo } from "@/hooks/use-
 import { useSystemSettings, useUpdateSystemSettings, isFeatureEnabled, FEATURE_KEYS, type FeatureKey } from "@/hooks/use-system-settings";
 import { useAppearance, ACCENT_PRESETS, ACCENT_IDS } from "@/hooks/use-appearance";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
+import UpdateProgressTracker from "@/components/shared/update-progress";
 import { SettingsSkeleton, PageLoader } from "@/components/shared/skeletons";
 import BrandMark from "@/components/shared/brand-mark";
 import { apiBaseUrl } from "@/lib/api/client";
@@ -178,7 +179,7 @@ const normalized = (features: Record<string, boolean> | undefined): Record<strin
 export default function SettingsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { user, setAuth } = useAuthStore();
+  const { user, setSession } = useAuthStore();
   const [active, setActive] = useState<SectionId>("profile");
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -194,6 +195,7 @@ export default function SettingsPage() {
   const updateChecking = useUpdateStore((s) => s.checking);
   const updateApplying = useUpdateStore((s) => s.applying);
   const updateFailed = useUpdateStore((s) => s.failed);
+  const updateProgress = useUpdateStore((s) => s.progress);
 
   const checkNow = async () => {
     const result = await useUpdateStore.getState().refresh(true);
@@ -204,13 +206,17 @@ export default function SettingsPage() {
     const store = useUpdateStore.getState();
     store.setApplying(true);
     store.setFailed(false);
+    store.setProgress(null);
     try {
       const result = await updatesApi.apply();
-      if (!result.ok || !result.started) store.setFailed(true);
+      if (!result.ok || !result.started) {
+        store.setApplying(false);
+        store.setFailed(true);
+      }
     } catch {
+      store.setApplying(false);
       store.setFailed(true);
     }
-    store.setApplying(false);
   };
 
   const { data: profile } = useQuery({
@@ -286,7 +292,7 @@ export default function SettingsPage() {
   const updateProfileMutation = useMutation({
     mutationFn: (data: ProfileForm) => usersApi.updateProfile(data),
     onSuccess: (data) => {
-      setAuth(useAuthStore.getState().token!, data);
+      setSession(data);
       queryClient.invalidateQueries({ queryKey: ["users", "me"] });
       setSuccess(t("settings.profileUpdated"));
       setError(null);
@@ -1383,8 +1389,13 @@ export default function SettingsPage() {
                   {updateFailed && (
                     <p role="alert" className="mt-3 text-xs text-danger">{t("updates.failed")}</p>
                   )}
-                  {updateApplying && (
+                  {updateApplying && !updateProgress && (
                     <p className="mt-3 text-xs text-text-secondary">{t("updates.applying")}</p>
+                  )}
+                  {updateProgress && updateProgress.state !== "idle" && (
+                    <div className="mt-3">
+                      <UpdateProgressTracker />
+                    </div>
                   )}
                 </div>
 

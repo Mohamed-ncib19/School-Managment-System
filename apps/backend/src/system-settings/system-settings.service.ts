@@ -1,10 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { system_settings } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { eq } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { systemSettings } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { UpdateSystemSettingsDto } from "./dto/system-settings.dto";
 
 const SINGLETON = "global";
+
+type SystemSettingsRow = typeof systemSettings.$inferSelect;
 
 /**
  * The school's system configuration: display name and per-module feature
@@ -20,48 +23,58 @@ const SINGLETON = "global";
 @Injectable()
 export class SystemSettingsService {
   private readonly logger = new Logger(SystemSettingsService.name);
-  private cached: system_settings | null = null;
+  private cached: SystemSettingsRow | null = null;
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
   ) {}
 
-  async get(): Promise<system_settings> {
+  async get(): Promise<SystemSettingsRow> {
     if (this.cached) return this.cached;
 
-    // The migration seeds this row and a CHECK constraint keeps it unique, so
-    // the upsert is belt-and-braces for a database restored from an older dump.
-    const settings = await this.prisma.system_settings.upsert({
-      where: { singleton: SINGLETON },
-      update: {},
-      create: { singleton: SINGLETON },
+    let settings = await this.db.client.query.systemSettings.findFirst({
+      where: eq(systemSettings.singleton, SINGLETON),
     });
+    if (!settings) {
+      // The migration seeds this row and a CHECK constraint keeps it unique, so
+      // the fallback insert is belt-and-braces for a database restored from an
+      // older dump. updated_at is passed explicitly: older databases have no
+      // default on it.
+      await this.db.client
+        .insert(systemSettings)
+        .values({ singleton: SINGLETON, updated_at: new Date() })
+        .onConflictDoNothing();
+      settings = await this.db.client.query.systemSettings.findFirst({
+        where: eq(systemSettings.singleton, SINGLETON),
+      });
+    }
 
-    this.cached = settings;
-    return settings;
+    this.cached = settings!;
+    return settings!;
   }
 
-  async update(dto: UpdateSystemSettingsDto, userId: string): Promise<system_settings> {
+  async update(dto: UpdateSystemSettingsDto, userId: string): Promise<SystemSettingsRow> {
     const existing = await this.get();
 
-    const updated = await this.prisma.system_settings.update({
-      where: { singleton: SINGLETON },
-      data: {
-        ...(dto.system_name !== undefined && { system_name: dto.system_name }),
+    const [updated] = await this.db.client
+      .update(systemSettings)
+      .set({
+        ...(dto.system_name !== undefined && { systemName: dto.system_name }),
         ...(dto.features !== undefined && { features: dto.features }),
         // Empty input clears the field: the school falls back to the default channel.
         ...(dto.support_email !== undefined && {
-          support_email: dto.support_email.trim() || null,
+          supportEmail: dto.support_email.trim() || null,
         }),
         ...(dto.support_phone !== undefined && {
-          support_phone: dto.support_phone.trim() || null,
+          supportPhone: dto.support_phone.trim() || null,
         }),
         ...(dto.support_whatsapp !== undefined && {
-          support_whatsapp: dto.support_whatsapp.trim() || null,
+          supportWhatsapp: dto.support_whatsapp.trim() || null,
         }),
-      },
-    });
+      })
+      .where(eq(systemSettings.singleton, SINGLETON))
+      .returning();
 
     this.cached = updated;
 
@@ -83,7 +96,7 @@ export class SystemSettingsService {
     this.cached = null;
   }
 
-  private auditable(settings: system_settings): Record<string, unknown> {
+  private auditable(settings: SystemSettingsRow): Record<string, unknown> {
     return {
       system_name: settings.system_name,
       features: settings.features,

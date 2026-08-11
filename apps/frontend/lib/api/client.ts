@@ -12,26 +12,22 @@ export function apiBaseUrl(): string {
 }
 
 export function initApi(baseURL: string = DEFAULT_BASE_URL): AxiosInstance {
-  apiClient = axios.create({ baseURL });
-
-  apiClient.interceptors.request.use((config) => {
-    const token = useAuthStore.getState().token;
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
+  apiClient = axios.create({
+    baseURL,
+    // The session rides on httpOnly cookies (`iq_session`), so every request
+    // must send credentials — there is no token to attach by hand.
+    withCredentials: true,
   });
 
   apiClient.interceptors.response.use(
     (response) => response,
     (error: AxiosError) => {
-      // The logout call itself 401s when the token is already invalid/expired;
+      // The logout call itself 401s when the session is already invalid;
       // skipping it here prevents the redirect loop (logout 401 -> logout -> ...).
       const skipAuthHandling = Boolean((error.config as any)?.skipAuthHandling);
       if (error.response?.status === 401 && !skipAuthHandling) {
-        const { clearSession, logout } = useAuthStore.getState();
-        // Clear the session synchronously so the dead token cannot survive a
-        // page reload, then best-effort notify the backend.
+        const { clearSession } = useAuthStore.getState();
         clearSession();
-        void logout().catch(() => {});
         if (typeof window !== "undefined" && window.location.pathname !== "/login") {
           window.location.href = "/login";
         }

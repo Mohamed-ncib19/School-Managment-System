@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { PrismaModule } from "../prisma/prisma.module";
 import { AuditModule } from "../audit/audit.module";
 import { FinancialController } from "./financial.controller";
 import { BrandingController } from "./branding.controller";
@@ -19,8 +18,8 @@ import { TransactionService } from "./transaction.service";
 /**
  * The financial domain, self-contained.
  *
- * Everything it needs from the rest of the application it takes through
- * `PrismaModule` and `AuditModule`; nothing outside reaches into it except
+ * Everything it needs from the rest of the application it takes through the
+ * global `DbModule` and `AuditModule`; nothing outside reaches into it except
  * through the exported services. That boundary is what makes the later
  * integrations the brief anticipates — online payments, accounting export,
  * invoicing, a second campus — additions inside this folder rather than changes
@@ -31,7 +30,7 @@ import { TransactionService } from "./transaction.service";
  * reports. No service reaches back up.
  */
 @Module({
-  imports: [PrismaModule, AuditModule],
+  imports: [AuditModule],
   controllers: [FinancialController, BrandingController],
   providers: [
     FinancialSettingsService,

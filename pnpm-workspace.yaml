@@ -2,11 +2,7 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# pnpm 10 blocks dependency build scripts by default. Prisma's postinstall is
-# what fetches the query-engine binaries, so a cold machine needs these
-# allowed or the backend can't reach the database.
+# pnpm 10 blocks dependency build scripts by default. @nestjs/core needs its
+# postinstall on a cold machine, so it stays allow-listed here.
 onlyBuiltDependencies:
-  - "@prisma/client"
-  - "@prisma/engines"
-  - prisma
   - "@nestjs/core"

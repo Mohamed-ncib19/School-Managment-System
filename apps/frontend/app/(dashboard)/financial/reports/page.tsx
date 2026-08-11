@@ -56,6 +56,12 @@ export default function FinancialReportsPage() {
 
   return (
     <div className="space-y-4">
+      <div>
+        <h1 className="text-h2 font-bold text-text-primary mb-1">{t("financial.reports", "Rapports")}</h1>
+        <p className="text-sm text-text-secondary">
+          {t("financial.reportsSub", "Synthèses financières exportables au format PDF")}
+        </p>
+      </div>
       <div className="card">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
           {t("financial.reports.reportType", "Report type")}

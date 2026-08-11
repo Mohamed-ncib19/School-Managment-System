@@ -17,13 +17,13 @@ export function StatCard({ icon, title, value, trend, titleKey }: StatCardProps)
 
   return (
     <div className="card flex items-center gap-4">
-      <div className="h-11 w-11 rounded-card bg-primary-50 flex items-center justify-center text-primary shrink-0">
+      <div className="h-11 w-11 rounded-card bg-neutral-soft dark:bg-white/[0.08] flex items-center justify-center text-text-secondary shrink-0">
         {icon}
       </div>
       <div className="min-w-0">
         <p className="text-sm text-text-secondary truncate">{displayTitle}</p>
         <div className="flex items-baseline gap-2">
-          <p className="text-xl font-bold text-text-primary">{value}</p>
+          <p className="text-xl font-bold text-text-primary tabular-nums">{value}</p>
           {trend && (
             <span className={`text-xs font-medium shrink-0 ${trend.positive ? "text-green-600" : "text-red-500"}`}>
               {trend.positive ? "↑" : "↓"} {trend.value}

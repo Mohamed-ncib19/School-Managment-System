@@ -1,7 +1,8 @@
-﻿import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { and, eq } from "drizzle-orm";
 import * as ExcelJS from "exceljs";
-import { PrismaService } from "../prisma/prisma.service";
+import { DbService, Tx } from "../db/db.service";
+import { fields, groups, levels, professors, studentAssignments, students } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { StudentStatus } from "@iq/shared";
 import { normalizeTunisianPhone } from "../common/phone.util";
@@ -48,7 +49,7 @@ export class ImportsService {
   private readonly logger = new Logger(ImportsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
   ) {}
 
@@ -93,26 +94,25 @@ export class ImportsService {
 
     if (rows.length === 0) return result;
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.db.client.transaction(async (tx) => {
       const caches = this.newCaches();
 
       for (const row of rows) {
         const groupId = await this.resolveGroup(tx, row, actorUserId, caches, result);
 
-        const duplicate = await tx.students.findFirst({
-          where: {
-            group_id: groupId,
-            first_name: row.firstName,
-            last_name: row.lastName,
-          },
-        });
+        const [duplicate] = await tx
+          .select({ id: students.id })
+          .from(students)
+          .where(and(eq(students.group_id, groupId), eq(students.first_name, row.firstName), eq(students.last_name, row.lastName)))
+          .limit(1);
         if (duplicate) {
           result.skippedDuplicates++;
           continue;
         }
 
-        await tx.students.create({
-          data: {
+        const [createdStudent] = await tx
+          .insert(students)
+          .values({
             group_id: groupId,
             first_name: this.sanitize(row.firstName),
             last_name: this.sanitize(row.lastName),
@@ -120,12 +120,14 @@ export class ImportsService {
             parent_phone: row.parentPhone ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone)) : null,
             email: row.email ? this.sanitize(row.email) : null,
             enrollment_date: row.enrollmentDate,
-            monthly_fee: row.monthlyFee,
+            monthly_fee: String(row.monthlyFee),
             status: row.status,
-            assignments: {
-              create: [{ group_id: groupId, fee: row.monthlyFee }],
-            },
-          },
+          })
+          .returning({ id: students.id });
+        await tx.insert(studentAssignments).values({
+          student_id: createdStudent.id,
+          group_id: groupId,
+          fee: String(row.monthlyFee),
         });
         result.imported++;
       }
@@ -211,27 +213,26 @@ export class ImportsService {
 
     // One transaction for the whole import: a mid-file failure must not leave
     // a half-built hierarchy behind.
-    await this.prisma.$transaction(async (tx) => {
+    await this.db.client.transaction(async (tx) => {
       const caches = this.newCaches();
 
       for (const row of rows) {
         const groupId = await this.resolveGroup(tx, row, actorUserId, caches, result);
 
         // Append semantics: re-importing the same roster must not duplicate students.
-        const duplicate = await tx.students.findFirst({
-          where: {
-            group_id: groupId,
-            first_name: row.firstName,
-            last_name: row.lastName,
-          },
-        });
+        const [duplicate] = await tx
+          .select({ id: students.id })
+          .from(students)
+          .where(and(eq(students.group_id, groupId), eq(students.first_name, row.firstName), eq(students.last_name, row.lastName)))
+          .limit(1);
         if (duplicate) {
           result.skippedDuplicates++;
           continue;
         }
 
-        await tx.students.create({
-          data: {
+        const [createdStudent] = await tx
+          .insert(students)
+          .values({
             group_id: groupId,
             first_name: this.sanitize(row.firstName),
             last_name: this.sanitize(row.lastName),
@@ -239,12 +240,14 @@ export class ImportsService {
             parent_phone: row.parentPhone ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone)) : null,
             email: row.email ? this.sanitize(row.email) : null,
             enrollment_date: row.enrollmentDate,
-            monthly_fee: row.monthlyFee,
+            monthly_fee: String(row.monthlyFee),
             status: row.status,
-            assignments: {
-              create: [{ group_id: groupId, fee: row.monthlyFee }],
-            },
-          },
+          })
+          .returning({ id: students.id });
+        await tx.insert(studentAssignments).values({
+          student_id: createdStudent.id,
+          group_id: groupId,
+          fee: String(row.monthlyFee),
         });
         result.imported++;
       }
@@ -278,7 +281,7 @@ export class ImportsService {
    * which is what a professor row means now that it sits inside a level.
    */
   private async resolveGroup(
-    tx: Prisma.TransactionClient,
+    tx: Tx,
     row: ParsedRow,
     actorUserId: string,
     caches: ImportCaches,
@@ -287,11 +290,11 @@ export class ImportsService {
     const levelKey = row.level.toLowerCase();
     let levelId = caches.levels.get(levelKey);
     if (!levelId) {
-      const existing = await tx.levels.findFirst({ where: { name: row.level } });
+      const [existing] = await tx.select({ id: levels.id }).from(levels).where(eq(levels.name, row.level)).limit(1);
       if (existing) {
         levelId = existing.id;
       } else {
-        const created = await tx.levels.create({ data: { name: this.sanitize(row.level) } });
+        const [created] = await tx.insert(levels).values({ name: this.sanitize(row.level) }).returning({ id: levels.id });
         levelId = created.id;
         result.created.levels++;
       }
@@ -301,15 +304,18 @@ export class ImportsService {
     const fieldKey = `${levelId}::${row.field.toLowerCase()}`;
     let fieldId = caches.fields.get(fieldKey);
     if (!fieldId) {
-      const existing = await tx.fields.findFirst({
-        where: { level_id: levelId, name: row.field },
-      });
+      const [existing] = await tx
+        .select({ id: fields.id })
+        .from(fields)
+        .where(and(eq(fields.level_id, levelId), eq(fields.name, row.field)))
+        .limit(1);
       if (existing) {
         fieldId = existing.id;
       } else {
-        const created = await tx.fields.create({
-          data: { level_id: levelId, name: this.sanitize(row.field), created_by: actorUserId },
-        });
+        const [created] = await tx
+          .insert(fields)
+          .values({ level_id: levelId, name: this.sanitize(row.field), created_by: actorUserId })
+          .returning({ id: fields.id });
         fieldId = created.id;
         result.created.fields++;
       }
@@ -319,22 +325,25 @@ export class ImportsService {
     const profKey = `${fieldId}::${row.professor.toLowerCase()}`;
     let profId = caches.professors.get(profKey);
     if (!profId) {
-      const existing = await tx.professors.findFirst({
-        where: { field_id: fieldId, full_name: row.professor },
-      });
+      const [existing] = await tx
+        .select({ id: professors.id })
+        .from(professors)
+        .where(and(eq(professors.field_id, fieldId), eq(professors.full_name, row.professor)))
+        .limit(1);
       if (existing) {
         profId = existing.id;
       } else {
-        const created = await tx.professors.create({
-          data: {
+        const [created] = await tx
+          .insert(professors)
+          .values({
             field_id: fieldId,
             full_name: this.sanitize(row.professor),
             phone:
-              row.professorPhone && row.professorPhone !== "â€”"
+              row.professorPhone && row.professorPhone !== "â"
                 ? (normalizeTunisianPhone(row.professorPhone) ?? this.sanitize(row.professorPhone))
                 : "",
-          },
-        });
+          })
+          .returning({ id: professors.id });
         profId = created.id;
         result.created.professors++;
       }
@@ -344,15 +353,18 @@ export class ImportsService {
     const groupKey = `${profId}::${row.group.toLowerCase()}`;
     let groupId = caches.groups.get(groupKey);
     if (!groupId) {
-      const existing = await tx.groups.findFirst({
-        where: { prof_id: profId, name: row.group },
-      });
+      const [existing] = await tx
+        .select({ id: groups.id })
+        .from(groups)
+        .where(and(eq(groups.prof_id, profId), eq(groups.name, row.group)))
+        .limit(1);
       if (existing) {
         groupId = existing.id;
       } else {
-        const created = await tx.groups.create({
-          data: { prof_id: profId, name: this.sanitize(row.group) },
-        });
+        const [created] = await tx
+          .insert(groups)
+          .values({ prof_id: profId, name: this.sanitize(row.group) })
+          .returning({ id: groups.id });
         groupId = created.id;
         result.created.groups++;
       }
@@ -452,7 +464,7 @@ export class ImportsService {
       }
 
       // Strip currency symbols/spaces, but insist on an actual number afterwards.
-      // Without the digit check, "abc" cleans to "" and Number("") is 0 â€” which
+      // Without the digit check, "abc" cleans to "" and Number("") is 0 â which
       // would silently enrol a student at a zero monthly fee.
       const feeCleaned = values.monthlyFee
         .replace(/\s/g, "")
@@ -500,7 +512,7 @@ export class ImportsService {
         level: values.level,
         field: values.field,
         professor: values.professor,
-        professorPhone: values.professorPhone || "â€”",
+        professorPhone: values.professorPhone || "â",
         group: values.group,
         firstName: values.firstName,
         lastName: values.lastName,
@@ -534,7 +546,7 @@ export class ImportsService {
   }
 
   /**
-   * enrollment_date is a calendar day, not an instant â€” it anchors the monthly
+   * enrollment_date is a calendar day, not an instant â it anchors the monthly
    * billing anniversary (Â§3). Pinning it to UTC midnight keeps the day-of-month
    * stable regardless of the server's timezone; without this a date can drift
    * to the previous day and shift a student's whole billing schedule.

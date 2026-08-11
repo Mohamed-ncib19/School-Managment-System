@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, asc, desc, eq, gte, ilike, inArray, lte, or, sql, SQL } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { auditLogs, paymentTransactions } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { money, round2, toAmount } from "./money.util";
 import { resolveRange, transactionWhere } from "./financial.filters";
@@ -39,14 +40,11 @@ export const FINANCIAL_AUDIT_ACTIONS = [
  *   also carries the actions that move no money but change what money means:
  *   a percentage changed, an invoice cancelled, a receipt printed. It already
  *   records actor, IP, user agent and before/after values.
- *
- * Merging them would produce a feed where a settings change and a 40 DT payment
- * sit in the same list with no way to total either.
  */
 @Injectable()
 export class TransactionService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
   ) {}
 
@@ -62,56 +60,58 @@ export class TransactionService {
     const page = query.page ?? 1;
     const limit = query.pageLimit ?? 50;
 
-    const where: Prisma.payment_transactionsWhereInput = {
-      ...transactionWhere({
+    const clauses: (SQL | undefined)[] = [
+      transactionWhere({
         levelId: query.levelId,
         fieldId: query.fieldId,
         profId: query.profId,
         groupId: query.groupId,
         studentId: query.studentId,
       }),
-      paid_at: { gte: range.from, lte: range.to },
-      ...(query.type ? { type: query.type } : {}),
-      ...(query.period ? { period: query.period } : {}),
-    };
+      gte(paymentTransactions.paid_at, range.from),
+      lte(paymentTransactions.paid_at, range.to),
+      query.type ? eq(paymentTransactions.type, query.type) : undefined,
+      query.period ? eq(paymentTransactions.period, query.period) : undefined,
+    ];
 
     if (query.search?.trim()) {
       const term = query.search.trim();
-      where.OR = [
-        { receipt_number: { contains: term, mode: "insensitive" } },
-        { notes: { contains: term, mode: "insensitive" } },
-        { reason: { contains: term, mode: "insensitive" } },
-        { payment: { student: { first_name: { contains: term, mode: "insensitive" } } } },
-        { payment: { student: { last_name: { contains: term, mode: "insensitive" } } } },
-      ];
+      clauses.push(
+        or(
+          ilike(paymentTransactions.receipt_number, `%${term}%`),
+          ilike(paymentTransactions.notes, `%${term}%`),
+          ilike(paymentTransactions.reason, `%${term}%`),
+          sql`exists(select 1 from student_payments sp2 join students st on st.id = sp2.student_id where sp2.id = ${paymentTransactions.payment_id} and st.first_name ilike ${`%${term}%`})`,
+          sql`exists(select 1 from student_payments sp2 join students st on st.id = sp2.student_id where sp2.id = ${paymentTransactions.payment_id} and st.last_name ilike ${`%${term}%`})`,
+        ),
+      );
     }
 
-    const [rows, total, totals] = await Promise.all([
-      this.prisma.payment_transactions.findMany({
+    const where = and(...clauses);
+
+    const [rows, [countRow], [sumRow]] = await Promise.all([
+      this.db.client.query.paymentTransactions.findMany({
         where,
-        orderBy: { paid_at: "desc" },
-        skip: (page - 1) * limit,
-        take: limit,
-        include: {
-          recorder: { select: { id: true, full_name: true } },
-          professor: { select: { id: true, full_name: true } },
-          payment: {
-            select: {
-              id: true,
-              period: true,
-              amount_due: true,
-              student: {
-                select: { id: true, first_name: true, last_name: true },
-              },
+        orderBy: [desc(paymentTransactions.paid_at)],
+        offset: (page - 1) * limit,
+        limit,
+        with: {
+          user: { columns: { id: true, full_name: true } },
+          professor: { columns: { id: true, full_name: true } },
+          studentPayment: {
+            columns: { id: true, period: true, amount_due: true },
+            with: {
+              student: { columns: { id: true, first_name: true, last_name: true } },
               group: {
-                select: {
-                  id: true,
-                  name: true,
+                columns: { id: true, name: true },
+                with: {
                   professor: {
-                    select: {
-                      id: true,
-                      full_name: true,
-                      field: { select: { id: true, name: true, level: { select: { id: true, name: true } } } },
+                    columns: { id: true, full_name: true },
+                    with: {
+                      field: {
+                        columns: { id: true, name: true },
+                        with: { level: { columns: { id: true, name: true } } },
+                      },
                     },
                   },
                 },
@@ -120,17 +120,21 @@ export class TransactionService {
           },
         },
       }),
-      this.prisma.payment_transactions.count({ where }),
-      this.prisma.payment_transactions.aggregate({
-        where,
-        _sum: { amount: true, professor_share: true, school_share: true },
-      }),
+      this.db.client.select({ count: sql<number>`count(*)::int` }).from(paymentTransactions).where(where),
+      this.db.client
+        .select({
+          amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+          professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+          school_share: sql<string | null>`sum(${paymentTransactions.school_share})`,
+        })
+        .from(paymentTransactions)
+        .where(where),
     ]);
 
     return {
       data: rows.map((row) => {
-        const student = row.payment?.student;
-        const group = row.payment?.group;
+        const student = row.studentPayment?.student;
+        const group = row.studentPayment?.group;
         const field = group?.professor?.field;
         return {
           id: row.id,
@@ -139,7 +143,7 @@ export class TransactionService {
           amount: toAmount(money(row.amount)),
           professor_share: toAmount(money(row.professor_share)),
           school_share: toAmount(money(row.school_share)),
-          compensation_model: row.compensation_model,
+          compensation_model: row.compensationModel,
           compensation_snapshot: row.compensation_snapshot,
           receipt_number: row.receipt_number,
           method: row.method,
@@ -147,7 +151,7 @@ export class TransactionService {
           period: row.period,
           notes: row.notes,
           reason: row.reason,
-          recorded_by: row.recorder ? { id: row.recorder.id, name: row.recorder.full_name } : null,
+          recorded_by: row.user ? { id: row.user.id, name: row.user.full_name } : null,
           student: student ? { id: student.id, name: `${student.first_name} ${student.last_name}` } : null,
           group: group ? { id: group.id, name: group.name } : null,
           professor: row.professor
@@ -160,14 +164,14 @@ export class TransactionService {
         };
       }),
       meta: {
-        total,
+        total: countRow.count,
         page,
         limit,
-        totalPages: Math.max(1, Math.ceil(total / limit)),
+        totalPages: Math.max(1, Math.ceil(countRow.count / limit)),
         totals: {
-          amount: toAmount(round2(money(totals._sum.amount))),
-          professor_share: toAmount(round2(money(totals._sum.professor_share))),
-          school_share: toAmount(round2(money(totals._sum.school_share))),
+          amount: toAmount(round2(money(sumRow.amount))),
+          professor_share: toAmount(round2(money(sumRow.professor_share))),
+          school_share: toAmount(round2(money(sumRow.school_share))),
         },
       },
     };
@@ -184,67 +188,63 @@ export class TransactionService {
     const page = params.page ?? 1;
     const limit = params.limit ?? 50;
 
-    const where: Prisma.audit_logsWhereInput = {
-      action: params.action
-        ? { equals: params.action }
-        : { in: [...FINANCIAL_AUDIT_ACTIONS] },
-    };
+    const clauses: SQL[] = [
+      params.action ? eq(auditLogs.action, params.action) : (inArray(auditLogs.action, [...FINANCIAL_AUDIT_ACTIONS]) as SQL),
+    ];
 
     if (params.from || params.to) {
-      const created: Prisma.DateTimeFilter = {};
       if (params.from) {
         const parsed = new Date(params.from);
-        if (!isNaN(parsed.getTime())) created.gte = parsed;
+        if (!isNaN(parsed.getTime())) clauses.push(gte(auditLogs.created_at, parsed));
       }
       if (params.to) {
         const parsed = new Date(params.to);
         if (!isNaN(parsed.getTime())) {
           if (/^\d{4}-\d{2}-\d{2}$/.test(params.to)) parsed.setHours(23, 59, 59, 999);
-          created.lte = parsed;
+          clauses.push(lte(auditLogs.created_at, parsed));
         }
       }
-      if (created.gte || created.lte) where.created_at = created;
     }
 
     if (params.search?.trim()) {
       const term = params.search.trim();
-      where.AND = [
-        {
-          OR: [
-            { entity_label: { contains: term, mode: "insensitive" } },
-            { actor_label: { contains: term, mode: "insensitive" } },
-            { action: { contains: term, mode: "insensitive" } },
-            { actor: { is: { full_name: { contains: term, mode: "insensitive" } } } },
-          ],
-        },
-      ];
+      clauses.push(
+        or(
+          ilike(auditLogs.entity_label, `%${term}%`),
+          ilike(auditLogs.actor_label, `%${term}%`),
+          ilike(auditLogs.action, `%${term}%`),
+          sql`exists(select 1 from users u where u.id = ${auditLogs.actor_user_id} and u.full_name ilike ${`%${term}%`})`,
+        ) as SQL,
+      );
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.audit_logs.findMany({
+    const where = and(...clauses);
+
+    const [data, [countRow]] = await Promise.all([
+      this.db.client.query.auditLogs.findMany({
         where,
-        include: { actor: { select: { id: true, full_name: true, email: true } } },
-        orderBy: { created_at: "desc" },
-        skip: (page - 1) * limit,
-        take: limit,
+        with: { user: { columns: { id: true, full_name: true, email: true } } },
+        orderBy: [desc(auditLogs.created_at)],
+        offset: (page - 1) * limit,
+        limit,
       }),
-      this.prisma.audit_logs.count({ where }),
+      this.db.client.select({ count: sql<number>`count(*)::int` }).from(auditLogs).where(where),
     ]);
 
     return {
       data,
-      meta: { total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) },
+      meta: { total: countRow.count, page, limit, totalPages: Math.max(1, Math.ceil(countRow.count / limit)) },
     };
   }
 
   /** Distinct financial actions present in the log, for the filter dropdown. */
   async activityActions() {
-    const rows = await this.prisma.audit_logs.findMany({
-      where: { action: { in: [...FINANCIAL_AUDIT_ACTIONS] } },
-      distinct: ["action"],
-      select: { action: true },
-      orderBy: { action: "asc" },
-    });
+    const rows = await this.db.client
+      .select({ action: auditLogs.action })
+      .from(auditLogs)
+      .where(inArray(auditLogs.action, [...FINANCIAL_AUDIT_ACTIONS]))
+      .groupBy(auditLogs.action)
+      .orderBy(asc(auditLogs.action));
     return rows.map((r) => r.action);
   }
 }

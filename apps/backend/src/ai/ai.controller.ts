@@ -68,14 +68,18 @@ export class AiController {
         res.write(
           `data: ${JSON.stringify({ type: "error", content: (error as Error).message || "Unknown error" })}\n\n`,
         );
-      } catch {}
+      } catch {
+        this.logger.error("Chat stream failed to send error frame", (error as Error).stack);
+      }
     } finally {
       try {
         if (!res.destroyed) {
           res.write("data: [DONE]\n\n");
           res.end();
         }
-      } catch {}
+      } catch {
+        this.logger.error("Chat stream failed to close after request finished");
+      }
     }
   }
 }

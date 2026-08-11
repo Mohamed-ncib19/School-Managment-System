@@ -1,7 +1,10 @@
 import { IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from "class-validator";
 import { Transform } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import type { CompensationModel } from "@prisma/client";
+import type { compensationModel } from "../../db/schema";
+
+type CompensationModel = (typeof compensationModel.enumValues)[number];
+
 import { COMPENSATION_MODELS } from "./financial-settings.dto";
 
 const AMOUNT = /^\d{1,8}(\.\d{1,2})?$/;

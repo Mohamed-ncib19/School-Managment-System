@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { PrismaService } from "../prisma/prisma.service";
+import { eq } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { groups } from "../db/schema";
 import {
   AttendanceContext,
   AttendanceSession,
@@ -45,7 +47,7 @@ const MONTHS_FR = [
  */
 @Injectable()
 export class AttendanceGenerationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly db: DbService) {}
 
   /** The full context one register is generated from, in one pass. */
   async generate(groupId: string, month: number, year: number, sessionsCount = DEFAULT_SESSIONS_PER_MONTH): Promise<AttendanceContext> {
@@ -55,22 +57,26 @@ export class AttendanceGenerationService {
       throw new BadRequestException("sessions_count doit être compris entre 1 et 31");
     }
 
-    const group = await this.prisma.groups.findUnique({
-      where: { id: groupId },
-      include: {
-        professor: { include: { field: { include: { level: true } } } },
+    const group = await this.db.client.query.groups.findFirst({
+      where: eq(groups.id, groupId),
+      with: {
+        professor: { with: { field: { with: { level: true } } } },
         assignments: {
-          where: { student: { status: "active" } },
-          include: { student: { select: { id: true, first_name: true, last_name: true, phone: true, parent_phone: true } } },
-          orderBy: { student: { last_name: "asc" } },
+          with: {
+            student: {
+              columns: { id: true, first_name: true, last_name: true, phone: true, parent_phone: true, status: true },
+            },
+          },
         },
       },
     });
     if (!group) throw new NotFoundException(`Groupe ${groupId} introuvable`);
 
     const professor = group.professor;
-    const students: AttendanceStudent[] = [...group.assignments]
+    const students: AttendanceStudent[] = group.assignments
       .map((a) => a.student)
+      .filter((s) => s.status === "active")
+      .map(({ status: _status, ...rest }) => rest)
       .sort((a, b) =>
         `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`, "fr"),
       );

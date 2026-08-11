@@ -98,6 +98,12 @@ export default function RevenueAnalyticsPage() {
 
   return (
     <div className="space-y-4">
+      <div>
+        <h1 className="text-h2 font-bold text-text-primary mb-1">{t("nav.financial", "Finance")} · {t("financial.analytics", "Analytique")}</h1>
+        <p className="text-sm text-text-secondary">
+          {t("financial.analyticsSub", "Tendances de revenus, rentabilité et indicateurs de recouvrement")}
+        </p>
+      </div>
       <FinancialFilterBar value={filters} onChange={setFilters} />
 
       {isError && <ErrorState onRetry={refetch} />}

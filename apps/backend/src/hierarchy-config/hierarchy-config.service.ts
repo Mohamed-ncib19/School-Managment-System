@@ -1,20 +1,36 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { desc, eq } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { hierarchyConfigurations } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { CreateHierarchyConfigDto, UpdateHierarchyConfigDto } from "./dto/hierarchy-config.dto";
-import { Prisma } from "@prisma/client";
 
 const VALID_ENTITIES = ["level", "field", "professor", "group", "student"] as const;
 const MANDATORY_ENTITIES = ["student"] as const;
 const DEFAULT_ENTITY_ORDER = ["level", "field", "professor", "group", "student"] as const;
 
+type HierarchyConfigRow = typeof hierarchyConfigurations.$inferSelect;
+
+/** DB rows are snake_case; the API contract is camelCase. */
+function toApi(row: HierarchyConfigRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    entityOrder: row.entity_order as unknown as string[],
+    isDefault: row.is_default,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 @Injectable()
 export class HierarchyConfigService implements OnModuleInit {
   private readonly logger = new Logger(HierarchyConfigService.name);
-  private cachedActive: any = null;
+  private cachedActive: ReturnType<typeof toApi> | null = null;
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
   ) {}
 
@@ -24,84 +40,78 @@ export class HierarchyConfigService implements OnModuleInit {
   }
 
   private async ensureDefault(): Promise<void> {
-    const existing = await this.prisma.hierarchy_configurations.findFirst({
-      where: { isDefault: true },
-    });
+    const existing = (await this.db.client.select().from(hierarchyConfigurations).where(eq(hierarchyConfigurations.is_default, true)).limit(1))[0];
 
     if (existing) {
-      if (!existing.isActive) {
-        await this.prisma.$transaction([
-          this.prisma.hierarchy_configurations.updateMany({
-            where: { isActive: true },
-            data: { isActive: false },
-          }),
-          this.prisma.hierarchy_configurations.update({
-            where: { id: existing.id },
-            data: { isActive: true },
-          }),
-        ]);
-        this.cachedActive = { ...existing, isActive: true };
+      if (!existing.is_active) {
+        await this.db.client.transaction(async (tx) => {
+          await tx.update(hierarchyConfigurations).set({ is_active: false }).where(eq(hierarchyConfigurations.is_active, true));
+          await tx.update(hierarchyConfigurations).set({ is_active: true }).where(eq(hierarchyConfigurations.id, existing.id));
+        });
+        this.cachedActive = toApi({ ...existing, is_active: true });
       } else {
-        this.cachedActive = existing;
+        this.cachedActive = toApi(existing);
       }
       return;
     }
 
-    const created = await this.prisma.hierarchy_configurations.create({
-      data: {
+    const [created] = await this.db.client
+      .insert(hierarchyConfigurations)
+      .values({
         name: "Default Hierarchy",
-        entityOrder: DEFAULT_ENTITY_ORDER as unknown as Prisma.InputJsonValue,
-        isDefault: true,
-        isActive: true,
-      },
-    });
-    this.cachedActive = created;
+        entity_order: DEFAULT_ENTITY_ORDER as unknown,
+        is_default: true,
+        is_active: true,
+        updated_at: new Date(),
+      })
+      .returning();
+    this.cachedActive = toApi(created);
     this.logger.log(`Created and activated default hierarchy configuration "${created.name}"`);
   }
 
   async findAll() {
-    return this.prisma.hierarchy_configurations.findMany({
-      orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
-    });
+    const rows = await this.db.client
+      .select()
+      .from(hierarchyConfigurations)
+      .orderBy(desc(hierarchyConfigurations.is_active), desc(hierarchyConfigurations.created_at));
+    return rows.map(toApi);
   }
 
   async findActive() {
     if (this.cachedActive) return this.cachedActive;
 
-    const active = await this.prisma.hierarchy_configurations.findFirst({
-      where: { isActive: true },
-    });
+    const active = (await this.db.client.select().from(hierarchyConfigurations).where(eq(hierarchyConfigurations.is_active, true)).limit(1))[0];
 
     if (!active) {
       throw new NotFoundException("Aucune configuration hiérarchique active trouvée");
     }
 
-    this.cachedActive = active;
-    return active;
+    this.cachedActive = toApi(active);
+    return this.cachedActive;
   }
 
   async findOne(id: string) {
-    const config = await this.prisma.hierarchy_configurations.findUnique({
-      where: { id },
-    });
+    const config = (await this.db.client.select().from(hierarchyConfigurations).where(eq(hierarchyConfigurations.id, id)).limit(1))[0];
     if (!config) throw new NotFoundException("Configuration hiérarchique introuvable");
-    return config;
+    return toApi(config);
   }
 
   async create(dto: CreateHierarchyConfigDto, userId: string) {
     this.validateEntityOrder(dto.entityOrder);
 
-    const config = await this.prisma.hierarchy_configurations.create({
-      data: {
+    const [config] = await this.db.client
+      .insert(hierarchyConfigurations)
+      .values({
         name: dto.name,
-        entityOrder: dto.entityOrder as unknown as Prisma.InputJsonValue,
-        isDefault: false,
-        isActive: false,
-      },
-    });
+        entity_order: dto.entityOrder as unknown,
+        is_default: false,
+        is_active: false,
+        updated_at: new Date(),
+      })
+      .returning();
 
     this.logger.log(`Created hierarchy config "${config.name}" by user ${userId}`);
-    return config;
+    return toApi(config);
   }
 
   async update(id: string, dto: UpdateHierarchyConfigDto, userId: string) {
@@ -111,35 +121,30 @@ export class HierarchyConfigService implements OnModuleInit {
       this.validateEntityOrder(dto.entityOrder);
     }
 
-    const updated = await this.prisma.hierarchy_configurations.update({
-      where: { id },
-      data: {
+    const [updated] = await this.db.client
+      .update(hierarchyConfigurations)
+      .set({
         name: dto.name ?? existing.name,
-        entityOrder: (dto.entityOrder ?? existing.entityOrder) as unknown as Prisma.InputJsonValue,
-      },
-    });
+        entity_order: (dto.entityOrder ?? existing.entityOrder) as unknown,
+      })
+      .where(eq(hierarchyConfigurations.id, id))
+      .returning();
 
     if (this.cachedActive?.id === id) {
-      this.cachedActive = updated;
+      this.cachedActive = toApi(updated);
     }
 
     this.logger.log(`Updated hierarchy config "${updated.name}" by user ${userId}`);
-    return updated;
+    return toApi(updated);
   }
 
   async activate(id: string, userId: string) {
     const config = await this.findOne(id);
 
-    await this.prisma.$transaction([
-      this.prisma.hierarchy_configurations.updateMany({
-        where: { isActive: true },
-        data: { isActive: false },
-      }),
-      this.prisma.hierarchy_configurations.update({
-        where: { id },
-        data: { isActive: true },
-      }),
-    ]);
+    await this.db.client.transaction(async (tx) => {
+      await tx.update(hierarchyConfigurations).set({ is_active: false }).where(eq(hierarchyConfigurations.is_active, true));
+      await tx.update(hierarchyConfigurations).set({ is_active: true }).where(eq(hierarchyConfigurations.id, id));
+    });
 
     const activated = { ...config, isActive: true };
     this.cachedActive = activated;
@@ -159,14 +164,12 @@ export class HierarchyConfigService implements OnModuleInit {
       throw new BadRequestException("Impossible de supprimer la configuration hiérarchique active. Activez-en une autre d'abord.");
     }
 
-    await this.prisma.hierarchy_configurations.delete({ where: { id } });
+    await this.db.client.delete(hierarchyConfigurations).where(eq(hierarchyConfigurations.id, id));
     this.logger.log(`Deleted hierarchy config "${config.name}" by user ${userId}`);
   }
 
   async resetToDefault(userId: string) {
-    const defaultConfig = await this.prisma.hierarchy_configurations.findFirst({
-      where: { isDefault: true },
-    });
+    const defaultConfig = (await this.db.client.select().from(hierarchyConfigurations).where(eq(hierarchyConfigurations.is_default, true)).limit(1))[0];
 
     if (!defaultConfig) {
       throw new NotFoundException("Configuration hiérarchique par défaut introuvable");

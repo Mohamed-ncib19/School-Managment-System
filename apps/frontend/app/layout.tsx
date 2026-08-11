@@ -1,16 +1,15 @@
 
 import type { Metadata } from "next";
-import { Poppins } from "next/font/google";
+import { Inter } from "next/font/google";
 import Providers from "./providers";
 import { I18nProvider } from "@/lib/i18n/context";
 import ThemeInit from "@/components/shared/theme-init";
 import { schoolMarkDataUrl } from "@/lib/brand";
 import "./globals.css";
 
-const poppins = Poppins({
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-poppins",
+  variable: "--font-inter",
 });
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -68,8 +67,8 @@ export default function RootLayout({
   children,
 }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={poppins.variable}>
-      <body className={poppins.className}>
+    <html lang="fr" className={inter.variable}>
+      <body className={inter.className}>
         <ThemeInit />
         <I18nProvider>
           <Providers>{children}</Providers>

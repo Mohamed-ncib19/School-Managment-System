@@ -98,7 +98,7 @@ export class FinancialExportService {
 
     const lines: string[] = [];
     lines.push(escape(report.title));
-    lines.push(escape(`GÃ©nÃ©rÃ© le ${report.generated_at} Â· de ${report.range.from} Ã  ${report.range.to}`));
+    lines.push(escape(`Generated ${report.generated_at} · from ${report.range.from} to ${report.range.to}`));
     lines.push("");
     lines.push(report.columns.map((c) => escape(c.label)).join(delimiter));
 

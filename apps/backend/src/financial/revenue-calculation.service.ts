@@ -1,9 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { CompensationModel, Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import Decimal from "decimal.js";
+import { DbService } from "../db/db.service";
+import { compensationModel, groups, paymentTransactions, professorCompensations, studentAssignments, students } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { Money, ZERO, money, percentOf, round2, toAmount } from "./money.util";
 import { FormulaScope, evaluateFormula } from "./formula.util";
+
+type CompensationModel = (typeof compensationModel.enumValues)[number];
 
 /** The compensation arrangement in force for one professor. */
 export interface CompensationRule {
@@ -30,7 +34,7 @@ export interface RevenueSplit {
   schoolShare: Money;
   model: CompensationModel;
   /** Stored verbatim on the transaction so the figure can be explained later. */
-  snapshot: Prisma.InputJsonValue;
+  snapshot: Record<string, unknown>;
 }
 
 /** What a professor is owed for a period, however their arrangement is shaped. */
@@ -81,7 +85,7 @@ export class RevenueCalculationService {
   private readonly logger = new Logger(RevenueCalculationService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
   ) {}
 
@@ -102,8 +106,8 @@ export class RevenueCalculationService {
 
     if (!profId) return fallback;
 
-    const override = await this.prisma.professor_compensations.findUnique({
-      where: { prof_id: profId },
+    const override = await this.db.client.query.professorCompensations.findFirst({
+      where: eq(professorCompensations.prof_id, profId),
     });
     if (!override) return fallback;
 
@@ -154,7 +158,7 @@ export class RevenueCalculationService {
         student_count: input.studentCount ?? null,
         group_count: input.groupCount ?? null,
         computed_at: new Date().toISOString(),
-      } satisfies Record<string, unknown> as Prisma.InputJsonValue,
+      } satisfies Record<string, unknown>,
     };
   }
 
@@ -198,8 +202,8 @@ export class RevenueCalculationService {
       amount,
       percentage: rule.percentage ?? ZERO,
       fixed: rule.fixedAmount ?? ZERO,
-      students: new Prisma.Decimal(input.studentCount ?? 0),
-      groups: new Prisma.Decimal(input.groupCount ?? 0),
+      students: new Decimal(input.studentCount ?? 0),
+      groups: new Decimal(input.groupCount ?? 0),
     };
 
     try {
@@ -308,11 +312,11 @@ export class RevenueCalculationService {
 
   /** Net collections attributed to a professor in a period — refunds netted off. */
   private async collectedAmountFor(profId: string, period: string): Promise<Money> {
-    const agg = await this.prisma.payment_transactions.aggregate({
-      where: { prof_id: profId, period },
-      _sum: { amount: true },
-    });
-    return round2(money(agg._sum.amount));
+    const [row] = await this.db.client
+      .select({ sum_amount: sql<string | null>`sum(${paymentTransactions.amount})` })
+      .from(paymentTransactions)
+      .where(and(eq(paymentTransactions.prof_id, profId), eq(paymentTransactions.period, period)));
+    return round2(money(row.sum_amount));
   }
 
   private fixedComponentFor(
@@ -338,23 +342,33 @@ export class RevenueCalculationService {
   /** Active students and groups currently taught by a professor. */
   async rosterCounts(profId: string): Promise<{ studentCount: number; groupCount: number }> {
     const [groupCount, studentCount] = await Promise.all([
-      this.prisma.groups.count({ where: { prof_id: profId, is_active: true } }),
+      this.db.client
+        .select({ c: sql<number>`count(*)::int` })
+        .from(groups)
+        .where(and(eq(groups.prof_id, profId), eq(groups.is_active, true)))
+        .then((r) => r[0].c),
       // Enrollments, not students: a student in two of this professor's groups
       // occupies two roster seats and is counted for each.
-      this.prisma.student_assignments.count({
-        where: { student: { status: "active" }, group: { prof_id: profId, is_active: true } },
-      }),
+      this.db.client
+        .select({ c: sql<number>`count(*)::int` })
+        .from(studentAssignments)
+        .innerJoin(students, eq(studentAssignments.student_id, students.id))
+        .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
+        .where(
+          and(eq(students.status, "active"), eq(groups.prof_id, profId), eq(groups.is_active, true)),
+        )
+        .then((r) => r[0].c),
     ]);
     return { groupCount, studentCount };
   }
 
   /** Net professor share on the ledger for a period — refunds already netted off. */
   private async collectedSharesFor(profId: string, period: string): Promise<Money> {
-    const agg = await this.prisma.payment_transactions.aggregate({
-      where: { prof_id: profId, period },
-      _sum: { professor_share: true },
-    });
-    return round2(money(agg._sum.professor_share));
+    const [row] = await this.db.client
+      .select({ sum_share: sql<string | null>`sum(${paymentTransactions.professor_share})` })
+      .from(paymentTransactions)
+      .where(and(eq(paymentTransactions.prof_id, profId), eq(paymentTransactions.period, period)));
+    return round2(money(row.sum_share));
   }
 
   /**
@@ -370,41 +384,55 @@ export class RevenueCalculationService {
     if (profIds.length === 0) return result;
 
     const [shares, groupCounts, enrollments, overrides, settings] = await Promise.all([
-      this.prisma.payment_transactions.groupBy({
-        by: ["prof_id"],
-        where: { prof_id: { in: profIds }, period },
-        _sum: { professor_share: true, amount: true },
-      }),
-      this.prisma.groups.groupBy({
-        by: ["prof_id"],
-        where: { prof_id: { in: profIds }, is_active: true },
-        _count: { _all: true },
-      }),
+      this.db.client
+        .select({
+          prof_id: paymentTransactions.prof_id,
+          sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+          sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+        })
+        .from(paymentTransactions)
+        .where(and(inArray(paymentTransactions.prof_id, profIds), eq(paymentTransactions.period, period)))
+        .groupBy(paymentTransactions.prof_id),
+      this.db.client
+        .select({
+          prof_id: groups.prof_id,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(groups)
+        .where(and(inArray(groups.prof_id, profIds), eq(groups.is_active, true)))
+        .groupBy(groups.prof_id),
       // One row per active enrollment under any of these professors.
-      this.prisma.student_assignments.findMany({
-        where: { student: { status: "active" }, group: { prof_id: { in: profIds }, is_active: true } },
-        select: { group: { select: { prof_id: true } } },
+      this.db.client
+        .select({ prof_id: groups.prof_id })
+        .from(studentAssignments)
+        .innerJoin(students, eq(studentAssignments.student_id, students.id))
+        .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
+        .where(
+          and(
+            eq(students.status, "active"),
+            inArray(groups.prof_id, profIds),
+            eq(groups.is_active, true),
+          ),
+        ),
+      this.db.client.query.professorCompensations.findMany({
+        where: inArray(professorCompensations.prof_id, profIds),
       }),
-      this.prisma.professor_compensations.findMany({ where: { prof_id: { in: profIds } } }),
       this.settings.get(),
     ]);
 
     const studentsByProf = new Map<string, number>();
     for (const row of enrollments) {
-      const owner = row.group?.prof_id;
-      if (!owner) continue;
-      studentsByProf.set(owner, (studentsByProf.get(owner) ?? 0) + 1);
+      if (!row.prof_id) continue;
+      studentsByProf.set(row.prof_id, (studentsByProf.get(row.prof_id) ?? 0) + 1);
     }
 
     const sharesByProf = new Map(
-      shares.filter((s) => s.prof_id).map((s) => [s.prof_id as string, money(s._sum.professor_share)]),
+      shares.map((s) => [s.prof_id, money(s.sum_professor_share)] as [string, Money]),
     );
     const netByProf = new Map(
-      shares.filter((s) => s.prof_id).map((s) => [s.prof_id as string, round2(money(s._sum.amount))]),
+      shares.map((s) => [s.prof_id, round2(money(s.sum_amount))] as [string, Money]),
     );
-    const groupsByProf = new Map(
-      groupCounts.filter((g) => g.prof_id).map((g) => [g.prof_id as string, g._count._all]),
-    );
+    const groupsByProf = new Map(groupCounts.map((g) => [g.prof_id, g.count]));
     const overrideByProf = new Map(overrides.map((o) => [o.prof_id, o]));
 
     for (const profId of profIds) {

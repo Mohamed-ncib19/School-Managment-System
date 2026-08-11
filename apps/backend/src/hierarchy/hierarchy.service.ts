@@ -1,5 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { fields, groups, levels, professors, studentAssignments, students } from "../db/schema";
 
 export interface LevelSummary {
   id: string;
@@ -56,10 +58,10 @@ export interface GroupSummary {
  */
 @Injectable()
 export class HierarchyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly db: DbService) {}
 
   async levelSummaries(): Promise<LevelSummary[]> {
-    return this.prisma.$queryRaw<LevelSummary[]>`
+    return this.db.rawQuery<LevelSummary>(sql`
       SELECT l.id,
              l.name,
              l.is_active,
@@ -76,12 +78,12 @@ export class HierarchyService {
       WHERE l.is_active = true
       GROUP BY l.id, l.name, l.is_active, l.created_at
       ORDER BY l.created_at DESC
-    `;
+    `);
   }
 
   async fieldSummaries(levelId?: string): Promise<FieldSummary[]> {
     if (levelId) {
-      return this.prisma.$queryRaw<FieldSummary[]>`
+      return this.db.rawQuery<FieldSummary>(sql`
         SELECT f.id, f.level_id, f.name, f.description,
                COUNT(DISTINCT p.id)::int AS professors,
                COUNT(DISTINCT g.id)::int AS groups,
@@ -90,13 +92,13 @@ export class HierarchyService {
         LEFT JOIN professors p ON p.field_id = f.id AND p.is_active = true
         LEFT JOIN groups     g ON g.prof_id  = p.id AND g.is_active = true
         LEFT JOIN student_assignments sa ON sa.group_id = g.id
-      LEFT JOIN students   s ON s.id = sa.student_id AND s.status = 'active'
-        WHERE f.level_id = ${levelId}::uuid AND f.is_active = true
+        LEFT JOIN students   s ON s.id = sa.student_id AND s.status = 'active'
+        WHERE f.level_id = ${sql.param(levelId)}::uuid AND f.is_active = true
         GROUP BY f.id, f.level_id, f.name, f.description, f.created_at
         ORDER BY f.created_at DESC
-      `;
+      `);
     }
-    return this.prisma.$queryRaw<FieldSummary[]>`
+    return this.db.rawQuery<FieldSummary>(sql`
       SELECT f.id, f.level_id, f.name, f.description,
              COUNT(DISTINCT p.id)::int AS professors,
              COUNT(DISTINCT g.id)::int AS groups,
@@ -109,25 +111,25 @@ export class HierarchyService {
       WHERE f.is_active = true
       GROUP BY f.id, f.level_id, f.name, f.description, f.created_at
       ORDER BY f.created_at DESC
-    `;
+    `);
   }
 
   async professorSummaries(fieldId?: string): Promise<ProfessorSummary[]> {
     if (fieldId) {
-      return this.prisma.$queryRaw<ProfessorSummary[]>`
+      return this.db.rawQuery<ProfessorSummary>(sql`
         SELECT p.id, p.field_id, p.full_name, p.phone, p.email, p.is_active,
                COUNT(DISTINCT g.id)::int AS groups,
                COUNT(DISTINCT s.id)::int AS students
         FROM professors p
         LEFT JOIN groups   g ON g.prof_id  = p.id AND g.is_active = true
         LEFT JOIN student_assignments sa ON sa.group_id = g.id
-      LEFT JOIN students s ON s.id = sa.student_id AND s.status = 'active'
-        WHERE p.field_id = ${fieldId}::uuid AND p.is_active = true
+        LEFT JOIN students s ON s.id = sa.student_id AND s.status = 'active'
+        WHERE p.field_id = ${sql.param(fieldId)}::uuid AND p.is_active = true
         GROUP BY p.id, p.field_id, p.full_name, p.phone, p.email, p.is_active, p.created_at
         ORDER BY p.created_at DESC
-      `;
+      `);
     }
-    return this.prisma.$queryRaw<ProfessorSummary[]>`
+    return this.db.rawQuery<ProfessorSummary>(sql`
       SELECT p.id, p.field_id, p.full_name, p.phone, p.email, p.is_active,
              COUNT(DISTINCT g.id)::int AS groups,
              COUNT(DISTINCT s.id)::int AS students
@@ -138,23 +140,23 @@ export class HierarchyService {
       WHERE p.is_active = true
       GROUP BY p.id, p.field_id, p.full_name, p.phone, p.email, p.is_active, p.created_at
       ORDER BY p.created_at DESC
-    `;
+    `);
   }
 
   async groupSummaries(profId?: string): Promise<GroupSummary[]> {
     if (profId) {
-      return this.prisma.$queryRaw<GroupSummary[]>`
+      return this.db.rawQuery<GroupSummary>(sql`
         SELECT g.id, g.prof_id, g.name, g.capacity, g.schedule_notes, g.is_active,
                COUNT(s.id)::int AS students
         FROM groups g
         LEFT JOIN student_assignments sa ON sa.group_id = g.id
-      LEFT JOIN students s ON s.id = sa.student_id AND s.status = 'active'
-        WHERE g.prof_id = ${profId}::uuid AND g.is_active = true
+        LEFT JOIN students s ON s.id = sa.student_id AND s.status = 'active'
+        WHERE g.prof_id = ${sql.param(profId)}::uuid AND g.is_active = true
         GROUP BY g.id, g.prof_id, g.name, g.capacity, g.schedule_notes, g.is_active, g.created_at
         ORDER BY g.created_at DESC
-      `;
+      `);
     }
-    return this.prisma.$queryRaw<GroupSummary[]>`
+    return this.db.rawQuery<GroupSummary>(sql`
       SELECT g.id, g.prof_id, g.name, g.capacity, g.schedule_notes, g.is_active,
              COUNT(s.id)::int AS students
       FROM groups g
@@ -163,7 +165,7 @@ export class HierarchyService {
       WHERE g.is_active = true
       GROUP BY g.id, g.prof_id, g.name, g.capacity, g.schedule_notes, g.is_active, g.created_at
       ORDER BY g.created_at DESC
-    `;
+    `);
   }
 
   /** Everything the hierarchy tree needs, in four aggregate queries. */
@@ -202,15 +204,30 @@ export class HierarchyService {
   private async getEntity(entityType: string, entityId: string) {
     switch (entityType) {
       case "level":
-        return this.prisma.levels.findUnique({ where: { id: entityId }, select: { id: true, name: true, is_active: true } });
+        return this.db.client.query.levels.findFirst({
+          where: eq(levels.id, entityId),
+          columns: { id: true, name: true, is_active: true },
+        });
       case "field":
-        return this.prisma.fields.findUnique({ where: { id: entityId }, select: { id: true, name: true, description: true, level_id: true } });
+        return this.db.client.query.fields.findFirst({
+          where: eq(fields.id, entityId),
+          columns: { id: true, name: true, description: true, level_id: true },
+        });
       case "professor":
-        return this.prisma.professors.findUnique({ where: { id: entityId }, select: { id: true, full_name: true, phone: true, email: true, is_active: true, field_id: true } });
+        return this.db.client.query.professors.findFirst({
+          where: eq(professors.id, entityId),
+          columns: { id: true, full_name: true, phone: true, email: true, is_active: true, field_id: true },
+        });
       case "group":
-        return this.prisma.groups.findUnique({ where: { id: entityId }, select: { id: true, name: true, capacity: true, schedule_notes: true, is_active: true, prof_id: true } });
+        return this.db.client.query.groups.findFirst({
+          where: eq(groups.id, entityId),
+          columns: { id: true, name: true, capacity: true, schedule_notes: true, is_active: true, prof_id: true },
+        });
       case "student":
-        return this.prisma.students.findUnique({ where: { id: entityId }, select: { id: true, first_name: true, last_name: true, phone: true, status: true, group_id: true } });
+        return this.db.client.query.students.findFirst({
+          where: eq(students.id, entityId),
+          columns: { id: true, first_name: true, last_name: true, phone: true, status: true, group_id: true },
+        });
       default:
         return null;
     }
@@ -219,29 +236,40 @@ export class HierarchyService {
   private async getChildren(parentType: string, parentId: string) {
     switch (parentType) {
       case "level":
-        return this.prisma.fields.findMany({
-          where: { level_id: parentId, is_active: true },
-          select: { id: true, name: true, description: true },
-          orderBy: { created_at: "desc" },
+        return this.db.client.query.fields.findMany({
+          where: and(eq(fields.level_id, parentId), eq(fields.is_active, true)),
+          columns: { id: true, name: true, description: true },
+          orderBy: [desc(fields.created_at)],
         });
       case "field":
-        return this.prisma.professors.findMany({
-          where: { field_id: parentId, is_active: true },
-          select: { id: true, full_name: true, phone: true, email: true, is_active: true },
-          orderBy: { created_at: "desc" },
+        return this.db.client.query.professors.findMany({
+          where: and(eq(professors.field_id, parentId), eq(professors.is_active, true)),
+          columns: { id: true, full_name: true, phone: true, email: true, is_active: true },
+          orderBy: [desc(professors.created_at)],
         });
       case "professor":
-        return this.prisma.groups.findMany({
-          where: { prof_id: parentId, is_active: true },
-          select: { id: true, name: true, capacity: true, schedule_notes: true, is_active: true },
-          orderBy: { created_at: "desc" },
+        return this.db.client.query.groups.findMany({
+          where: and(eq(groups.prof_id, parentId), eq(groups.is_active, true)),
+          columns: { id: true, name: true, capacity: true, schedule_notes: true, is_active: true },
+          orderBy: [desc(groups.created_at)],
         });
       case "group":
-        return this.prisma.students.findMany({
-          where: { assignments: { some: { group_id: parentId } }, status: "active" },
-          select: { id: true, first_name: true, last_name: true, phone: true, status: true, monthly_fee: true },
-          orderBy: { last_name: "asc" },
-        });
+        return this.db.client
+          .select({
+            id: students.id,
+            first_name: students.first_name,
+            last_name: students.last_name,
+            phone: students.phone,
+            status: students.status,
+            monthly_fee: students.monthly_fee,
+          })
+          .from(students)
+          .innerJoin(
+            studentAssignments,
+            and(eq(studentAssignments.student_id, students.id), eq(studentAssignments.group_id, parentId)),
+          )
+          .where(eq(students.status, "active"))
+          .orderBy(asc(students.last_name));
       default:
         return [];
     }

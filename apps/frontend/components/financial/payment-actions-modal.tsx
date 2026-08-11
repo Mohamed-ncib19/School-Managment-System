@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Ban, Printer, RotateCcw, Tag, Undo2, Wallet, X } from "lucide-react";
+import { AlertCircle, Ban, Info, Printer, RotateCcw, Tag, Undo2, Wallet, X } from "lucide-react";
 import {
   useCancelPayment,
   useCorrectPayment,
@@ -22,6 +22,8 @@ const MANUAL_STATUSES = ["not_paid", "due_soon", "overdue", "paid", "partially_p
 
 interface PaymentActionsModalProps {
   payment: StudentPayment;
+  /** The student's other invoices, when the modal is opened from the ledger. */
+  payments?: StudentPayment[];
   isOpen: boolean;
   onClose: () => void;
 }
@@ -34,8 +36,9 @@ interface PaymentActionsModalProps {
  * what has already happened. Splitting these across four modals would mean four
  * places that each show a different subset of the same history.
  */
-export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActionsModalProps) {
+export function PaymentActionsModal({ payment, payments = [], isOpen, onClose }: PaymentActionsModalProps) {
   const { t } = useTranslation();
+  const [activeId, setActiveId] = useState(payment.id);
   const [mode, setMode] = useState<Mode>("pay");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
@@ -44,6 +47,13 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
   const [overrideStatus, setOverrideStatus] = useState<string>(payment.status);
   const [overrideReason, setOverrideReason] = useState("");
 
+  // One of the student's invoices, when the modal is opened from the ledger.
+  const invoices = useMemo(() => (payments.length > 1 ? payments : [payment]), [payments, payment]);
+  const current = useMemo(
+    () => invoices.find((invoice) => invoice.id === activeId) ?? invoices[0] ?? payment,
+    [invoices, activeId, payment],
+  );
+
   const record = useRecordTransaction();
   const refund = useRefundPayment();
   const correct = useCorrectPayment();
@@ -51,9 +61,16 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
   const reopen = useReopenPayment();
   const statusUpdate = useUpdatePaymentStatus();
 
-  const outstanding = Number(payment.remaining_balance);
-  const collected = Number(payment.paid_amount ?? "0");
-  const isCancelled = payment.status === "cancelled";
+  const outstanding = Number(current.remaining_balance);
+  const collected = Number(current.paid_amount ?? "0");
+  const isCancelled = current.status === "cancelled";
+  const isPartial = outstanding > 0 && collected > 0;
+
+  // Follow a newly opened invoice, but not a chip click inside the modal.
+  useEffect(() => {
+    if (!isOpen) return;
+    setActiveId(payment.id);
+  }, [isOpen, payment.id]);
 
   // Reset each time a different invoice is opened, or a stale amount from the
   // last one carries over into this one.
@@ -63,10 +80,10 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
     setAmount(outstanding > 0 ? outstanding.toFixed(2) : "");
     setReason("");
     setNotes("");
-    setOverrideStatus(payment.status);
+    setOverrideStatus(current.status);
     setOverrideReason("");
     setError(null);
-  }, [isOpen, payment.id, outstanding, isCancelled]);
+  }, [isOpen, payment.id, outstanding, isCancelled, current.status]);
 
   const pending =
     record.isPending || refund.isPending || correct.isPending || cancel.isPending || reopen.isPending || statusUpdate.isPending;
@@ -85,29 +102,29 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
   const submit = async () => {
     setError(null);
     try {
-      const statusChanged = overrideStatus !== payment.status;
+      const statusChanged = overrideStatus !== current.status;
       // A manual status change is the whole intent — skip the money action so
       // Confirm cannot take a payment (or re-take a settled one) nobody asked
       // for. The "record payment" mode only runs on its own.
       if (!statusChanged) {
         if (mode === "pay") {
-          await record.mutateAsync({ id: payment.id, amount: amount || undefined, notes: notes || undefined });
+          await record.mutateAsync({ id: current.id, amount: amount || undefined, notes: notes || undefined });
         } else if (mode === "refund") {
           if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
-          await refund.mutateAsync({ id: payment.id, amount, reason, notes: notes || undefined });
+          await refund.mutateAsync({ id: current.id, amount, reason, notes: notes || undefined });
         } else if (mode === "correct") {
           if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
-          await correct.mutateAsync({ id: payment.id, amount, reason, notes: notes || undefined });
+          await correct.mutateAsync({ id: current.id, amount, reason, notes: notes || undefined });
         } else if (mode === "cancel") {
           if (!reason.trim()) return setError(t("financial.reasonRequired", "A reason is required"));
-          await cancel.mutateAsync({ id: payment.id, reason });
+          await cancel.mutateAsync({ id: current.id, reason });
         }
       }
       // The manual status selection is applied by the same Confirm button —
       // there is no separate "Apply" step for it.
       if (statusChanged) {
         await statusUpdate.mutateAsync({
-          id: payment.id,
+          id: current.id,
           status: overrideStatus,
           reason: overrideReason.trim() || undefined,
         });
@@ -121,7 +138,7 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
   const handleReopen = async () => {
     setError(null);
     try {
-      await reopen.mutateAsync({ id: payment.id });
+      await reopen.mutateAsync({ id: current.id });
       onClose();
     } catch (err) {
       fail(err);
@@ -130,7 +147,7 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
 
   const handlePrint = async () => {
     try {
-      await openReceipt("payment", payment.id);
+      await openReceipt("payment", current.id);
     } catch {
       setError(t("financial.popupBlocked", "Allow pop-ups to print the receipt."));
     }
@@ -155,11 +172,11 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
         <div className="flex items-start justify-between p-5 border-b border-border sticky top-0 bg-surface z-10">
           <div>
             <h3 className="text-sm font-bold text-text-primary">
-              {payment.context.student_name ?? t("payments.studentName", "Student")}
+              {current.context.student_name ?? t("payments.studentName", "Student")}
             </h3>
             <p className="text-xs text-text-secondary mt-0.5">
-              {formatPeriod(payment.period)} &middot; {payment.context.group?.name ?? "—"} &middot;{" "}
-              {payment.context.professor?.name ?? "—"}
+              {formatPeriod(current.period)} &middot; {current.context.group?.name ?? "—"} &middot;{" "}
+              {current.context.professor?.name ?? "—"}
             </p>
           </div>
           <button
@@ -173,8 +190,40 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
         </div>
 
         <div className="p-5 space-y-5">
+          {invoices.length > 1 && (
+            <div className="rounded-btn border border-border bg-background p-3">
+              <label className="text-xs text-text-secondary block mb-1.5">
+                {t("financial.invoice", "Invoice")}
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {invoices.map((invoice) => {
+                  const active = invoice.id === current.id;
+                  return (
+                    <button
+                      key={invoice.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveId(invoice.id);
+                        setError(null);
+                      }}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                        active
+                          ? "border-primary bg-primary-50 text-primary dark:bg-primary/15"
+                          : "border-border bg-surface text-text-secondary hover:text-text-primary",
+                      )}
+                    >
+                      <span>{formatPeriod(invoice.period)}</span>
+                      <span className="tabular-nums opacity-70">{formatCurrency(invoice.amount_due)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Figure label={t("payments.amountDue", "Amount due")} value={formatCurrency(payment.amount_due)} />
+            <Figure label={t("payments.amountDue", "Amount due")} value={formatCurrency(current.amount_due)} />
             <Figure label={t("financial.collected", "Collected")} value={formatCurrency(collected)} tone="positive" />
             <Figure
               label={t("financial.remainingBalance", "Remaining")}
@@ -186,15 +235,27 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
               <span
                 className={cn(
                   "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium mt-1",
-                  statusClasses(payment.status),
+                  statusClasses(current.status),
                 )}
               >
-                {t(`payments.statuses.${payment.status}`, payment.status.replace(/_/g, " "))}
+                {t(`payments.statuses.${current.status}`, current.status.replace(/_/g, " "))}
               </span>
             </div>
           </div>
 
-          {payment.transactions.length > 0 && (
+          {isPartial && (
+            <div className="flex items-start gap-2 rounded-btn border border-warning/30 bg-warning-soft dark:bg-warning/10 px-3 py-2 text-xs text-warning-strong dark:text-warning-dark-strong">
+              <Info size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+              <span>
+                {t(
+                  "financial.partialStatusHint",
+                  "This invoice is partially paid — set its status to \"Partially paid\" in the manual status box when you finish collecting it in stages.",
+                )}
+              </span>
+            </div>
+          )}
+
+          {current.transactions.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-text-secondary uppercase mb-2">
                 {t("financial.ledger", "Ledger")}
@@ -202,11 +263,15 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
               <div className="rounded-table border border-border overflow-hidden">
                 <table className="min-w-full text-xs">
                   <tbody className="divide-y divide-border">
-                    {[...payment.transactions]
+                    {[...current.transactions]
                       .sort((a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime())
                       .map((transaction) => (
                       <tr key={transaction.id}>
-                        <td className="px-3 py-2 text-text-secondary">{formatDate(transaction.paid_at)}</td>
+                        <td className="timeline-cell pl-7 px-3 py-2 text-text-secondary">
+                          <span aria-hidden="true" className="timeline-stem" />
+                          <span aria-hidden="true" className="timeline-dot" />
+                          {formatDate(transaction.paid_at)}
+                        </td>
                         <td className="px-3 py-2">
                           <span className="text-text-primary">
                             {t(`financial.txn.${transaction.type}`, transaction.type)}
@@ -243,25 +308,50 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
                 </h4>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <select
-                  aria-label={t("payments.status", "Status")}
-                  value={overrideStatus}
-                  onChange={(e) => setOverrideStatus(e.target.value)}
-                  className="input w-full text-xs"
-                >
-                  {MANUAL_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {t(`payments.statuses.${status}`, status.replace(/_/g, " "))}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={overrideReason}
-                  onChange={(e) => setOverrideReason(e.target.value)}
-                  placeholder={t("financial.statusReasonPlaceholder", "Reason (optional)")}
-                  className="input w-full text-xs"
-                />
+                <div>
+                  <label htmlFor="txn-status" className="text-xs text-text-secondary block mb-1">
+                    {t("payments.status", "Status")}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      id="txn-status"
+                      aria-label={t("payments.status", "Status")}
+                      value={overrideStatus}
+                      onChange={(e) => setOverrideStatus(e.target.value)}
+                      className={cn(
+                        "input w-full text-xs",
+                        overrideStatus !== current.status && "border-primary focus:border-primary",
+                      )}
+                    >
+                      {MANUAL_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {t(`payments.statuses.${status}`, status.replace(/_/g, " "))}
+                        </option>
+                      ))}
+                    </select>
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap shrink-0",
+                        statusClasses(overrideStatus),
+                      )}
+                    >
+                      {t(`payments.statuses.${overrideStatus}`, overrideStatus.replace(/_/g, " "))}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="txn-status-reason" className="text-xs text-text-secondary block mb-1">
+                    {t("financial.reason", "Reason")}
+                  </label>
+                  <input
+                    id="txn-status-reason"
+                    type="text"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder={t("financial.statusReasonPlaceholder", "Reason (optional)")}
+                    className="input w-full text-xs"
+                  />
+                </div>
               </div>
               <p className="text-xs text-text-secondary">
                 {t(
@@ -382,7 +472,7 @@ export function PaymentActionsModal({ payment, isOpen, onClose }: PaymentActions
           <button
             type="button"
             onClick={handlePrint}
-            disabled={payment.transactions.length === 0}
+            disabled={current.transactions.length === 0}
             className="btn btn-secondary text-xs disabled:opacity-40"
           >
             <Printer size={14} aria-hidden="true" />

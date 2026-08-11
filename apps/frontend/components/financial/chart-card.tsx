@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Table2, BarChart3 } from "lucide-react";
+import { BarChart3, Table2, Inbox } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -82,7 +82,7 @@ export function ChartCard({
                 type="button"
                 onClick={() => setView("chart")}
                 aria-pressed={view === "chart"}
-                aria-label={t("financial.chartView", "Chart view")}
+                aria-label={t("financial.chartView", "Vue graphique")}
                 className={cn(
                   "px-2 py-1.5 transition-colors",
                   view === "chart" ? "bg-primary text-white" : "text-text-secondary hover:bg-background",
@@ -94,7 +94,7 @@ export function ChartCard({
                 type="button"
                 onClick={() => setView("table")}
                 aria-pressed={view === "table"}
-                aria-label={t("financial.tableView", "Table view")}
+                aria-label={t("financial.tableView", "Vue tableau")}
                 className={cn(
                   "px-2 py-1.5 transition-colors",
                   view === "table" ? "bg-primary text-white" : "text-text-secondary hover:bg-background",
@@ -109,7 +109,7 @@ export function ChartCard({
 
       {/* Legend for two or more series — identity never rests on colour alone. */}
       {series.length > 1 && !hideLegend && (
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap -mt-1">
           {series.map((s) => (
             <span key={s.key} className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
               <span
@@ -123,49 +123,52 @@ export function ChartCard({
         </div>
       )}
 
-      {loading ? (
-        <div className="h-64 rounded-card bg-neutral-soft animate-pulse" />
-      ) : isEmpty ? (
-        <div className="h-64 flex items-center justify-center text-sm text-text-secondary">
-          {emptyMessage ?? t("financial.noDataForFilters", "No data for the selected filters.")}
-        </div>
-      ) : view === "chart" ? (
-        children
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                  {labelHeader ?? t("financial.period", "Period")}
-                </th>
-                {series.map((s) => (
-                  <th
-                    key={s.key}
-                    className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase"
-                  >
-                    {s.label}
+      <div className="border-t border-border pt-4">
+        {loading ? (
+          <div className="h-64 rounded-card bg-neutral-soft animate-pulse" />
+        ) : isEmpty ? (
+          <div className="h-64 flex flex-col items-center justify-center gap-2 text-sm text-text-secondary">
+            <Inbox size={28} strokeWidth={1.5} className="text-text-tertiary" aria-hidden="true" />
+            {emptyMessage ?? t("financial.noDataForFilters", "Aucune donnée pour les filtres sélectionnés.")}
+          </div>
+        ) : view === "chart" ? (
+          children
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                    {labelHeader ?? t("financial.period", "Période")}
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {tableRows!.map((row, index) => (
-                <tr key={index} className="hover:bg-background/50">
-                  <td className="px-3 py-2 text-text-primary">{String(row[labelKey] ?? "—")}</td>
                   {series.map((s) => (
-                    <td key={s.key} className="px-3 py-2 text-right tabular-nums text-text-secondary">
-                      {money.has(s.key)
-                        ? formatCurrency(String(row[s.key] ?? "0"))
-                        : String(row[s.key] ?? "—")}
-                    </td>
+                    <th
+                      key={s.key}
+                      className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase"
+                    >
+                      {s.label}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-border">
+                {tableRows!.map((row, index) => (
+                  <tr key={index} className="hover:bg-background/50">
+                    <td className="px-3 py-2 text-text-primary">{String(row[labelKey] ?? "—")}</td>
+                    {series.map((s) => (
+                      <td key={s.key} className="px-3 py-2 text-right tabular-nums text-text-secondary">
+                        {money.has(s.key)
+                          ? formatCurrency(String(row[s.key] ?? "0"))
+                          : String(row[s.key] ?? "—")}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

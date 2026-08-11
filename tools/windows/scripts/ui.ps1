@@ -18,6 +18,7 @@ $script:UiUnicode = $false
 $script:UiStep    = 0
 $script:UiTotal   = 0
 $script:UiStarted = $null
+$script:UiProgressFile = $null
 
 function Initialize-Ui {
   param([int]$TotalSteps = 0)
@@ -144,6 +145,8 @@ function Write-Step {
   Write-Host ($script:G.FULL.ToString() * $filled) -ForegroundColor Cyan -NoNewline
   Write-Host ($script:G.EMPTY.ToString() * ($barWidth - $filled)) -ForegroundColor DarkGray -NoNewline
   Write-Host "  $Message" -ForegroundColor White
+
+  if ($script:UiProgressFile) { Write-UiProgress -State "running" -Label $Message }
 }
 
 function Write-Ok {
@@ -276,4 +279,46 @@ function Get-UiElapsed {
     return ("{0}m {1}s" -f [int]$span.TotalMinutes, $span.Seconds)
   }
   return ("{0:0.0}s" -f $span.TotalSeconds)
+}
+
+<#
+  Optional progress journal read by the in-app update dialog
+  (GET /api/updates/progress). The update engine sets the file once with
+  Set-UiProgressFile; every Write-Step afterwards refreshes it, and
+  Set-UiProgressResult closes it with the final state. Everything written is
+  ASCII - the step labels come from these scripts, not from localised UI text.
+#>
+function Set-UiProgressFile {
+  param([string]$Path)
+  $script:UiProgressFile = $Path
+}
+
+function Write-UiProgress {
+  param(
+    [string]$State = "running",
+    [string]$Label = "",
+    [string]$Message = ""
+  )
+
+  if (-not $script:UiProgressFile) { return }
+
+  $payload = [ordered]@{
+    state     = $State
+    step      = $script:UiStep
+    stepTotal = $script:UiTotal
+    label     = $Label
+    message   = $Message
+    updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+  }
+
+  try {
+    $dir = Split-Path -Parent $script:UiProgressFile
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $payload | ConvertTo-Json -Compress | Out-File -FilePath $script:UiProgressFile -Encoding utf8
+  } catch { }
+}
+
+function Set-UiProgressResult {
+  param([string]$State, [string]$Message)
+  Write-UiProgress -State $State -Label $Message -Message $Message
 }

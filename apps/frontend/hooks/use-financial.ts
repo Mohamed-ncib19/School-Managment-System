@@ -62,8 +62,11 @@ function useFinancialMutation<TArgs, TResult>(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: fn,
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: financialKeys.all });
+    onSuccess: async (result) => {
+      // Awaiting guarantees the refetch is scheduled before the caller opens a
+      // follow-up screen (e.g. the settlement modal right after a payout), so
+      // that screen never reads stale figures.
+      await queryClient.invalidateQueries({ queryKey: financialKeys.all });
       options?.onSuccess?.(result);
     },
   });

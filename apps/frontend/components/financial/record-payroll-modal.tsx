@@ -6,6 +6,14 @@ import { useRecordPayroll } from "@/hooks/use-financial";
 import { formatCurrency, formatPeriod } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
+/** The payout row returned by the server right after it is recorded. */
+export interface RecordedPayout {
+  id: string;
+  receipt_number: string | null;
+  amount: string;
+  paid_at: string;
+}
+
 interface RecordPayrollModalProps {
   profId: string;
   professorName: string;
@@ -14,7 +22,7 @@ interface RecordPayrollModalProps {
   isOpen: boolean;
   onClose: () => void;
   /** Called with the recorded payout so the caller can show its settlement papers. */
-  onSettled?: (payout: { id: string }) => void;
+  onSettled?: (payout: RecordedPayout) => void;
 }
 
 /**
@@ -46,7 +54,7 @@ export function RecordPayrollModal({
     try {
       const payout = await record.mutateAsync({ profId, amount, period, notes: notes || undefined });
       onClose();
-      onSettled?.(payout as { id: string });
+      onSettled?.(payout as RecordedPayout);
     } catch (err) {
       const message =
         (err as any)?.response?.data?.error?.message ??

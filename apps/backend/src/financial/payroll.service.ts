@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { PayrollStatus } from "@iq/shared";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, desc, eq, ilike, inArray, isNotNull, sql, SQL } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { paymentTransactions, payrollPayments, professorCompensations, professors } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
@@ -23,7 +25,7 @@ import { validateFormula } from "./formula.util";
 @Injectable()
 export class PayrollService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
     private readonly revenue: RevenueCalculationService,
     private readonly receipts: ReceiptNumberService,
@@ -40,32 +42,33 @@ export class PayrollService {
   async list(query: PayrollQueryDto) {
     const period = query.period ?? periodOfDate(new Date());
 
-    const professors = await this.prisma.professors.findMany({
-      where: {
-        ...professorWhere({ levelId: query.levelId, fieldId: query.fieldId }),
-        ...(query.search?.trim()
-          ? { full_name: { contains: query.search.trim(), mode: "insensitive" } }
-          : {}),
-      },
-      include: { field: { include: { level: true } } },
-      orderBy: { full_name: "asc" },
+    const profRows = await this.db.client.query.professors.findMany({
+      where: and(
+        professorWhere({ levelId: query.levelId, fieldId: query.fieldId }),
+        query.search?.trim() ? ilike(professors.full_name, `%${query.search.trim()}%`) : undefined,
+      ),
+      with: { field: { with: { level: true } } },
+      orderBy: (p, { asc }) => [asc(p.full_name)],
     });
 
-    if (professors.length === 0) return { data: [], meta: { period, total: 0 } };
+    if (profRows.length === 0) return { data: [], meta: { period, total: 0 } };
 
-    const profIds = professors.map((p) => p.id);
+    const profIds = profRows.map((p) => p.id);
     const [entitlements, paidByProf] = await Promise.all([
       this.revenue.periodEntitlements(profIds, period),
-      this.prisma.payroll_payments.groupBy({
-        by: ["prof_id"],
-        where: { prof_id: { in: profIds }, period },
-        _sum: { amount: true },
-      }),
+      this.db.client
+        .select({
+          prof_id: payrollPayments.prof_id,
+          sum_amount: sql<string | null>`sum(${payrollPayments.amount})`,
+        })
+        .from(payrollPayments)
+        .where(and(inArray(payrollPayments.prof_id, profIds), eq(payrollPayments.period, period)))
+        .groupBy(payrollPayments.prof_id),
     ]);
 
-    const paidMap = new Map(paidByProf.map((p) => [p.prof_id, money(p._sum.amount)]));
+    const paidMap = new Map(paidByProf.map((p) => [p.prof_id, money(p.sum_amount)]));
 
-    const rows = professors.map((professor) => {
+    const rows = profRows.map((professor) => {
       const entitlement = entitlements.get(professor.id);
       const earned = entitlement ? entitlement.total : ZERO;
       const paid = round2(paidMap.get(professor.id) ?? ZERO);
@@ -130,56 +133,44 @@ export class PayrollService {
    * earnings, lifetime totals, teaching load and payout history.
    */
   async detail(profId: string, period?: string) {
-    const professor = await this.prisma.professors.findUnique({
-      where: { id: profId },
-      include: {
-        field: { include: { level: true } },
+    const professor = await this.db.client.query.professors.findFirst({
+      where: eq(professors.id, profId),
+      with: {
+        field: { with: { level: true } },
         groups: {
-          where: { is_active: true },
-          include: {
-            _count: {
-              select: {
-                // Roster per group = active enrollments, not primary-group
-                // membership: a student in two of the professor's groups
-                // occupies both seats.
-                assignments: { where: { student: { status: "active" } } },
-              },
-            },
-          },
+          where: (g, { eq }) => eq(g.is_active, true),
+          with: { assignments: { with: { student: { columns: { id: true, status: true } } } } },
         },
-        compensation: true,
+        professorCompensations: {
+          columns: { id: true, model: true, percentage: true, fixed_amount: true, custom_formula: true, notes: true },
+        },
       },
     });
     if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
+    const compensation = professor.professorCompensations[0] ?? null;
     const targetPeriod = period ?? periodOfDate(new Date());
 
     const [entitlement, rule, lifetimeShares, lifetimePaid, periodPaid, payments, monthly] =
       await Promise.all([
         this.revenue.periodEntitlement(profId, targetPeriod),
         this.revenue.ruleFor(profId),
-        this.prisma.payment_transactions.aggregate({
-          where: { prof_id: profId },
-          _sum: { professor_share: true, amount: true },
-        }),
-        this.prisma.payroll_payments.aggregate({ where: { prof_id: profId }, _sum: { amount: true } }),
-        this.prisma.payroll_payments.aggregate({
-          where: { prof_id: profId, period: targetPeriod },
-          _sum: { amount: true },
-        }),
-        this.prisma.payroll_payments.findMany({
-          where: { prof_id: profId },
-          orderBy: { paid_at: "desc" },
-          take: 100,
-          include: { recorder: { select: { id: true, full_name: true } } },
+        this.sumProfShares(eq(paymentTransactions.prof_id, profId)),
+        this.sumPayouts(eq(payrollPayments.prof_id, profId)),
+        this.sumPayouts(and(eq(payrollPayments.prof_id, profId), eq(payrollPayments.period, targetPeriod))),
+        this.db.client.query.payrollPayments.findMany({
+          where: eq(payrollPayments.prof_id, profId),
+          orderBy: (p, { desc }) => [desc(p.paid_at)],
+          limit: 100,
+          with: { user: { columns: { id: true, full_name: true } } },
         }),
         this.monthlyBreakdown(profId),
       ]);
 
     const periodEarned = entitlement.total;
-    const periodPaidAmount = round2(money(periodPaid._sum.amount));
-    const lifetimeEarned = round2(money(lifetimeShares._sum.professor_share));
-    const lifetimePaidAmount = round2(money(lifetimePaid._sum.amount));
+    const periodPaidAmount = round2(money(periodPaid.sum_amount));
+    const lifetimeEarned = round2(money(lifetimeShares.sum_professor_share));
+    const lifetimePaidAmount = round2(money(lifetimePaid.sum_amount));
 
     return {
       professor: {
@@ -200,14 +191,14 @@ export class PayrollService {
         fixed_amount: rule.fixedAmount ? toAmount(rule.fixedAmount) : null,
         custom_formula: rule.customFormula,
         is_override: rule.isOverride,
-        notes: professor.compensation?.notes ?? null,
+        notes: compensation?.notes ?? null,
       },
       assignments: professor.groups.map((group) => ({
         id: group.id,
         name: group.name,
         capacity: group.capacity,
         schedule_notes: group.schedule_notes,
-        student_count: group._count.assignments,
+        student_count: group.assignments.filter((a) => a.student?.status === "active").length,
       })),
       student_count: entitlement.studentCount,
       group_count: entitlement.groupCount,
@@ -223,7 +214,7 @@ export class PayrollService {
         status: this.statusOf(periodEarned, periodPaidAmount),
       },
       lifetime: {
-        revenue_generated: toAmount(round2(money(lifetimeShares._sum.amount))),
+        revenue_generated: toAmount(round2(money(lifetimeShares.sum_amount))),
         total_earned: toAmount(lifetimeEarned),
         already_paid: toAmount(lifetimePaidAmount),
         // Lifetime balance counts only the collections element: a salary is owed
@@ -232,49 +223,132 @@ export class PayrollService {
         remaining_balance: toAmount(round2(lifetimeEarned.minus(lifetimePaidAmount))),
       },
       monthly_breakdown: monthly,
-      payroll_history: payments.map((p) => ({
-        ...p,
-        amount: toAmount(money(p.amount)),
-      })),
+      group_breakdown: await this.groupBreakdown(profId, targetPeriod),
+      payroll_history: payments.map((p) => {
+        const { user, ...rest } = p;
+        return { ...rest, recorder: user, amount: toAmount(money(p.amount)) };
+      }),
     };
   }
 
   /** Gross collections attributed to a professor in a period, before the split. */
   private async periodRevenue(profId: string, period: string): Promise<Money> {
-    const agg = await this.prisma.payment_transactions.aggregate({
-      where: { prof_id: profId, period },
-      _sum: { amount: true },
-    });
-    return round2(money(agg._sum.amount));
+    const agg = await this.sumProfShares(
+      and(eq(paymentTransactions.prof_id, profId), eq(paymentTransactions.period, period)),
+    );
+    return round2(money(agg.sum_amount));
   }
 
   /** Twelve months of earned-versus-paid, for the sparkline on the detail page. */
   private async monthlyBreakdown(profId: string) {
     const [shares, payouts] = await Promise.all([
-      this.prisma.payment_transactions.groupBy({
-        by: ["period"],
-        where: { prof_id: profId },
-        _sum: { professor_share: true, amount: true },
-        orderBy: { period: "desc" },
-        take: 12,
-      }),
-      this.prisma.payroll_payments.groupBy({
-        by: ["period"],
-        where: { prof_id: profId, period: { not: null } },
-        _sum: { amount: true },
-      }),
+      this.db.client
+        .select({
+          period: paymentTransactions.period,
+          sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+          sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+        })
+        .from(paymentTransactions)
+        .where(eq(paymentTransactions.prof_id, profId))
+        .groupBy(paymentTransactions.period)
+        .orderBy(desc(paymentTransactions.period))
+        .limit(12),
+      this.db.client
+        .select({
+          period: payrollPayments.period,
+          sum_amount: sql<string | null>`sum(${payrollPayments.amount})`,
+        })
+        .from(payrollPayments)
+        .where(and(eq(payrollPayments.prof_id, profId), isNotNull(payrollPayments.period)))
+        .groupBy(payrollPayments.period),
     ]);
 
-    const paidByPeriod = new Map(payouts.map((p) => [p.period as string, money(p._sum.amount)]));
+    const paidByPeriod = new Map(payouts.map((p) => [p.period!, money(p.sum_amount)]));
 
     return shares
       .map((row) => ({
         period: row.period,
-        revenue: toAmount(round2(money(row._sum.amount))),
-        earned: toAmount(round2(money(row._sum.professor_share))),
-        paid: toAmount(round2(paidByPeriod.get(row.period) ?? ZERO)),
+        revenue: toAmount(round2(money(row.sum_amount))),
+        earned: toAmount(round2(money(row.sum_professor_share))),
+        paid: toAmount(round2(money(paidByPeriod.get(row.period) ?? ZERO))),
       }))
       .reverse();
+  }
+
+  /** Per-group breakdown for the professor detail page. */
+  async groupBreakdown(profId: string, period: string): Promise<
+    { group: string; students: number; revenue: string; professor_share: string; school_share: string }[]
+  > {
+    const rule = await this.revenue.ruleFor(profId);
+    const txns = await this.db.client.query.paymentTransactions.findMany({
+      where: and(eq(paymentTransactions.prof_id, profId), eq(paymentTransactions.period, period)),
+      with: {
+        studentPayment: {
+          with: {
+            student: { columns: { id: true } },
+            group: { columns: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    const byGroup = new Map<
+      string,
+      { group: string; students: Set<string>; revenue: Money; professorShare: Money; schoolShare: Money }
+    >();
+
+    for (const txn of txns) {
+      const key = txn.studentPayment?.group?.id ?? "unassigned";
+      const name = txn.studentPayment?.group?.name ?? "Sans groupe";
+      let row = byGroup.get(key);
+      if (!row) {
+        row = { group: name, students: new Set(), revenue: ZERO, professorShare: ZERO, schoolShare: ZERO };
+        byGroup.set(key, row);
+      }
+      row.students.add(txn.studentPayment?.student?.id ?? "unknown");
+      row.revenue = row.revenue.plus(money(txn.amount));
+      row.professorShare = row.professorShare.plus(money(txn.professor_share));
+      row.schoolShare = row.schoolShare.plus(money(txn.school_share));
+    }
+
+    const liveSplit = rule.model === "percentage" || rule.model === "hybrid";
+
+    return Array.from(byGroup.values())
+      .map((row) => {
+        let professorShare = round2(row.professorShare);
+        let schoolShare = round2(row.schoolShare);
+        if (liveSplit) {
+          professorShare = this.revenue.shareFor(rule, row.revenue);
+          schoolShare = round2(row.revenue.minus(professorShare));
+        }
+        return {
+          group: row.group,
+          students: row.students.size,
+          revenue: toAmount(round2(row.revenue)),
+          professor_share: toAmount(professorShare),
+          school_share: toAmount(schoolShare),
+        };
+      })
+      .sort((a, b) => a.group.localeCompare(b.group, "fr"));
+  }
+
+  private async sumPayouts(where: SQL | undefined): Promise<{ sum_amount: string | null }> {
+    const [row] = await this.db.client
+      .select({ sum_amount: sql<string | null>`sum(${payrollPayments.amount})` })
+      .from(payrollPayments)
+      .where(where);
+    return row;
+  }
+
+  private async sumProfShares(where: SQL | undefined): Promise<{ sum_amount: string | null; sum_professor_share: string | null }> {
+    const [row] = await this.db.client
+      .select({
+        sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+        sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+      })
+      .from(paymentTransactions)
+      .where(where);
+    return row;
   }
 
   // ---------------------------------------------------------------------------
@@ -289,7 +363,10 @@ export class PayrollService {
    * its staff. A genuine advance can be recorded against the period it covers.
    */
   async recordPayment(profId: string, userId: string, dto: RecordPayrollDto) {
-    const professor = await this.prisma.professors.findUnique({ where: { id: profId } });
+    const professor = await this.db.client.query.professors.findFirst({
+      where: eq(professors.id, profId),
+      columns: { full_name: true },
+    });
     if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
     const amount = money(dto.amount);
@@ -301,12 +378,8 @@ export class PayrollService {
     const entitlement = await this.revenue.periodEntitlement(profId, period);
     const alreadyPaid = round2(
       money(
-        (
-          await this.prisma.payroll_payments.aggregate({
-            where: { prof_id: profId, period },
-            _sum: { amount: true },
-          })
-        )._sum.amount,
+        await this.sumPayouts(and(eq(payrollPayments.prof_id, profId), eq(payrollPayments.period, period)))
+          .then((r) => r.sum_amount),
       ),
     );
 
@@ -319,10 +392,11 @@ export class PayrollService {
 
     const paidAt = dto.paid_at ? new Date(dto.paid_at) : new Date();
 
-    const payout = await this.prisma.$transaction(async (tx) => {
+    const payout = await this.db.client.transaction(async (tx) => {
       const receiptNumber = await this.receipts.next(tx, "payroll", paidAt);
-      const created = await tx.payroll_payments.create({
-        data: {
+      const [created] = await tx
+        .insert(payrollPayments)
+        .values({
           prof_id: profId,
           period: dto.period ?? period,
           amount: amount.toFixed(2),
@@ -331,8 +405,8 @@ export class PayrollService {
           paid_at: paidAt,
           notes: dto.notes ?? null,
           recorded_by: userId,
-        },
-      });
+        })
+        .returning();
       // The two settlement papers (professor receipt + school report) are minted
       // in the same transaction as the money movement, so a payout that never
       // lands can never leave a document behind it — and the settlement
@@ -365,9 +439,9 @@ export class PayrollService {
 
   /** Corrects a payout that was keyed wrong. Requires a reason when the amount moves. */
   async updatePayment(payoutId: string, userId: string, dto: UpdatePayrollDto) {
-    const existing = await this.prisma.payroll_payments.findUnique({
-      where: { id: payoutId },
-      include: { professor: { select: { full_name: true } } },
+    const existing = await this.db.client.query.payrollPayments.findFirst({
+      where: eq(payrollPayments.id, payoutId),
+      with: { professor: { columns: { full_name: true } } },
     });
     if (!existing) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
@@ -375,13 +449,14 @@ export class PayrollService {
       throw new BadRequestException("Modifier le montant d'un versement nécessite une raison");
     }
 
-    const updated = await this.prisma.payroll_payments.update({
-      where: { id: payoutId },
-      data: {
+    const [updated] = await this.db.client
+      .update(payrollPayments)
+      .set({
         ...(dto.amount !== undefined && { amount: money(dto.amount).toFixed(2) }),
         ...(dto.notes !== undefined && { notes: dto.notes || null }),
-      },
-    });
+      })
+      .where(eq(payrollPayments.id, payoutId))
+      .returning();
 
     await this.audit.record({
       action: "payroll.modified",
@@ -398,13 +473,13 @@ export class PayrollService {
   }
 
   async removePayment(payoutId: string, userId: string, reason: string) {
-    const existing = await this.prisma.payroll_payments.findUnique({
-      where: { id: payoutId },
-      include: { professor: { select: { full_name: true } } },
+    const existing = await this.db.client.query.payrollPayments.findFirst({
+      where: eq(payrollPayments.id, payoutId),
+      with: { professor: { columns: { full_name: true } } },
     });
     if (!existing) throw new NotFoundException(`Versement ${payoutId} introuvable`);
 
-    await this.prisma.payroll_payments.delete({ where: { id: payoutId } });
+    await this.db.client.delete(payrollPayments).where(eq(payrollPayments.id, payoutId));
 
     await this.audit.record({
       action: "payroll.deleted",
@@ -426,7 +501,10 @@ export class PayrollService {
   // ---------------------------------------------------------------------------
 
   async upsertCompensation(profId: string, userId: string, dto: UpsertCompensationDto) {
-    const professor = await this.prisma.professors.findUnique({ where: { id: profId } });
+    const professor = await this.db.client.query.professors.findFirst({
+      where: eq(professors.id, profId),
+      columns: { full_name: true },
+    });
     if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
     if (dto.model === "custom") {
@@ -447,21 +525,35 @@ export class PayrollService {
       throw new BadRequestException(`Le modèle ${dto.model} nécessite un montant fixe`);
     }
 
-    const existing = await this.prisma.professor_compensations.findUnique({ where: { prof_id: profId } });
+    const existing = await this.db.client.query.professorCompensations.findFirst({
+      where: eq(professorCompensations.prof_id, profId),
+    });
 
-    const data = {
+    const base = {
       model: dto.model,
-      percentage: dto.percentage === undefined ? undefined : dto.percentage,
-      fixed_amount: dto.fixed_amount === undefined ? undefined : dto.fixed_amount,
-      custom_formula: dto.custom_formula === undefined ? undefined : dto.custom_formula,
+      percentage: dto.percentage ?? null,
+      fixed_amount: dto.fixed_amount ?? null,
+      custom_formula: dto.custom_formula ?? null,
       notes: dto.notes ?? null,
     };
 
-    const saved = await this.prisma.professor_compensations.upsert({
-      where: { prof_id: profId },
-      create: { prof_id: profId, ...data, percentage: dto.percentage ?? null, fixed_amount: dto.fixed_amount ?? null },
-      update: data,
-    });
+    let saved: typeof existing;
+    if (existing) {
+      const set: Partial<typeof base> = { ...base };
+      if (dto.percentage === undefined) delete set.percentage;
+      if (dto.fixed_amount === undefined) delete set.fixed_amount;
+      if (dto.custom_formula === undefined) delete set.custom_formula;
+      [saved] = await this.db.client
+        .update(professorCompensations)
+        .set(set)
+        .where(eq(professorCompensations.prof_id, profId))
+        .returning();
+    } else {
+      [saved] = await this.db.client
+        .insert(professorCompensations)
+        .values({ prof_id: profId, ...base })
+        .returning();
+    }
 
     // Changing a split changes what every future collection is worth to this
     // professor — one of the highest-consequence edits in the product.
@@ -493,13 +585,13 @@ export class PayrollService {
 
   /** Drops an override so the professor falls back to the academy default. */
   async removeCompensation(profId: string, userId: string) {
-    const existing = await this.prisma.professor_compensations.findUnique({
-      where: { prof_id: profId },
-      include: { professor: { select: { full_name: true } } },
+    const existing = await this.db.client.query.professorCompensations.findFirst({
+      where: eq(professorCompensations.prof_id, profId),
+      with: { professor: { columns: { full_name: true } } },
     });
     if (!existing) throw new NotFoundException("Ce professeur n'a aucun modèle à supprimer");
 
-    await this.prisma.professor_compensations.delete({ where: { prof_id: profId } });
+    await this.db.client.delete(professorCompensations).where(eq(professorCompensations.prof_id, profId));
 
     await this.audit.record({
       action: "financial.formula_changed",

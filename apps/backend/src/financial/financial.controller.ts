@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -47,7 +47,7 @@ import { UpdateFinancialSettingsDto } from "./dto/financial-settings.dto";
 /**
  * Everything financial, under `/api/financial`.
  *
- * The whole surface is `super_admin` only — the academy's books are not
+ * The whole surface is `super_admin` only ΓÇö the academy's books are not
  * something the role model currently opens to anyone else. `RolesGuard` reads
  * the class-level decorator, so a route added here inherits that by default
  * rather than by remembering to annotate it.
@@ -323,7 +323,7 @@ export class FinancialController {
   // ---------------------------------------------------------------------------
 
   /**
-   * The full settlement picture for a professor and period — the same snapshot
+   * The full settlement picture for a professor and period ΓÇö the same snapshot
    * the printed documents are rendered from, so the screen's breakdown bar and
    * the paper can never disagree about what was settled.
    */
@@ -355,10 +355,10 @@ export class FinancialController {
     @CurrentUser("id") userId: string,
   ) {
     const rows = await this.payrollDocuments.regenerate(payoutId, userId);
-    return { generated: rows.map((row) => row.id) };
+    return { generated: rows.map((row: { id: string }) => row.id) };
   }
 
-  /** The print-ready A4 document (browser print → PDF). */
+  /** The print-ready A4 document (browser print ΓåÆ PDF). */
   @Get("payroll/document/:docId")
   async renderDocument(
     @Param("docId", ParseUUIDPipe) docId: string,
@@ -477,7 +477,7 @@ export class FinancialController {
   }
 
   /**
-   * Worked example of a compensation rule — the "student pays 100, professor
+   * Worked example of a compensation rule ΓÇö the "student pays 100, professor
    * gets 60" panel on the settings screen.
    */
   @Post("settings/preview-split")
@@ -513,7 +513,7 @@ export class FinancialController {
   }
 
   /**
-   * The absolute URL of the uploaded logo, cache-busted by its last change —
+   * The absolute URL of the uploaded logo, cache-busted by its last change ΓÇö
    * null when no logo is set. The printed HTML opens in a bare tab (no auth
    * header), so the image URL must be absolute and public.
    */

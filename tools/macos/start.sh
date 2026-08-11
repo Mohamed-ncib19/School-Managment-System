@@ -305,7 +305,7 @@ if command -v psql &>/dev/null; then
   fi
   unset PGPASSWORD
 else
-  warn "psql not found - skipping the database check (Prisma will report any problem)"
+  warn "psql not found - skipping the database check (drizzle-kit will report any problem)"
 fi
 
 # ===========================================================================
@@ -327,18 +327,46 @@ else
 fi
 
 # ===========================================================================
-#  5. MIGRATIONS
+#  5. DATABASE SCHEMA
 # ===========================================================================
-write_step "Applying database migrations"
+write_step "Applying database schema"
 
-(cd "$BACKEND_DIR" && pnpm exec prisma generate 2>&1 | tail -1) || fail "prisma generate failed."
-ok "Prisma client generated"
+# Skip the introspection+diff when the schema definitions are unchanged since
+# the last successful push. The hash is kept per machine.
+mkdir -p "$LOG_DIR"
+SCHEMA_STATE="$LOG_DIR/schema.hash"
+SCHEMA_HASH="$(sha256sum "$BACKEND_DIR/src/db/schema.ts" "$BACKEND_DIR/src/db/relations.ts" "$BACKEND_DIR/drizzle.config.ts" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+push_needed=true
+if [[ -n "$SCHEMA_HASH" && -f "$SCHEMA_STATE" ]] && [[ "$(cat "$SCHEMA_STATE")" == "$SCHEMA_HASH" ]]; then
+  push_needed=false
+fi
 
-(cd "$BACKEND_DIR" && pnpm exec prisma migrate deploy 2>&1)
-[[ $? -eq 0 ]] || fail "Migrations could not be applied."
-ok "Database schema is up to date"
+if [[ "$push_needed" == "true" ]]; then
+  (cd "$BACKEND_DIR" && pnpm exec drizzle-kit push --force 2>&1 | tail -5) || \
+    fail "Database schema could not be applied - your data has NOT been changed."
+  echo "$SCHEMA_HASH" > "$SCHEMA_STATE"
+  ok "Database schema is up to date"
+else
+  ok "Database schema is up to date" "push skipped - schema unchanged"
+fi
 
-(cd "$BACKEND_DIR" && pnpm run db:seed 2>&1 | tail -1)
+# The admin seed is an upsert - it never touches existing data. Skip the cold
+# ts-node run (~12s) when the account and the settings rows it creates already
+# exist; without psql, run it and let it report loudly.
+seed_needed=true
+if command -v psql &>/dev/null; then
+  export PGPASSWORD="$DB_PASS"
+  seed_count="$(psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -tAc \
+    "SELECT (SELECT count(*) FROM users) + (SELECT count(*) FROM system_settings)" 2>/dev/null || echo "")"
+  unset PGPASSWORD
+  if [[ "$seed_count" =~ ^[0-9]+$ ]] && (( 10#$seed_count >= 2 )); then
+    seed_needed=false
+  fi
+fi
+
+if [[ "$seed_needed" == "true" ]]; then
+  (cd "$BACKEND_DIR" && pnpm run db:seed 2>&1 | tail -1) || fail "Administrator seed failed."
+fi
 ok "Administrator account ready"
 
 # ===========================================================================

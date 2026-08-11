@@ -92,7 +92,7 @@ export default function FinancialLayout({ children }: { children: React.ReactNod
       </nav>
 
       {disabled ? (
-        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-surface-secondary/40 px-6 py-16 text-center">
+        <div className="flex flex-col items-center justify-center gap-3 rounded-card border border-dashed border-border bg-neutral-soft/50 px-6 py-16 text-center">
           <span className="flex size-12 items-center justify-center rounded-full bg-surface-secondary text-2xl text-text-tertiary">
             <ShieldOff />
           </span>

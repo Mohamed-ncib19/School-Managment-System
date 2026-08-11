@@ -29,12 +29,23 @@
     --color-gold-500: 229 165 48;
     --color-gold-600: 180 131 15;
     --color-gold-700: 138 100 16;
-    --color-background: #F8FAFC;
+    --color-background: #F5F5F7;
     --color-surface: #FFFFFF;
-    --color-border: #E5E7EB;
-    --color-text-primary: #1F2937;
-    --color-text-secondary: #6B7280;
-    --font-poppins: "Poppins", "Manrope", "Nunito", ui-sans-serif, system-ui, sans-serif;
+    --color-border: #E3E3E8;
+    --color-text-primary: #1D1D1F;
+    --color-text-secondary: #86868B;
+
+    /* Surface layers for elevation and interaction states. */
+    --color-surface-elevated: #FFFFFF;
+    --color-surface-hover: rgba(0, 0, 0, 0.04);
+    --color-surface-active: rgba(0, 0, 0, 0.08);
+    --color-surface-inset: #F5F5F7;
+
+    /* Sidebar pane: a soft step down from the page background so the nav
+     * reads as its own surface against the content area. */
+    --color-sidebar: rgba(236, 236, 239, 0.92);
+
+    --font-inter: "Inter", "SF Pro Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
 
     /* Chart palette.
      *
@@ -74,29 +85,32 @@
     --chart-cancelled: #9CA3AF;
 
     /* Chart chrome. */
-    --chart-grid: #E5E7EB;
-    --chart-axis: #9CA3AF;
+    --chart-grid: #E8E8ED;
+    --chart-axis: #AEAEB2;
     --chart-surface: #FFFFFF;
 
-    /* Shadows. */
-    --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06);
-    --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.08);
-    --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.12);
-    --shadow-dropdown: 0 8px 24px rgba(0, 0, 0, 0.10);
+    /* Dual-layer shadows: a tight contact shadow over a diffuse ambient one. */
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 16px rgba(0, 0, 0, 0.05);
+    --shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.06), 0 12px 24px rgba(0, 0, 0, 0.10);
+    --shadow-modal: 0 8px 16px rgba(0, 0, 0, 0.08), 0 32px 80px rgba(0, 0, 0, 0.20);
+    --shadow-dropdown: 0 2px 4px rgba(0, 0, 0, 0.05), 0 12px 32px rgba(0, 0, 0, 0.12);
   }
 
   .dark {
-    --color-background: #0F172A;
-    --color-surface: #1E293B;
-    --color-border: #334155;
-    --color-text-primary: #F1F5F9;
-    --color-text-secondary: #94A3B8;
+    --color-background: #141417;
+    --color-surface: #1C1C1F;
+    --color-border: #2A2A2E;
+    --color-text-primary: #F5F5F7;
+    --color-text-secondary: #98989D;
 
     /* Surface layers for elevation and interaction states. */
-    --color-surface-elevated: #263348;
-    --color-surface-hover: rgba(255, 255, 255, 0.04);
-    --color-surface-active: rgba(255, 255, 255, 0.08);
-    --color-surface-inset: #0B1222;
+    --color-surface-elevated: #26262A;
+    --color-surface-hover: rgba(255, 255, 255, 0.05);
+    --color-surface-active: rgba(255, 255, 255, 0.10);
+    --color-surface-inset: #101013;
+
+    /* Sidebar pane — slightly lighter than the canvas, like a raised pane. */
+    --color-sidebar: rgba(27, 27, 30, 0.92);
 
     /* Semantic soft fills for badges, alerts and table row hover. */
     --color-soft-success: rgba(34, 197, 94, 0.12);
@@ -125,16 +139,16 @@
     --chart-cancelled: #64748B;
 
     /* Chart chrome. */
-    --chart-grid: #1E293B;
-    --chart-axis: #64748B;
-    --chart-surface: #1E293B;
+    --chart-grid: #2A2A2E;
+    --chart-axis: #6E6E73;
+    --chart-surface: #1C1C1F;
 
-    /* Shadows carry a faint brand tint so elevation reads on dark surfaces. */
-    --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
-    --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.45);
-    --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.55);
-    --shadow-dropdown: 0 8px 24px rgba(0, 0, 0, 0.45);
-    --shadow-glow-primary: 0 0 0 1px rgba(56, 135, 229, 0.25), 0 4px 16px rgba(56, 135, 229, 0.15);
+    /* Neutral dual-layer shadows — elevation on dark surfaces without the brand tint. */
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 6px 16px rgba(0, 0, 0, 0.35);
+    --shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.40), 0 12px 24px rgba(0, 0, 0, 0.50);
+    --shadow-modal: 0 8px 16px rgba(0, 0, 0, 0.45), 0 32px 80px rgba(0, 0, 0, 0.60);
+    --shadow-dropdown: 0 2px 4px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.50);
+    --shadow-glow-primary: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 12px rgba(0, 0, 0, 0.35);
   }
 
   * {
@@ -155,23 +169,19 @@
   }
 
   .btn-primary {
-    @apply btn bg-primary text-white shadow-card hover:bg-primary-600 hover:shadow-hover;
-  }
-
-  .dark .btn-primary {
-    @apply shadow-glow-primary;
+    @apply btn bg-primary text-white hover:bg-primary-600;
   }
 
   .btn-secondary {
-    @apply btn bg-surface border border-primary text-primary hover:bg-primary-50;
+    @apply btn bg-surface border border-border text-text-primary hover:bg-neutral-soft;
   }
 
   .dark .btn-secondary {
-    @apply border-primary/40 hover:bg-primary/10 hover:border-primary/60;
+    @apply hover:bg-white/[0.06];
   }
 
   .dark .btn-secondary:active {
-    @apply bg-primary/20 border-primary/70;
+    @apply bg-white/[0.10];
   }
 
   .btn-danger {
@@ -206,31 +216,15 @@
   }
 
   .card {
-    @apply rounded-card bg-surface shadow-card p-6;
-  }
-
-  .dark .card {
-    @apply shadow-glow-primary border border-white/10;
-  }
-
-  .dark .card:hover {
-    @apply border-primary/20;
+    @apply rounded-card bg-surface border border-border shadow-card p-6;
   }
 
   .table-container {
     @apply rounded-table overflow-hidden border border-border shadow-card;
   }
 
-  .dark .table-container {
-    @apply shadow-glow-primary;
-  }
-
   .stat-card {
     @apply card flex items-center gap-4;
-  }
-
-  .dark .stat-card {
-    @apply border-l-4 border-l-primary/50;
   }
 
   .status-badge {
@@ -238,7 +232,7 @@
   }
 
   .modal-overlay {
-    @apply fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm;
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm;
   }
 
   .modal-content {
@@ -246,38 +240,74 @@
   }
 
   .dark .modal-content {
-    @apply border border-border shadow-glow-primary;
+    @apply border border-border;
+  }
+
+  /* Timeline stem — the signature reading aid for append-only records.
+   * Each row places a hairline + dot in its leading cell; stacked rows form
+   * one continuous trace, older at the bottom, newest at the top. */
+  .timeline-cell {
+    @apply relative;
+  }
+
+  .timeline-stem {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 6px;
+    width: 1px;
+    background-color: var(--color-border);
+  }
+
+  .timeline-dot {
+    position: absolute;
+    top: 50%;
+    left: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    transform: translate(-50%, -50%);
   }
 }
 
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #D1D5DB transparent;
+    scrollbar-color: #D6D6DA transparent;
   }
   .dark .scrollbar-thin {
-    scrollbar-color: #475569 transparent;
+    scrollbar-color: #48484E transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: #D1D5DB;
+    background-color: #D6D6DA;
     border-radius: 3px;
   }
   .dark .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: #475569;
+    background-color: #48484E;
   }
 
-  /* Glass morphism for sidebar and navbar in dark mode. */
+  /* Translucent material for the sidebar and navbar, in both modes. */
   .glass {
-    background-color: rgba(30, 41, 59, 0.78);
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    background-color: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
   }
   .dark .glass {
-    border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+    background-color: rgba(28, 28, 31, 0.72);
+  }
+
+  /* Sidebar material: the same translucent blur as .glass over a soft tinted
+   * pane, so the nav is separated from the content without turning solid. */
+  .glass-sidebar {
+    background-color: var(--color-sidebar);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
   }
 
   /* Table row hover in dark mode. */

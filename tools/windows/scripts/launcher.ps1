@@ -269,7 +269,7 @@ if ($appLoginOk) {
   }
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 } else {
-  Write-Warn2 "psql not found - skipping the database check (Prisma will report any problem)"
+  Write-Warn2 "psql not found - skipping the database check (drizzle-kit will report any problem)"
 }
 
 <#
@@ -315,70 +315,119 @@ if ($needsInstall) {
 }
 
 # ===========================================================================
-#  5. MIGRATIONS
+#  5. DATABASE SCHEMA
 # ===========================================================================
-Write-Step "Applying database migrations"
+Write-Step "Applying database schema"
 
-Push-Location $BackendDir
-$genOutput = pnpm exec prisma generate 2>&1
-$genExit = $LASTEXITCODE
-Pop-Location
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-if ($genExit -ne 0) {
-  $looksLikeDepIssue = $genOutput -match "Cannot find module|MODULE_NOT_FOUND|prisma\.build|Command .* not found"
-  if ($looksLikeDepIssue) {
-    Write-Info "prisma generate failed - dependency issue detected, repairing..."
-    Push-Location $Root
-    $repairOutput = pnpm install 2>&1
-    $repairExit = $LASTEXITCODE
-    Pop-Location
+# Skip the introspection+diff (a few seconds) when the schema definitions have
+# not changed since the last successful push. The hash is kept per machine.
+$schemaState = Join-Path $LogDir "schema.hash"
+$schemaHash = ""
+foreach ($file in @(
+  (Join-Path $BackendDir "src\db\schema.ts"),
+  (Join-Path $BackendDir "src\db\relations.ts"),
+  (Join-Path $BackendDir "drizzle.config.ts")
+)) {
+  if (Test-Path $file) { $schemaHash += (Get-FileHash -Algorithm SHA256 -Path $file).Hash }
+}
+$pushNeeded = $true
+if ($schemaHash -and (Test-Path $schemaState)) {
+  if ((Get-Content $schemaState -Raw).Trim() -eq $schemaHash) { $pushNeeded = $false }
+}
 
-    if ($repairExit -eq 0) {
-      Push-Location $BackendDir
-      $genOutput = pnpm exec prisma generate 2>&1
-      $genExit = $LASTEXITCODE
+if ($pushNeeded) {
+  Push-Location $BackendDir
+  $pushOutput = pnpm exec drizzle-kit push --force 2>&1
+  $pushExit = $LASTEXITCODE
+  Pop-Location
+
+  if ($pushExit -ne 0) {
+    $looksLikeDepIssue = $pushOutput -match "Cannot find module|MODULE_NOT_FOUND|drizzle-kit|Command .* not found"
+    if ($looksLikeDepIssue) {
+      Write-Info "drizzle-kit push failed - dependency issue detected, repairing..."
+      Push-Location $Root
+      $repairOutput = pnpm install 2>&1
+      $repairExit = $LASTEXITCODE
       Pop-Location
-    } else {
-      $genOutput = $repairOutput
+
+      if ($repairExit -eq 0) {
+        Push-Location $BackendDir
+        $pushOutput = pnpm exec drizzle-kit push --force 2>&1
+        $pushExit = $LASTEXITCODE
+        Pop-Location
+      } else {
+        $pushOutput = $repairOutput
+      }
     }
   }
+
+  if ($pushExit -ne 0) {
+    $pushOutput | ForEach-Object { Write-Info "  $_" }
+    Fail "Database schema could not be applied - your data has NOT been changed." `
+         "Fix the error above, then run tools\windows\start.bat again. If you need to restore data, use the Database Backup page in the app."
+  }
+  Set-Content -Path $schemaState -Value $schemaHash
+  Write-Ok "Database schema is up to date"
+} else {
+  Write-Ok "Database schema is up to date" "push skipped - schema unchanged"
 }
 
-if ($genExit -ne 0) {
-  $genOutput | ForEach-Object { Write-Info "  $_" }
-  Fail "prisma generate failed." "Fix the error above, then run tools\windows\start.bat again."
+# The admin account seed is an upsert - it never touches existing data. Skip
+# it entirely (saving a cold ts-node start, ~12s) when the account and the
+# settings rows it creates are already present.
+$seedNeeded = $true
+if ($psql) {
+  $env:PGPASSWORD = $dbPass
+  $seedCount = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+    "SELECT (SELECT count(*) FROM users) + (SELECT count(*) FROM system_settings)" 2>$null
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  if ($LASTEXITCODE -eq 0 -and $seedCount -match "^\d+$" -and [int]$seedCount -ge 2) { $seedNeeded = $false }
 }
-Write-Ok "Prisma client generated"
-
-Push-Location $BackendDir
-$migOutput = pnpm exec prisma migrate deploy 2>&1
-$migExit = $LASTEXITCODE
-Pop-Location
-
-if ($migExit -ne 0) {
-  $migOutput | ForEach-Object { Write-Info "  $_" }
-  Fail "Migrations could not be applied - your data has NOT been changed." `
-       "Fix the error above, then run tools\windows\start.bat again. If you need to restore data, use the Database Backup page in the app. Never run 'prisma migrate reset' on this database: it deletes everything."
+if ($seedNeeded) {
+  Push-Location $BackendDir
+  pnpm run db:seed 2>&1 | Out-Null
+  Pop-Location
+  if ($LASTEXITCODE -ne 0) { Fail "Administrator seed failed." "Check the SEED_ADMIN_* variables in apps\backend\.env." }
+  Write-Ok "Administrator account ready"
+} else {
+  Write-Ok "Administrator account ready" "seed skipped - already present"
 }
-Write-Ok "Database schema is up to date"
-
-# The admin account seed is an upsert - it never touches existing data.
-Push-Location $BackendDir
-pnpm run db:seed 2>&1 | Out-Null
-Pop-Location
-Write-Ok "Administrator account ready"
 
 # ===========================================================================
 #  6. BUILD (production mode only)
 # ===========================================================================
 if ($Prod) {
   Write-Step "Building the application"
-  Push-Location $Root
-  pnpm build 2>&1 | Out-Null
-  $buildExit = $LASTEXITCODE
-  Pop-Location
-  if ($buildExit -ne 0) { Fail "Build failed." "Run 'pnpm build' to see the error, or start without -Prod." }
-  Write-Ok "Build complete"
+
+  # Skip the full nest+next rebuild when no source file has changed since the
+  # last build; dist/.next are left untouched in that case. The hash covers
+  # sources and the lockfile only - node_modules/.next/dist/public etc. are
+  # build outputs or dependencies, not inputs.
+  $rebuildNeeded = $true
+  $buildState = Join-Path $LogDir "build.hash"
+  $buildInputs = Get-ChildItem $BackendDir, $FrontendDir -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -notmatch "\\(node_modules|\.next|dist|logs|backups|\.postgres|public)\\" }
+  $buildHash = ""
+  foreach ($file in $buildInputs) {
+    $buildHash += (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash
+  }
+  if ($buildHash -and (Test-Path $buildState)) {
+    if ((Get-Content $buildState -Raw).Trim() -eq $buildHash) { $rebuildNeeded = $false }
+  }
+
+  if ($rebuildNeeded) {
+    Push-Location $Root
+    pnpm build 2>&1 | Out-Null
+    $buildExit = $LASTEXITCODE
+    Pop-Location
+    if ($buildExit -ne 0) { Fail "Build failed." "Run 'pnpm build' to see the error, or start without -Prod." }
+    Set-Content -Path $buildState -Value $buildHash
+    Write-Ok "Build complete"
+  } else {
+    Write-Ok "Build is up to date" "sources unchanged - build skipped"
+  }
 }
 
 # ===========================================================================
@@ -415,22 +464,40 @@ if ($webUp) {
       "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
 }
 
-if (-not $apiUp) {
-  if (Wait-For -Condition { Test-Port $BackendPort } -Label "Compiling the API" -TimeoutSec 150) {
+if (-not $apiUp -or -not $webUp) {
+  # Wait for BOTH ports at once (one spinner, timeout = the slower server)
+  # instead of sequentially - on a cold start that saves the whole boot time
+  # of whichever one comes up first.
+  $ready = Wait-For -Condition { (Test-Port $BackendPort) -and (Test-Port $FrontendPort) } `
+                    -Label "Starting API and web portal" -TimeoutSec 150
+  if ($ready) {
     $apiUp = $true
-    Write-Ok "API listening" "port $BackendPort"
-  }
-}
-
-if (-not $webUp) {
-  if (Wait-For -Condition { Test-Port $FrontendPort } -Label "Building the web portal" -TimeoutSec 150) {
     $webUp = $true
+    Write-Ok "API listening" "port $BackendPort"
     Write-Ok "Web portal listening" "port $FrontendPort"
+  } else {
+    $apiUp = Test-Port $BackendPort
+    $webUp = Test-Port $FrontendPort
   }
 }
 
 if (-not $apiUp) { Write-Warn2 "The API did not start in time - see logs\backend.log" }
 if (-not $webUp) { Fail "The web portal did not start in time." "See logs\frontend.log for the reason." }
+
+<#
+  The portal compiles each route on first request, which makes the first page
+  visit feel like a hang (~10-15s on a cold start). Warm the main routes in
+  the background now, while the launcher finishes, so the browser is instant.
+  The warm script exits on its own; stop.ps1 never sees it.
+#>
+if ($webUp -and -not $Prod) {
+  $prewarmScript = Join-Path $Root "scripts\prewarm.mjs"
+  if (Test-Path $prewarmScript) {
+    Write-Info "Pre-warming web routes in the background..."
+    Start-Process -FilePath "node" -WindowStyle Hidden -WorkingDirectory $Root `
+      -ArgumentList $prewarmScript, $FrontendPort
+  }
+}
 
 # ===========================================================================
 #  8. READY

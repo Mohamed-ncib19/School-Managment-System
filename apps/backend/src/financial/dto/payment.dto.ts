@@ -12,7 +12,9 @@ import {
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import type { PaymentStatus } from "@prisma/client";
+import type { paymentStatus } from "../../db/schema";
+
+type PaymentStatus = (typeof paymentStatus.enumValues)[number];
 
 const AMOUNT = /^\d{1,8}(\.\d{1,2})?$/;
 const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -214,4 +216,11 @@ export class PaymentQueryDto {
   @IsOptional()
   @IsIn(["asc", "desc"])
   sortDir?: "asc" | "desc";
+
+  /** `invoices` (default) lists one row per invoice; `students` groups the
+   *  matching invoices per student so the cash desk sees pupils, not periods. */
+  @ApiPropertyOptional({ enum: ["invoices", "students"], default: "invoices" })
+  @IsOptional()
+  @IsIn(["invoices", "students"])
+  view?: "invoices" | "students";
 }

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { PaymentStatus, Prisma, TransactionType } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, asc, desc, eq, gt, gte, inArray, like, lte, or, sql, SQL } from "drizzle-orm";
+import { DbService, Tx } from "../db/db.service";
+import { paymentStatus, paymentTransactions, studentPayments, students, transactionType } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
@@ -17,108 +18,155 @@ import type {
   UpdatePaymentStatusDto,
 } from "./dto/payment.dto";
 
+type PaymentStatus = (typeof paymentStatus.enumValues)[number];
+type TransactionType = (typeof transactionType.enumValues)[number];
+
+/** French diacritics and their plain equivalents, in matching order (for SQL translate). */
+const DIACRITICS = "àâäçéèêëîïôöùûüÿ";
+const PLAIN = "aaaceeeeiioouuuy";
+
+/** Keywords a cashier might type to target a status, in unaccented lowercase. */
+const SEARCH_STATUS_ALIASES: Record<string, PaymentStatus> = {
+  paye: "paid",
+  encaisse: "paid",
+  solde: "paid",
+  nonpaye: "not_paid",
+  impaye: "not_paid",
+  bientot: "due_soon",
+  retard: "overdue",
+  partiel: "partially_paid",
+  partiellement: "partially_paid",
+  annule: "cancelled",
+};
+
+/** French month names → period month, so "juin 2025" targets 2025-06. */
+const SEARCH_MONTHS: Record<string, string> = {
+  janvier: "01", janv: "01",
+  fevrier: "02", fev: "02",
+  mars: "03",
+  avril: "04", avr: "04",
+  mai: "05",
+  juin: "06",
+  juillet: "07", juil: "07",
+  aout: "08",
+  septembre: "09", sept: "09",
+  octobre: "10", oct: "10",
+  novembre: "11", nov: "11",
+  decembre: "12", dec: "12",
+};
+
+const SEARCH_STOP_WORDS = new Set([
+  "en", "de", "du", "des", "au", "aux", "le", "la", "les", "un", "une",
+  "non", "pas", "et", "ou", "pour", "avec", "tout", "tous", "toutes",
+]);
+
+/** Lower rank = more urgent. A student's ledger status is its worst invoice. */
+const STATUS_RANK: Record<string, number> = {
+  overdue: 0,
+  due_soon: 1,
+  not_paid: 2,
+  partially_paid: 3,
+  paid: 4,
+  cancelled: 5,
+};
+
+/** Lowercases and strips French diacritics so "méité" == "meite". */
+function unaccent(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[àâä]/g, "a")
+    .replace(/ç/g, "c")
+    .replace(/[éèêë]/g, "e")
+    .replace(/[îï]/g, "i")
+    .replace(/[ôö]/g, "o")
+    .replace(/[ùûü]/g, "u")
+    .replace(/ÿ/g, "y");
+}
+
+interface GroupBrief {
+  id: string;
+  name: string;
+  color: string | null;
+  prof_id: string;
+  professor: {
+    id: string;
+    full_name: string;
+    color: string | null;
+    field: {
+      id: string;
+      name: string;
+      color: string | null;
+      level: { id: string; name: string; color: string | null } | null;
+    } | null;
+  } | null;
+}
+
+interface TransactionRow {
+  id: string;
+  type: TransactionType;
+  amount: string;
+  professor_share: string;
+  school_share: string;
+  receipt_number: string | null;
+  paid_at: Date;
+  user: { id: string; full_name: string } | null;
+}
+
 /** The invoice plus everything the UI needs to render a row without a second call. */
-const PAYMENT_INCLUDE = {
-  student: {
-    select: {
-      id: true,
-      first_name: true,
-      last_name: true,
-      group: {
-        select: {
-          id: true,
-          name: true,
-          color: true,
-          prof_id: true,
-          professor: {
-            select: {
-              id: true,
-              full_name: true,
-              color: true,
-              field: {
-                select: {
-                  id: true,
-                  name: true,
-                  color: true,
-                  level: { select: { id: true, name: true, color: true } },
-                },
-              },
-            },
-          },
-        },
-      },
+const PROFESSOR_WITH = {
+  columns: { id: true, full_name: true, color: true },
+  with: {
+    field: {
+      columns: { id: true, name: true, color: true },
+      with: { level: { columns: { id: true, name: true, color: true } } },
     },
   },
-  group: {
-    select: {
-      id: true,
-      name: true,
-      color: true,
-      prof_id: true,
-      professor: {
-        select: {
-          id: true,
-          full_name: true,
-          color: true,
-          field: {
-            select: {
-              id: true,
-              name: true,
-              color: true,
-              level: { select: { id: true, name: true, color: true } },
-            },
-          },
-        },
-      },
-    },
-  },
-  transactions: {
-    orderBy: { paid_at: "asc" },
-    select: {
-      id: true,
-      type: true,
-      amount: true,
-      professor_share: true,
-      school_share: true,
-      receipt_number: true,
-      paid_at: true,
-      recorder: { select: { id: true, full_name: true } },
-    },
-  },
-} satisfies Prisma.student_paymentsInclude;
+} as const;
 
-/** Full include for detail views - includes assignments for context menus. */
-const PAYMENT_INCLUDE_FULL = {
-  student: {
-    include: {
-      group: {
-        include: {
-          professor: { include: { field: { include: { level: true } } } },
-        },
-      },
-      assignments: {
-        include: {
-          group: {
-            include: {
-              professor: { include: { field: { include: { level: true } } } },
-            },
-          },
-        },
-      },
-    },
-  },
-  group: {
-    include: {
-      professor: { include: { field: { include: { level: true } } } },
-    },
-  },
-  transactions: {
-    orderBy: { paid_at: "asc" },
-    include: { recorder: { select: { id: true, full_name: true } } },
-  },
-} satisfies Prisma.student_paymentsInclude;
+const GROUP_WITH = {
+  columns: { id: true, name: true, color: true, prof_id: true },
+  with: { professor: PROFESSOR_WITH },
+} as const;
 
-type PaymentWithContext = Prisma.student_paymentsGetPayload<{ include: typeof PAYMENT_INCLUDE }>;
+const PAYMENT_WITH = {
+  student: { with: { group: GROUP_WITH } },
+  group: GROUP_WITH,
+  paymentTransactions: { with: { user: { columns: { id: true, full_name: true } } } },
+} as const;
+
+const PAYMENT_WITH_FULL = {
+  student: {
+    with: {
+      group: GROUP_WITH,
+      assignments: { with: { group: GROUP_WITH } },
+    },
+  },
+  group: GROUP_WITH,
+  paymentTransactions: { with: { user: { columns: { id: true, full_name: true } } } },
+} as const;
+
+/** The raw relational row the presentation layer reads. */
+interface PaymentRow {
+  id: string;
+  student_id: string;
+  group_id: string;
+  period: string;
+  amount_due: string;
+  paid_amount: string | null;
+  due_date: Date;
+  status: string;
+  notes: string | null;
+  paid_at: Date | null;
+  student: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    group: GroupBrief | null;
+    assignments?: { group: GroupBrief | null }[];
+  } | null;
+  group: GroupBrief | null;
+  paymentTransactions: TransactionRow[];
+}
 
 /**
  * Student invoices and the ledger of money moved against them.
@@ -138,7 +186,7 @@ export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
     private readonly revenue: RevenueCalculationService,
     private readonly receipts: ReceiptNumberService,
@@ -155,28 +203,53 @@ export class PaymentService {
    * of rows and the old screen fetched every one of them to count four totals.
    */
   async list(query: PaymentQueryDto) {
+    if (query.view === "students") return this.listStudents(query);
+
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
-    const where = await this.buildWhere(query);
+    const where = this.buildWhere(query);
 
     const sortBy = query.sortBy ?? "due_date";
     const sortDir = query.sortDir ?? "desc";
+    const allowedSortKeys: Record<string, boolean> = {
+      paid_at: true,
+      period: true,
+      amount_due: true,
+      due_date: true,
+      status: true,
+    };
+    const sortKey: string = allowedSortKeys[sortBy] ? sortBy : "due_date";
+    const sortCol = sortKey === "paid_at"
+      ? studentPayments.paid_at
+      : sortKey === "period"
+        ? studentPayments.period
+        : sortKey === "amount_due"
+          ? studentPayments.amount_due
+          : sortKey === "status"
+            ? studentPayments.status
+            : studentPayments.due_date;
 
     const [rows, total, totals] = await Promise.all([
-      this.prisma.student_payments.findMany({
+      this.db.client.query.studentPayments.findMany({
         where,
-        include: PAYMENT_INCLUDE,
-        orderBy: { [sortBy]: sortDir },
-        skip: (page - 1) * limit,
-        take: limit,
+        with: PAYMENT_WITH,
+        orderBy: [sortDir === "desc" ? desc(sortCol) : asc(sortCol)],
+        offset: (page - 1) * limit,
+        limit,
       }),
-      this.prisma.student_payments.count({ where }),
-      // Totals span the whole filtered set, not just the page on screen —
-      // a footer that only adds up the visible rows is actively misleading.
-      this.prisma.student_payments.aggregate({
-        where,
-        _sum: { amount_due: true, paid_amount: true },
-      }),
+      this.db.client
+        .select({ count: sql<number>`count(*)::int` })
+        .from(studentPayments)
+        .where(where)
+        .then((r) => r[0].count),
+      this.db.client
+        .select({
+          sum_amount_due: sql<string | null>`sum(${studentPayments.amount_due})`,
+          sum_paid_amount: sql<string | null>`sum(${studentPayments.paid_amount})`,
+        })
+        .from(studentPayments)
+        .where(where)
+        .then((r) => r[0]),
     ]);
 
     return {
@@ -187,67 +260,83 @@ export class PaymentService {
         limit,
         totalPages: Math.max(1, Math.ceil(total / limit)),
         totals: {
-          amount_due: toAmount(money(totals._sum.amount_due)),
-          paid_amount: toAmount(money(totals._sum.paid_amount)),
+          amount_due: toAmount(money(totals.sum_amount_due)),
+          paid_amount: toAmount(money(totals.sum_paid_amount)),
           outstanding: toAmount(
-            round2(money(totals._sum.amount_due).minus(money(totals._sum.paid_amount))),
+            round2(money(totals.sum_amount_due).minus(money(totals.sum_paid_amount))),
           ),
         },
       },
     };
   }
 
-  private async buildWhere(query: PaymentQueryDto): Promise<Prisma.student_paymentsWhereInput> {
-    const where: Prisma.student_paymentsWhereInput = { ...paymentWhere(query) };
+  private buildWhere(query: PaymentQueryDto): SQL | undefined {
+    const clauses: SQL[] = [];
+    const base = paymentWhere(query);
+    if (base) clauses.push(base);
 
-    if (query.status) where.status = query.status;
-    if (query.period) where.period = query.period;
-    if (query.year) where.period = { startsWith: `${query.year}-` };
+    if (query.status) clauses.push(eq(studentPayments.status, query.status));
+    if (query.period) clauses.push(eq(studentPayments.period, query.period));
+    if (query.year) clauses.push(like(studentPayments.period, `${query.year}-%`));
 
     if (query.from || query.to) {
-      const due: Prisma.DateTimeFilter = {};
-      if (query.from) {
-        const parsed = new Date(query.from);
-        if (!isNaN(parsed.getTime())) due.gte = parsed;
+      const parsedFrom = query.from ? new Date(query.from) : null;
+      const parsedTo = query.to ? new Date(query.to) : null;
+      if (parsedFrom && !isNaN(parsedFrom.getTime())) clauses.push(gte(studentPayments.due_date, parsedFrom));
+      if (parsedTo && !isNaN(parsedTo.getTime())) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(query.to!)) parsedTo.setUTCHours(23, 59, 59, 999);
+        clauses.push(lte(studentPayments.due_date, parsedTo));
       }
-      if (query.to) {
-        const parsed = new Date(query.to);
-        if (!isNaN(parsed.getTime())) {
-          if (/^\d{4}-\d{2}-\d{2}$/.test(query.to)) parsed.setUTCHours(23, 59, 59, 999);
-          due.lte = parsed;
-        }
-      }
-      if (due.gte || due.lte) where.due_date = due;
     }
 
     if (query.receiptNumber) {
-      where.transactions = { some: { receipt_number: { contains: query.receiptNumber, mode: "insensitive" } } };
+      const receiptNumber = query.receiptNumber;
+      clauses.push(
+        sql`exists(select 1 from payment_transactions pt where pt.payment_id = ${studentPayments.id} and pt.receipt_number ilike ${`%${receiptNumber}%`})`,
+      );
     }
 
     if (query.method) {
-      where.transactions = {
-        ...(where.transactions as object),
-        some: { ...(where.transactions as any)?.some, method: query.method },
-      };
+      const method = query.method;
+      clauses.push(
+        sql`exists(select 1 from payment_transactions pt where pt.payment_id = ${studentPayments.id} and pt.method = ${method})`,
+      );
     }
 
     if (query.search?.trim()) {
-      const term = query.search.trim();
-      where.OR = [
-        { student: { first_name: { contains: term, mode: "insensitive" } } },
-        { student: { last_name: { contains: term, mode: "insensitive" } } },
-        { transactions: { some: { receipt_number: { contains: term, mode: "insensitive" } } } },
-        { period: { contains: term } },
-      ];
+      // Every word must match something (a name, a receipt, a period, a status
+      // keyword or a French month), so "jean dupont", "paye" and "juin 2025"
+      // all work — and results can only get narrower as the term grows.
+      const words = query.search
+        .trim()
+        .split(/\s+/)
+        .map(unaccent)
+        .filter((word) => word.length > 0 && !SEARCH_STOP_WORDS.has(word));
+
+      const wordConditions = words.map((word) => {
+        const branches: SQL[] = [
+          sql`exists(select 1 from students st where st.id = ${studentPayments.student_id} and translate(lower(st.first_name), ${DIACRITICS}, ${PLAIN}) ilike ${`%${word}%`})`,
+          sql`exists(select 1 from students st where st.id = ${studentPayments.student_id} and translate(lower(st.last_name), ${DIACRITICS}, ${PLAIN}) ilike ${`%${word}%`})`,
+          sql`exists(select 1 from payment_transactions pt where pt.payment_id = ${studentPayments.id} and pt.receipt_number ilike ${`%${word}%`})`,
+          like(studentPayments.period, `%${word}%`),
+        ];
+        const status = SEARCH_STATUS_ALIASES[word];
+        if (status) branches.push(eq(studentPayments.status, status));
+        const month = SEARCH_MONTHS[word];
+        if (month) branches.push(like(studentPayments.period, `%-${month}`));
+        return or(...branches) as SQL;
+      });
+
+      if (wordConditions.length > 0) clauses.push(and(...wordConditions));
     }
 
-    return where;
+    return clauses.length > 0 ? and(...clauses) : undefined;
   }
 
   async findOne(paymentId: string) {
-    const payment = await this.prisma.student_payments.findUnique({
-      where: { id: paymentId },
-      include: PAYMENT_INCLUDE_FULL,
+    const payment = await this.db.client.query.studentPayments.findFirst({
+      where: eq(studentPayments.id, paymentId),
+      with: PAYMENT_WITH_FULL,
     });
     if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
     return this.present(payment);
@@ -255,10 +344,10 @@ export class PaymentService {
 
   /** Every invoice for one student, newest first, each with its ledger. */
   async historyForStudent(studentId: string) {
-    const rows = await this.prisma.student_payments.findMany({
-      where: { student_id: studentId },
-      include: PAYMENT_INCLUDE_FULL,
-      orderBy: { period: "desc" },
+    const rows = await this.db.client.query.studentPayments.findMany({
+      where: eq(studentPayments.student_id, studentId),
+      with: PAYMENT_WITH_FULL,
+      orderBy: (p, { desc }) => [desc(p.period)],
     });
     return rows.map((row) => this.present(row));
   }
@@ -267,38 +356,247 @@ export class PaymentService {
    * Adds the figures the UI would otherwise have to derive — and would derive
    * inconsistently across the seven screens that show a payment.
    */
-  private present(payment: PaymentWithContext) {
+  private present(payment: PaymentRow) {
+    const transactions = this.mapTransactions(payment.paymentTransactions);
     const due = money(payment.amount_due);
     const paid = money(payment.paid_amount);
-    const professor = payment.group?.professor ?? payment.student?.group?.professor ?? null;
-    const field = professor?.field ?? null;
+    const context = {
+      ...this.buildContext([payment.group, payment.student?.group ?? null], payment.student),
+      student_name: payment.student ? `${payment.student.first_name} ${payment.student.last_name}` : null,
+    };
 
+    // A receipt belongs to money taken — an unpaid, overdue or cancelled
+    // invoice has no quittance even if an old transaction lingers in its ledger.
+    const receiptTransaction = ["paid", "partially_paid"].includes(payment.status)
+      ? transactions.find((t) => t.type === "payment")
+      : undefined;
+
+    return {
+      id: payment.id,
+      student_id: payment.student_id,
+      group_id: payment.group_id,
+      period: payment.period,
+      amount_due: toAmount(due),
+      paid_amount: payment.paid_amount === null ? null : toAmount(paid),
+      due_date: payment.due_date,
+      status: payment.status,
+      notes: payment.notes,
+      paid_at: payment.paid_at,
+      remaining_balance: toAmount(round2(due.minus(paid))),
+      is_settled: paid.greaterThanOrEqualTo(due),
+      receipt_number: receiptTransaction?.receipt_number ?? null,
+      student: payment.student,
+      group: payment.group,
+      transactions,
+      context,
+    };
+  }
+
+  /**
+   * One student, one row: the total owed, the total collected and the state of
+   * their most urgent invoice — with the exact invoice each action should act
+   * on attached, so the row stays a person while the buttons keep their object.
+   */
+  private presentStudent(invoices: PaymentRow[]) {
+    const student = invoices[0]?.student ?? null;
+    const sorted = [...invoices].sort(
+      (a, b) => b.period.localeCompare(a.period) || b.due_date.getTime() - a.due_date.getTime(),
+    );
+
+    let dueTotal = money("0");
+    let paidTotal = money("0");
+    let status = "cancelled";
+    let lastPaidAt: Date | null = null;
+    let receiptNumber: string | null = null;
+    let receiptPaymentId: string | null = null;
+    let lastReceiptPaidAt = 0;
+
+    for (const invoice of invoices) {
+      dueTotal = dueTotal.plus(money(invoice.amount_due));
+      paidTotal = paidTotal.plus(money(invoice.paid_amount));
+      if (STATUS_RANK[invoice.status] < STATUS_RANK[status]) status = invoice.status;
+      for (const txn of invoice.paymentTransactions) {
+        if (!lastPaidAt || txn.paid_at.getTime() > lastPaidAt.getTime()) lastPaidAt = txn.paid_at;
+        const paidPartial = invoice.status === "paid" || invoice.status === "partially_paid";
+        if (paidPartial && txn.type === "payment" && txn.paid_at.getTime() > lastReceiptPaidAt) {
+          lastReceiptPaidAt = txn.paid_at.getTime();
+          receiptNumber = txn.receipt_number;
+          receiptPaymentId = invoice.id;
+        }
+      }
+    }
+
+    // The most urgent open invoice is what a cashier will act on; if nothing is
+    // open, fall back to the most recent invoice (refunds still live there).
+    const unpaid = invoices
+      .filter((i) => i.status === "overdue" || i.status === "due_soon" || i.status === "not_paid")
+      .sort((a, b) => a.due_date.getTime() - b.due_date.getTime());
+    const actionInvoice = unpaid[0] ?? sorted[0];
+
+    const periods = [...new Set(invoices.map((i) => i.period))].sort().reverse();
+    const context = {
+      ...this.buildContext(sorted.map((i) => i.group), student),
+      student_name: student ? `${student.first_name} ${student.last_name}` : null,
+    };
+
+    return {
+      id: student?.id ?? invoices[0].student_id,
+      student_id: invoices[0].student_id,
+      view: "student" as const,
+      period: periods[0] ?? "",
+      periods,
+      invoice_count: invoices.length,
+      due_date: unpaid[0]?.due_date ?? sorted[0]?.due_date ?? null,
+      status,
+      amount_due: toAmount(dueTotal),
+      paid_amount: toAmount(paidTotal),
+      remaining_balance: toAmount(round2(dueTotal.minus(paidTotal))),
+      is_settled: paidTotal.greaterThanOrEqualTo(dueTotal),
+      receipt_number: receiptNumber,
+      receipt_payment_id: receiptPaymentId,
+      last_paid_at: lastPaidAt,
+      context,
+      action_payment_id: actionInvoice?.id ?? null,
+      action_payment: actionInvoice ? this.present(actionInvoice) : null,
+      // Every matching invoice, so the Manage modal can switch between them.
+      payments: invoices.map((invoice) => this.present(invoice)),
+    };
+  }
+
+  /**
+   * The cash-desk ledger: matching invoices grouped per student, sorted and
+   * paginated after grouping (a student with a hundred overdue invoices is
+   * one row, not a hundred).
+   */
+  async listStudents(query: PaymentQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const where = this.buildWhere(query);
+
+    const [rows, totals] = await Promise.all([
+      this.db.client.query.studentPayments.findMany({
+        where,
+        with: PAYMENT_WITH_FULL,
+      }),
+      this.db.client
+        .select({
+          sum_amount_due: sql<string | null>`sum(${studentPayments.amount_due})`,
+          sum_paid_amount: sql<string | null>`sum(${studentPayments.paid_amount})`,
+        })
+        .from(studentPayments)
+        .where(where)
+        .then((r) => r[0]),
+    ]);
+
+    const byStudent = new Map<string, PaymentRow[]>();
+    for (const row of rows) {
+      const bucket = byStudent.get(row.student_id) ?? [];
+      bucket.push(row);
+      byStudent.set(row.student_id, bucket);
+    }
+
+    const students = [...byStudent.values()].map((invoices) => this.presentStudent(invoices));
+
+    const sortBy = query.sortBy ?? "due_date";
+    const sortDir = query.sortDir ?? "desc";
+    const dir = sortDir === "asc" ? 1 : -1;
+    students.sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case "period":
+          cmp = a.period.localeCompare(b.period);
+          break;
+        case "amount_due":
+          cmp = money(a.amount_due).comparedTo(money(b.amount_due));
+          break;
+        case "status":
+          cmp = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+          break;
+        case "paid_at":
+          cmp = (a.last_paid_at?.getTime() ?? 0) - (b.last_paid_at?.getTime() ?? 0);
+          break;
+        default:
+          cmp = (a.due_date?.getTime() ?? 0) - (b.due_date?.getTime() ?? 0);
+      }
+      return cmp * dir;
+    });
+
+    const total = students.length;
+    const paged = students.slice((page - 1) * limit, page * limit);
+
+    return {
+      data: paged,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        totals: {
+          amount_due: toAmount(money(totals.sum_amount_due)),
+          paid_amount: toAmount(money(totals.sum_paid_amount)),
+          outstanding: toAmount(
+            round2(money(totals.sum_amount_due).minus(money(totals.sum_paid_amount))),
+          ),
+        },
+      },
+    };
+  }
+
+  private mapTransactions(transactions: TransactionRow[]) {
+    return [...transactions]
+      .sort((a, b) => a.paid_at.getTime() - b.paid_at.getTime())
+      .map((t) => ({
+        id: t.id,
+        type: t.type,
+        amount: toAmount(money(t.amount)),
+        professor_share: toAmount(money(t.professor_share)),
+        school_share: toAmount(money(t.school_share)),
+        receipt_number: t.receipt_number,
+        paid_at: t.paid_at,
+        recorder: t.user,
+      }));
+  }
+
+  /**
+   * Collects the distinct level/field/professor/group chain of the invoices
+   * (and the student's own enrollments) into one deduplicated context, so the
+   * ledger UI can show "3rd entity +2 more" instead of repeating a row.
+   */
+  private buildContext(
+    groups: (GroupBrief | null)[],
+    student?: { group: GroupBrief | null; assignments?: { group: GroupBrief | null }[] } | null,
+  ) {
     const chain = new Map<string, { type: string; id: string; name: string; color: string | null }>();
     const add = (type: string, id: string, name: string, color: string | null) => {
       if (!id) return;
       chain.set(`${type}:${id}`, { type, id, name, color });
     };
-
-    const walk = (g?: { id: string; name: string; color: string | null } | null, p?: { id: string; full_name: string; color: string | null } | null, f?: { id: string; name: string; color: string | null } | null, l?: { id: string; name: string; color: string | null } | null) => {
+    const walk = (
+      g?: { id: string; name: string; color: string | null } | null,
+      p?: { id: string; full_name: string; color: string | null } | null,
+      f?: { id: string; name: string; color: string | null } | null,
+      l?: { id: string; name: string; color: string | null } | null,
+    ) => {
       add("group", g?.id ?? "", g?.name ?? "", g?.color ?? null);
       add("professor", p?.id ?? "", p?.full_name ?? "", p?.color ?? null);
       add("field", f?.id ?? "", f?.name ?? "", f?.color ?? null);
       add("level", l?.id ?? "", l?.name ?? "", l?.color ?? null);
     };
 
-    if (payment.group) {
-      const gp = payment.group.professor;
-      const gf = gp?.field;
-      const gl = gf?.level;
-      walk(payment.group, gp, gf, gl);
+    for (const g of groups) {
+      if (!g) continue;
+      const p = g.professor;
+      const f = p?.field;
+      const l = f?.level;
+      walk(g, p, f, l);
     }
-    if (payment.student?.group) {
-      const gp = payment.student.group.professor;
-      const gf = gp?.field;
-      const gl = gf?.level;
-      walk(payment.student.group, gp, gf, gl);
+    if (student?.group) {
+      const p = student.group.professor;
+      const f = p?.field;
+      const l = f?.level;
+      walk(student.group, p, f, l);
     }
-    for (const a of (payment.student as any)?.assignments ?? []) {
+    for (const a of student?.assignments ?? []) {
       const g = a.group;
       if (!g) continue;
       const p = g.professor;
@@ -307,35 +605,20 @@ export class PaymentService {
       walk(g, p, f, l);
     }
 
-    const groups = [...chain.values()].filter((c) => c.type === "group");
+    const groupsList = [...chain.values()].filter((c) => c.type === "group");
     const professors = [...chain.values()].filter((c) => c.type === "professor");
     const fields = [...chain.values()].filter((c) => c.type === "field");
     const levels = [...chain.values()].filter((c) => c.type === "level");
 
     return {
-      ...payment,
-      amount_due: toAmount(due),
-      paid_amount: payment.paid_amount === null ? null : toAmount(paid),
-      remaining_balance: toAmount(round2(due.minus(paid))),
-      is_settled: paid.greaterThanOrEqualTo(due),
-      receipt_number: payment.transactions.find((t) => t.type === "payment")?.receipt_number ?? null,
-      transactions: payment.transactions.map((t) => ({
-        ...t,
-        amount: toAmount(money(t.amount)),
-        professor_share: toAmount(money(t.professor_share)),
-        school_share: toAmount(money(t.school_share)),
-      })),
-      context: {
-        student_name: payment.student ? `${payment.student.first_name} ${payment.student.last_name}` : null,
-        group: payment.group ? { id: payment.group.id, name: payment.group.name, color: payment.group.color } : null,
-        professor: professor ? { id: professor.id, name: professor.full_name, color: professor.color } : null,
-        field: field ? { id: field.id, name: field.name, color: field.color } : null,
-        level: field?.level ? { id: field.level.id, name: field.level.name, color: field.level.color } : null,
-        groups,
-        professors,
-        fields,
-        levels,
-      },
+      group: groupsList[0] ?? null,
+      professor: professors[0] ?? null,
+      field: fields[0] ?? null,
+      level: levels[0] ?? null,
+      groups: groupsList,
+      professors,
+      fields,
+      levels,
     };
   }
 
@@ -498,13 +781,14 @@ export class PaymentService {
       groupCount: counts.groupCount,
     });
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.db.client.transaction(async (tx) => {
       const receiptNumber = input.issueReceipt
         ? await this.receipts.next(tx, "payment", input.paidAt)
         : null;
 
-      const transaction = await tx.payment_transactions.create({
-        data: {
+      const [transaction] = await tx
+        .insert(paymentTransactions)
+        .values({
           payment_id: input.paymentId,
           type: input.type,
           amount: amount.toFixed(2),
@@ -516,12 +800,12 @@ export class PaymentService {
           reason: input.reason ?? null,
           professor_share: split.professorShare.toFixed(2),
           school_share: split.schoolShare.toFixed(2),
-          compensation_model: split.model,
+          compensationModel: split.model,
           compensation_snapshot: split.snapshot,
           prof_id: profId,
           period: payment.period,
-        },
-      });
+        })
+        .returning();
 
       const updated = await this.reconcile(tx, input.paymentId, input.type);
       return { transaction, updated };
@@ -568,17 +852,31 @@ export class PaymentService {
    * is gone, so it must not show up as still owed (`not_paid`) anywhere in the
    * financial section — every figure there already excludes `cancelled`.
    */
-  private async reconcile(tx: Prisma.TransactionClient, paymentId: string, movementType?: TransactionType) {
+  private async reconcile(tx: Tx, paymentId: string, movementType?: TransactionType) {
     const [payment, aggregate, settings] = await Promise.all([
-      tx.student_payments.findUniqueOrThrow({ where: { id: paymentId } }),
-      tx.payment_transactions.aggregate({ where: { payment_id: paymentId }, _sum: { amount: true } }),
+      tx.query.studentPayments.findFirst({
+        where: eq(studentPayments.id, paymentId),
+        columns: {
+          amount_due: true,
+          paid_amount: true,
+          status: true,
+          due_date: true,
+          recorded_by: true,
+        },
+      }),
+      tx
+        .select({ sum_amount: sql<string | null>`sum(${paymentTransactions.amount})` })
+        .from(paymentTransactions)
+        .where(eq(paymentTransactions.payment_id, paymentId))
+        .then((r) => r[0]),
       this.settings.get(),
     ]);
+    if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
 
-    const collected = round2(money(aggregate._sum.amount));
+    const collected = round2(money(aggregate.sum_amount));
     const due = money(payment.amount_due);
 
-    const status =
+    const status: PaymentStatus =
       payment.status === "cancelled"
         ? "cancelled"
         : movementType === "refund" && collected.lessThanOrEqualTo(0)
@@ -589,24 +887,28 @@ export class PaymentService {
     // should show; it is null again the moment the ledger nets back to nothing.
     const lastPaidAt = collected.greaterThan(0)
       ? ((
-          await tx.payment_transactions.findFirst({
-            where: { payment_id: paymentId, amount: { gt: 0 } },
-            orderBy: { paid_at: "desc" },
-            select: { paid_at: true },
-          })
-        )?.paid_at ?? null)
+          await tx
+            .select({ paid_at: paymentTransactions.paid_at })
+            .from(paymentTransactions)
+            .where(and(eq(paymentTransactions.payment_id, paymentId), gt(paymentTransactions.amount, "0")))
+            .orderBy(desc(paymentTransactions.paid_at))
+            .limit(1)
+        )[0]?.paid_at ?? null)
       : null;
 
-    return tx.student_payments.update({
-      where: { id: paymentId },
-      data: {
+    const [updated] = await tx
+      .update(studentPayments)
+      .set({
         paid_amount: collected.isZero() ? null : collected.toFixed(2),
         status,
         paid_at: lastPaidAt,
         payment_method: collected.greaterThan(0) ? "cash" : null,
         recorded_by: collected.greaterThan(0) ? payment.recorded_by : null,
-      },
-    });
+      })
+      .where(eq(studentPayments.id, paymentId))
+      .returning();
+
+    return updated;
   }
 
   /**
@@ -652,13 +954,14 @@ export class PaymentService {
       throw new BadRequestException("Cette facture est déjà annulée");
     }
 
-    const updated = await this.prisma.student_payments.update({
-      where: { id: paymentId },
-      data: {
+    const [updated] = await this.db.client
+      .update(studentPayments)
+      .set({
         status: "cancelled",
         notes: dto.reason,
-      },
-    });
+      })
+      .where(eq(studentPayments.id, paymentId))
+      .returning();
 
     await this.audit.record({
       action: "payment.cancelled",
@@ -681,10 +984,10 @@ export class PaymentService {
       throw new BadRequestException("Seule une facture annulée peut être rouverte");
     }
 
-    await this.prisma.student_payments.update({
-      where: { id: paymentId },
-      data: { status: "not_paid" },
-    });
+    await this.db.client
+      .update(studentPayments)
+      .set({ status: "not_paid" })
+      .where(eq(studentPayments.id, paymentId));
 
     await this.audit.record({
       action: "payment.reopened",
@@ -715,10 +1018,11 @@ export class PaymentService {
 
     if (payment.status === target) return this.findOne(paymentId);
 
-    const updated = await this.prisma.student_payments.update({
-      where: { id: paymentId },
-      data: { status: target },
-    });
+    const [updated] = await this.db.client
+      .update(studentPayments)
+      .set({ status: target })
+      .where(eq(studentPayments.id, paymentId))
+      .returning();
 
     await this.audit.record({
       action: "payment.status_updated",
@@ -734,10 +1038,10 @@ export class PaymentService {
     return this.findOne(updated.id);
   }
 
-  private async requirePayment(paymentId: string): Promise<PaymentWithContext> {
-    const payment = await this.prisma.student_payments.findUnique({
-      where: { id: paymentId },
-      include: PAYMENT_INCLUDE_FULL,
+  private async requirePayment(paymentId: string): Promise<PaymentRow> {
+    const payment = await this.db.client.query.studentPayments.findFirst({
+      where: eq(studentPayments.id, paymentId),
+      with: PAYMENT_WITH_FULL,
     });
     if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
     return payment;
@@ -755,26 +1059,28 @@ export class PaymentService {
    *
    * `months = 0` (the default) bills exactly the months since each student's
    * inscription through the actual month — the renewal pass. Everything lands
-   * in a single `createMany` and already-billed periods are skipped, so a whole
+   * in a single insert and already-billed periods are skipped, so a whole
    * school of students renews in one call.
    */
   async generateMonthly(months = 0) {
     const count = Math.min(Math.max(Math.floor(months) || 0, 0), 12);
     const today = new Date();
 
-    const activeStudents = await this.prisma.students.findMany({
-      where: { status: "active" },
-      select: {
-        id: true,
-        group_id: true,
-        enrollment_date: true,
-        monthly_fee: true,
-        assignments: { select: { group_id: true, fee: true } },
-      },
+    const activeStudents = await this.db.client.query.students.findMany({
+      where: eq(students.status, "active"),
+      columns: { id: true, group_id: true, enrollment_date: true, monthly_fee: true },
+      with: { assignments: { columns: { group_id: true, fee: true } } },
     });
     if (activeStudents.length === 0) return [];
 
-    const records: any[] = [];
+    const records: {
+      student_id: string;
+      group_id: string;
+      period: string;
+      amount_due: string;
+      due_date: Date;
+      status: PaymentStatus;
+    }[] = [];
     const seen = new Set<string>();
 
     for (const student of activeStudents) {
@@ -804,14 +1110,14 @@ export class PaymentService {
             period: p.period,
             amount_due: a.fee.toString(),
             due_date: dueDateFor(p.year, p.month, student.enrollment_date),
-            status: "not_paid" as PaymentStatus,
+            status: "not_paid",
           });
         }
       }
     }
 
     if (records.length === 0) return [];
-    await this.prisma.student_payments.createMany({ data: records, skipDuplicates: true });
+    await this.insertPayments(records);
     return records;
   }
 
@@ -821,16 +1127,10 @@ export class PaymentService {
    * have every upcoming invoice generated in one click.
    */
   async generateForStudent(studentId: string, monthsAhead = 0) {
-    const student = await this.prisma.students.findUnique({
-      where: { id: studentId },
-      select: {
-        id: true,
-        group_id: true,
-        enrollment_date: true,
-        monthly_fee: true,
-        status: true,
-        assignments: { select: { group_id: true, fee: true } },
-      },
+    const student = await this.db.client.query.students.findFirst({
+      where: eq(students.id, studentId),
+      columns: { id: true, group_id: true, enrollment_date: true, monthly_fee: true, status: true },
+      with: { assignments: { columns: { group_id: true, fee: true } } },
     });
     if (!student || student.status !== "active") return [];
 
@@ -851,9 +1151,15 @@ export class PaymentService {
     }
     if (periods.length === 0) return [];
 
-    const billed = await this.prisma.student_payments.findMany({
-      where: { student_id: studentId, period: { in: periods.map((p) => p.period) } },
-      select: { period: true, group_id: true },
+    const billed = await this.db.client.query.studentPayments.findMany({
+      where: and(
+        eq(studentPayments.student_id, studentId),
+        inArray(
+          studentPayments.period,
+          periods.map((p) => p.period),
+        ),
+      ),
+      columns: { period: true, group_id: true },
     });
     const alreadyBilled = new Set(billed.map((p) => `${p.group_id}:${p.period}`));
 
@@ -875,12 +1181,37 @@ export class PaymentService {
     );
 
     if (records.length === 0) return [];
-    await this.prisma.student_payments.createMany({ data: records, skipDuplicates: true });
+    await this.insertPayments(records);
 
-    return this.prisma.student_payments.findMany({
-      where: { student_id: studentId, period: { in: records.map((r) => r.period) } },
-      orderBy: { period: "asc" },
+    return this.db.client.query.studentPayments.findMany({
+      where: and(
+        eq(studentPayments.student_id, studentId),
+        inArray(
+          studentPayments.period,
+          records.map((r) => r.period),
+        ),
+      ),
+      orderBy: (p, { asc }) => [asc(p.period)],
     });
+  }
+
+  private async insertPayments(
+    records: {
+      student_id: string;
+      group_id: string;
+      period: string;
+      amount_due: string;
+      due_date: Date;
+      status: PaymentStatus;
+    }[],
+  ): Promise<void> {
+    if (records.length === 0) return;
+    await this.db.client
+      .insert(studentPayments)
+      .values(records)
+      .onConflictDoNothing({
+        target: [studentPayments.student_id, studentPayments.group_id, studentPayments.period],
+      });
   }
 
   /**
@@ -901,29 +1232,39 @@ export class PaymentService {
     const soon = new Date(today);
     soon.setUTCDate(soon.getUTCDate() + settings.due_soon_days);
 
-    const scope = studentId ? { student_id: studentId } : {};
+    const scope = studentId ? eq(studentPayments.student_id, studentId) : undefined;
 
     const [expiredSoon, dueSoon, legacyOverdue] = await Promise.all([
-      this.prisma.student_payments.updateMany({
+      this.db.client
+        .update(studentPayments)
+        .set({ status: "not_paid" })
         // `lte` rather than `lt`: the due_soon window starts strictly after
         // today, so anything due today or earlier is no longer due soon.
-        where: { ...scope, status: "due_soon", due_date: { lte: today } },
-        data: { status: "not_paid" },
-      }),
-      this.prisma.student_payments.updateMany({
-        where: { ...scope, status: "not_paid", due_date: { gt: today, lte: soon } },
-        data: { status: "due_soon" },
-      }),
-      this.prisma.student_payments.updateMany({
-        where: { ...scope, status: "overdue" },
-        data: { status: "not_paid" },
-      }),
+        .where(and(scope, eq(studentPayments.status, "due_soon"), lte(studentPayments.due_date, today)))
+        .returning({ id: studentPayments.id }),
+      this.db.client
+        .update(studentPayments)
+        .set({ status: "due_soon" })
+        .where(
+          and(
+            scope,
+            eq(studentPayments.status, "not_paid"),
+            gt(studentPayments.due_date, today),
+            lte(studentPayments.due_date, soon),
+          ),
+        )
+        .returning({ id: studentPayments.id }),
+      this.db.client
+        .update(studentPayments)
+        .set({ status: "not_paid" })
+        .where(and(scope, eq(studentPayments.status, "overdue")))
+        .returning({ id: studentPayments.id }),
     ]);
 
     return {
-      overdue: legacyOverdue.count,
-      dueSoon: dueSoon.count,
-      total: expiredSoon.count + dueSoon.count + legacyOverdue.count,
+      overdue: legacyOverdue.length,
+      dueSoon: dueSoon.length,
+      total: expiredSoon.length + dueSoon.length + legacyOverdue.length,
     };
   }
 }

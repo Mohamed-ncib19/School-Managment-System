@@ -13,12 +13,8 @@
     "sourceMap": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "baseUrl": ".",
-    "paths": {
-      "@iq/shared": ["../../packages/shared/src/index"]
-    }
+    "baseUrl": "."
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"],
-  "references": [{ "path": "../../packages/shared" }]
+  "exclude": ["node_modules", "dist"]
 }

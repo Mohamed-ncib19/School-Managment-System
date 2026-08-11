@@ -1,10 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, eq, gte, inArray, lte, ne, sql, SQL } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { payrollPayments, paymentTransactions, professors, studentPayments } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { Money, ZERO, money, ratePercent, round2, toAmount } from "./money.util";
-import { paymentWhere, professorWhere, resolveRange, transactionWhere } from "./financial.filters";
+import { paymentWhere, professorWhere, resolveRange, transactionWhere, AcademicFilter } from "./financial.filters";
 import { periodOfDate } from "./period.util";
 import type { FinancialQueryDto } from "./dto/analytics.dto";
 
@@ -20,9 +21,7 @@ const KPI_TTL_MS = 60_000;
  * The dashboard's headline numbers.
  *
  * Every figure is aggregated in the database — `SUM` and `COUNT` over indexed
- * columns — rather than by reading rows into Node and adding them up. The page
- * this replaces fetched every payment in the academy to compute four totals,
- * which is survivable at one student and not at a thousand.
+ * columns — rather than by reading rows into Node and adding them up.
  *
  * Results are cached for a minute per filter combination. Cash is collected at a
  * desk, not by the second, so a KPI card a minute behind is indistinguishable
@@ -34,7 +33,7 @@ export class FinancialService {
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
     private readonly revenue: RevenueCalculationService,
   ) {}
@@ -42,10 +41,7 @@ export class FinancialService {
   /**
    * Invalidates every cached figure.
    *
-   * Called after any write that could move a number. Coarse on purpose: working
-   * out which of the cached filter combinations a single payment affects costs
-   * more than recomputing them, and being wrong shows the administrator a stale
-   * total.
+   * Called after any write that could move a number.
    */
   invalidate(): void {
     this.cache.clear();
@@ -81,7 +77,7 @@ export class FinancialService {
     const key = `kpi:${JSON.stringify({ query, from: range.from, to: range.to })}`;
 
     return this.cached(key, async () => {
-      const academic = {
+      const academic: AcademicFilter = {
         levelId: query.levelId,
         fieldId: query.fieldId,
         profId: query.profId,
@@ -89,18 +85,20 @@ export class FinancialService {
         studentId: query.studentId,
       };
 
-      const invoiceScope: Prisma.student_paymentsWhereInput = {
-        ...paymentWhere(academic),
-        due_date: { gte: range.from, lte: range.to },
+      const invoiceScope = and(
+        paymentWhere(academic),
+        gte(studentPayments.due_date, range.from),
+        lte(studentPayments.due_date, range.to),
         // A voided invoice was never really owed; counting it would depress the
         // collection rate for money nobody was ever going to pay.
-        status: { not: "cancelled" },
-      };
+        ne(studentPayments.status, "cancelled"),
+      );
 
-      const ledgerScope: Prisma.payment_transactionsWhereInput = {
-        ...transactionWhere(academic),
-        paid_at: { gte: range.from, lte: range.to },
-      };
+      const ledgerScope = and(
+        transactionWhere(academic),
+        gte(paymentTransactions.paid_at, range.from),
+        lte(paymentTransactions.paid_at, range.to),
+      );
 
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
@@ -116,67 +114,45 @@ export class FinancialService {
         payrollDue,
         payrollPaid,
       ] = await Promise.all([
-        this.prisma.student_payments.aggregate({
-          where: invoiceScope,
-          _sum: { amount_due: true, paid_amount: true },
-          _count: { _all: true },
-        }),
-        this.prisma.payment_transactions.aggregate({
-          where: ledgerScope,
-          _sum: { amount: true, professor_share: true, school_share: true },
-          _count: { _all: true },
-        }),
-        this.prisma.student_payments.aggregate({
-          where: {
-            ...paymentWhere(academic),
-            status: { in: ["not_paid", "due_soon", "partially_paid"] },
-            due_date: { gte: today },
-          },
-          _sum: { amount_due: true, paid_amount: true },
-          _count: { _all: true },
-        }),
-        this.prisma.student_payments.aggregate({
-          where: {
-            ...paymentWhere(academic),
+        this.aggregateInvoices(invoiceScope),
+        this.aggregateLedger(ledgerScope),
+        this.aggregateInvoices(
+          and(paymentWhere(academic), inArray(studentPayments.status, ["not_paid", "due_soon", "partially_paid"]), gte(studentPayments.due_date, today)),
+        ),
+        this.aggregateInvoices(
+          and(
+            paymentWhere(academic),
             // "Overdue" is a derived view, not a stored state: invoices past
             // their due date are plain not_paid (or partially paid). Count the
             // outstanding balance of every invoice whose due date has passed.
-            status: { in: ["not_paid", "due_soon", "partially_paid"] },
-            due_date: { lt: today },
-          },
-          _sum: { amount_due: true, paid_amount: true },
-          _count: { _all: true },
-        }),
-        this.prisma.payment_transactions.aggregate({
-          where: { ...transactionWhere(academic), period: currentPeriod },
-          _sum: { amount: true },
-        }),
-        this.prisma.payment_transactions.aggregate({
-          where: transactionWhere(academic),
-          _sum: { amount: true, school_share: true, professor_share: true },
-        }),
+            inArray(studentPayments.status, ["not_paid", "due_soon", "partially_paid"]),
+            lte(studentPayments.due_date, today),
+          ),
+        ),
+        this.aggregateLedger(
+          and(transactionWhere(academic), eq(paymentTransactions.period, currentPeriod)),
+        ),
+        this.aggregateLedger(transactionWhere(academic)),
         this.payrollLiability(academic, currentPeriod),
-        this.prisma.payroll_payments.aggregate({
-          where: {
-            ...(Object.values(academic).some(Boolean)
-              ? { professor: professorWhere(academic) }
-              : {}),
-            paid_at: { gte: range.from, lte: range.to },
-          },
-          _sum: { amount: true },
-        }),
+        this.aggregatePayroll(
+          and(
+            Object.values(academic).some(Boolean) ? professorWhere(academic) : undefined,
+            gte(payrollPayments.paid_at, range.from),
+            lte(payrollPayments.paid_at, range.to),
+          ),
+        ),
       ]);
 
-      const expected = round2(money(invoiced._sum.amount_due));
-      const collected = round2(money(ledger._sum.amount));
-      const schoolShare = round2(money(ledger._sum.school_share));
-      const professorShare = round2(money(ledger._sum.professor_share));
+      const expected = round2(money(invoiced.sum_amount_due));
+      const collected = round2(money(ledger.sum_amount));
+      const schoolShare = round2(money(ledger.sum_school_share));
+      const professorShare = round2(money(ledger.sum_professor_share));
 
       const pendingOutstanding = round2(
-        money(pending._sum.amount_due).minus(money(pending._sum.paid_amount)),
+        money(pending.sum_amount_due).minus(money(pending.sum_paid_amount)),
       );
       const overdueOutstanding = round2(
-        money(overdue._sum.amount_due).minus(money(overdue._sum.paid_amount)),
+        money(overdue.sum_amount_due).minus(money(overdue.sum_paid_amount)),
       );
 
       return {
@@ -184,28 +160,28 @@ export class FinancialService {
         currency: settings.currency,
         cards: {
           total_revenue: {
-            value: toAmount(round2(money(lifetime._sum.amount))),
+            value: toAmount(round2(money(lifetime.sum_amount))),
             label: "Total revenue",
           },
           collected_this_month: {
-            value: toAmount(round2(money(thisMonth._sum.amount))),
+            value: toAmount(round2(money(thisMonth.sum_amount))),
             period: currentPeriod,
           },
-          collected_in_range: { value: toAmount(collected), count: ledger._count._all },
+          collected_in_range: { value: toAmount(collected), count: ledger.count_all },
           pending_payments: {
             value: toAmount(pendingOutstanding),
-            count: pending._count._all,
+            count: pending.count_all,
           },
           overdue_payments: {
             value: toAmount(overdueOutstanding),
-            count: overdue._count._all,
+            count: overdue.count_all,
           },
           professor_payroll: {
             /** Owed to professors for the current period, net of what they have been handed. */
             value: toAmount(payrollDue.outstanding),
             earned: toAmount(payrollDue.earned),
             paid: toAmount(payrollDue.paid),
-            paid_in_range: toAmount(round2(money(payrollPaid._sum.amount))),
+            paid_in_range: toAmount(round2(money(payrollPaid.sum_amount))),
           },
           school_net_revenue: {
             /** The academy's share of what was collected in the window. */
@@ -214,16 +190,49 @@ export class FinancialService {
           },
           expected_revenue: {
             value: toAmount(expected),
-            count: invoiced._count._all,
+            count: invoiced.count_all,
           },
           collection_rate: {
-            value: ratePercent(round2(money(invoiced._sum.paid_amount)), expected),
-            collected: toAmount(round2(money(invoiced._sum.paid_amount))),
+            value: ratePercent(round2(money(invoiced.sum_paid_amount)), expected),
+            collected: toAmount(round2(money(invoiced.sum_paid_amount))),
             expected: toAmount(expected),
           },
         },
       };
     });
+  }
+
+  private async aggregateInvoices(where: SQL | undefined) {
+    const [row] = await this.db.client
+      .select({
+        sum_amount_due: sql<string | null>`sum(${studentPayments.amount_due})`,
+        sum_paid_amount: sql<string | null>`sum(${studentPayments.paid_amount})`,
+        count_all: sql<number>`count(*)::int`,
+      })
+      .from(studentPayments)
+      .where(where);
+    return row;
+  }
+
+  private async aggregateLedger(where: SQL | undefined) {
+    const [row] = await this.db.client
+      .select({
+        sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+        sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+        sum_school_share: sql<string | null>`sum(${paymentTransactions.school_share})`,
+        count_all: sql<number>`count(*)::int`,
+      })
+      .from(paymentTransactions)
+      .where(where);
+    return row;
+  }
+
+  private async aggregatePayroll(where: SQL | undefined) {
+    const [row] = await this.db.client
+      .select({ sum_amount: sql<string | null>`sum(${payrollPayments.amount})` })
+      .from(payrollPayments)
+      .where(where);
+    return row;
   }
 
   /**
@@ -234,28 +243,25 @@ export class FinancialService {
    * that liability is invisible in `professor_share`.
    */
   private async payrollLiability(
-    academic: Parameters<typeof professorWhere>[0],
+    academic: AcademicFilter,
     period: string,
   ): Promise<{ earned: Money; paid: Money; outstanding: Money }> {
-    const professors = await this.prisma.professors.findMany({
-      where: { ...professorWhere(academic), is_active: true },
-      select: { id: true },
+    const profs = await this.db.client.query.professors.findMany({
+      where: and(professorWhere(academic), eq(professors.is_active, true)),
+      columns: { id: true },
     });
-    if (professors.length === 0) return { earned: ZERO, paid: ZERO, outstanding: ZERO };
+    if (profs.length === 0) return { earned: ZERO, paid: ZERO, outstanding: ZERO };
 
-    const profIds = professors.map((p) => p.id);
+    const profIds = profs.map((p) => p.id);
     const [entitlements, paid] = await Promise.all([
       this.revenue.periodEntitlements(profIds, period),
-      this.prisma.payroll_payments.aggregate({
-        where: { prof_id: { in: profIds }, period },
-        _sum: { amount: true },
-      }),
+      this.aggregatePayroll(and(inArray(payrollPayments.prof_id, profIds), eq(payrollPayments.period, period))),
     ]);
 
     const earned = round2(
       [...entitlements.values()].reduce<Money>((acc, e) => acc.plus(e.total), ZERO),
     );
-    const paidAmount = round2(money(paid._sum.amount));
+    const paidAmount = round2(money(paid.sum_amount));
 
     return {
       earned,
@@ -279,32 +285,34 @@ export class FinancialService {
       today.setUTCHours(0, 0, 0, 0);
 
       const [collected, invoiced, overdue] = await Promise.all([
-        this.prisma.payment_transactions.aggregate({
-          where: { period: currentPeriod },
-          _sum: { amount: true, school_share: true },
-        }),
-        this.prisma.student_payments.aggregate({
-          where: { period: currentPeriod, status: { not: "cancelled" } },
-          _sum: { amount_due: true, paid_amount: true },
-        }),
-        this.prisma.student_payments.count({
-          where: { status: { in: ["overdue", "partially_paid"] }, due_date: { lt: today } },
-        }),
+        this.aggregateLedger(eq(paymentTransactions.period, currentPeriod)),
+        this.aggregateInvoices(
+          and(eq(studentPayments.period, currentPeriod), ne(studentPayments.status, "cancelled")),
+        ),
+        this.countOverdue(and(inArray(studentPayments.status, ["overdue", "partially_paid"]), lte(studentPayments.due_date, today))),
       ]);
 
-      const expected = round2(money(invoiced._sum.amount_due));
-      const paid = round2(money(invoiced._sum.paid_amount));
+      const expected = round2(money(invoiced.sum_amount_due));
+      const paid = round2(money(invoiced.sum_paid_amount));
 
       return {
         period: currentPeriod,
         currency: settings.currency,
-        collected: toAmount(round2(money(collected._sum.amount))),
-        school_share: toAmount(round2(money(collected._sum.school_share))),
+        collected: toAmount(round2(money(collected.sum_amount))),
+        school_share: toAmount(round2(money(collected.sum_school_share))),
         expected: toAmount(expected),
         outstanding: toAmount(round2(expected.minus(paid))),
         overdue_count: overdue,
         collection_rate: ratePercent(paid, expected),
       };
     });
+  }
+
+  private async countOverdue(where: SQL | undefined): Promise<number> {
+    const [row] = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(studentPayments)
+      .where(where);
+    return row.count;
   }
 }

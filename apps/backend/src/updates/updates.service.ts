@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { execFile, spawn } from "child_process";
-import { mkdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 
@@ -17,6 +17,19 @@ export interface UpdateStatus {
   checkedAt: string;
   /** When the check can't run: disabled, no-git-install, no-github-remote, github-unreachable. */
   reason?: string;
+}
+
+/**
+ * Mirror of the progress journal the update engines write
+ * (tools\windows\scripts\do-update.ps1 / tools/macos/scripts/update.sh).
+ */
+export interface UpdateProgress {
+  state: "idle" | "running" | "done" | "failed" | "stalled";
+  step?: number;
+  stepTotal?: number;
+  label?: string;
+  message?: string;
+  updatedAt?: string;
 }
 
 interface Cached {
@@ -41,6 +54,7 @@ interface Cached {
  *
  * The backend exposes:
  *   GET  /api/updates               -> UpdateStatus (??refresh=1 bypasses the cache)
+ *   GET  /api/updates/progress      -> live engine state (logs\update-progress.json)
  *   POST /api/updates/apply         -> spawns the platform's update engine detached
  */
 @Injectable()
@@ -138,12 +152,37 @@ export class UpdatesService {
     }
   }
 
-  /** Path of a fresh timestamped log file under logs\ for the engine output. */
+  /**
+   * Path of a fresh timestamped log file under logs\ for the engine output. */
   private openLog(root: string, kind: string): string {
     const logsDir = join(root, "logs");
     mkdirSync(logsDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     return join(logsDir, `${kind}-${stamp}.log`);
+  }
+
+  /**
+   * Current state of the update engine as reported by its progress journal
+   * (logs\update-progress.json, written by the engines while they run). A
+   * "running" journal that has not been refreshed for a while means the
+   * engine left a stale file behind (or was killed) - reported as "stalled".
+   */
+  async getProgress(): Promise<UpdateProgress> {
+    const root = await this.git(["rev-parse", "--show-toplevel"]);
+    if (!root) return { state: "idle" };
+    const file = join(root, "logs", "update-progress.json");
+    if (!existsSync(file)) return { state: "idle" };
+    try {
+      const raw = readFileSync(file, "utf8").replace(/^\uFEFF/, "");
+      const progress = JSON.parse(raw) as UpdateProgress;
+      if (progress.state === "running") {
+        const ageMs = Date.now() - statSync(file).mtimeMs;
+        if (ageMs > 20 * 60_000) return { ...progress, state: "stalled" };
+      }
+      return progress;
+    } catch {
+      return { state: "idle" };
+    }
   }
 
   /** stdout of a git command, trimmed, ornull when git itself is missing. */

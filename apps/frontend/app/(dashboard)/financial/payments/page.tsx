@@ -2,8 +2,8 @@
 
 import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight, Plus, Printer, RefreshCw, Search } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, ChevronDown, ChevronRight, Plus, Printer, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import {
   useFinancialPayments,
   useGenerateMonthlyInvoices,
@@ -15,11 +15,12 @@ import { PaymentActionsModal } from "@/components/financial/payment-actions-moda
 import { ErrorState } from "@/components/financial/error-state";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FinancialTableSkeleton, PageLoader } from "@/components/shared/skeletons";
+import { useToast } from "@/components/shared/toast";
 import { openReceipt } from "@/lib/api/financial.api";
 import { statusClasses } from "@/lib/charts/theme";
 import { cn, formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
-import type { PaymentStatus, StudentPayment } from "@/types";
+import type { PaymentStatus, StudentLedgerRow, StudentPayment } from "@/types";
 
 const STATUSES: { value: string; label: string }[] = [
   { value: "", label: "payments.all" },
@@ -80,6 +81,8 @@ export default function StudentPaymentsPage() {
 function StudentPaymentsInner() {
   const { t } = useTranslation();
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const toast = useToast();
 
   /**
    * The dashboard's KPI cards deep-link here with a status (`?status=not_paid`,
@@ -95,9 +98,10 @@ function StudentPaymentsInner() {
   const [dates, setDates] = useState<{ from?: string; to?: string }>({});
   const [receiptNumber, setReceiptNumber] = useState("");
   const [search, setSearch] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [months, setMonths] = useState("0");
-  const [selected, setSelected] = useState<StudentPayment | null>(null);
+  const [selected, setSelected] = useState<StudentLedgerRow | null>(null);
 
   const debouncedSearch = useDebouncedValue(search, 300);
   const debouncedReceipt = useDebouncedValue(receiptNumber, 300);
@@ -144,6 +148,7 @@ function StudentPaymentsInner() {
       to: dates.to,
       receiptNumber: debouncedReceipt || undefined,
       search: debouncedSearch || undefined,
+      view: "students" as const,
       page,
       limit: 50,
     }),
@@ -159,7 +164,7 @@ function StudentPaymentsInner() {
   const generate = useGenerateMonthlyInvoices();
   const refresh = useRefreshPaymentStatuses();
 
-  const rows = data?.data ?? [];
+  const rows = (data?.data ?? []) as StudentLedgerRow[];
   const meta = data?.meta;
 
   const resetTo = (patch: () => void) => {
@@ -182,45 +187,89 @@ function StudentPaymentsInner() {
 
   const hasFilters =
     status || levelId || fieldId || profId || groupId || period || dates.from || dates.to || receiptNumber || search;
+  const hasHierarchyFilters = Boolean(levelId || fieldId || profId || groupId);
+  const hasDateFilters = Boolean(dates.from || dates.to);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2 flex-wrap">
-        <button
-          type="button"
-          onClick={() => refresh.mutate(undefined)}
-          disabled={refresh.isPending}
-          className="btn btn-secondary text-xs"
-        >
-          <RefreshCw size={14} className={cn(refresh.isPending && "animate-spin")} aria-hidden="true" />
-          {t("financial.refreshStatuses", "Refresh statuses")}
-        </button>
-        <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-            {t("payments.monthsAhead", "Months")}
-            <input
-              type="number"
-              min={0}
-              max={12}
-              value={months}
-              onChange={(e) => setMonths(e.target.value)}
-              className="input w-16 text-xs tabular-nums"
-              title={t("payments.monthsAhead", "Months")}
-            />
-          </label>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-h2 font-bold text-text-primary mb-1">{t("payments.title", "Paiements étudiants")}</h1>
+          <p className="text-sm text-text-secondary">
+            {t("financial.paymentsSub", "Encaisser, relancer et suivre les factures des élèves")}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={() => generate.mutate(parseInt(months, 10) || 0)}
-            disabled={generate.isPending}
-            className="btn btn-primary text-xs"
+            onClick={() =>
+              refresh.mutate(undefined, {
+                onSuccess: (result) => {
+                  const total = Number((result as { total?: number } | undefined)?.total ?? 0);
+                  toast.success(
+                    t("payments.statusesRefreshed", "Statuts actualisés"),
+                    t("payments.statusesRefreshedSub", "{total} statuts mis à jour").replace("{total}", String(total)),
+                  );
+                },
+                onError: () =>
+                  toast.error(
+                    t("payments.refreshError", "Échec de l'actualisation"),
+                    t("financial.paymentsLoadErrorHint", "Le serveur est peut-être occupé ou injoignable."),
+                  ),
+              })
+            }
+            disabled={refresh.isPending}
+            title={t("financial.refreshStatuses", "Actualiser les statuts")}
+            aria-label={t("financial.refreshStatuses", "Actualiser les statuts")}
+            className="btn btn-secondary text-xs px-2.5"
           >
-            {generate.isPending ? (
-              <RefreshCw size={14} className="animate-spin" aria-hidden="true" />
-            ) : (
-              <Plus size={14} aria-hidden="true" />
-            )}
-            {t("payments.generateMonths", "Generate invoices")}
+            <RefreshCw size={14} className={cn(refresh.isPending && "animate-spin")} aria-hidden="true" />
           </button>
+          <div className="flex items-center gap-1.5">
+            <select
+              aria-label={t("payments.monthsAhead", "Mois en avance")}
+              value={months}
+              onChange={(e) => setMonths(e.target.value)}
+              className="input w-auto text-xs"
+              title={t("payments.monthsAhead", "Mois en avance")}
+            >
+              {Array.from({ length: 13 }, (_, n) => (
+                <option key={n} value={String(n)}>
+                  {n === 0
+                    ? t("payments.noMonthsAhead", "Jusqu'à aujourd'hui")
+                    : t("payments.nMonthsAhead", "{count} mois en avance").replace("{count}", String(n))}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() =>
+                generate.mutate(parseInt(months, 10) || 0, {
+                  onSuccess: (result) => {
+                    const count = Array.isArray(result) ? result.length : 0;
+                    toast.success(
+                      t("payments.invoicesGenerated", "Factures générées"),
+                      t("payments.invoicesGeneratedSub", "{count} nouvelles factures").replace("{count}", String(count)),
+                    );
+                  },
+                  onError: () =>
+                    toast.error(
+                      t("payments.generateError", "Échec de la génération"),
+                      t("financial.paymentsLoadErrorHint", "Le serveur est peut-être occupé ou injoignable."),
+                    ),
+                })
+              }
+              disabled={generate.isPending}
+              className="btn btn-primary text-xs"
+            >
+              {generate.isPending ? (
+                <RefreshCw size={14} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Plus size={14} aria-hidden="true" />
+              )}
+              {t("payments.generateMonths", "Générer les factures")}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -250,84 +299,20 @@ function StudentPaymentsInner() {
             onChange={(e) => resetTo(() => setPeriod(e.target.value))}
             className="input w-auto text-xs"
           />
-          <input
-            type="date"
-            aria-label={t("financial.from", "From")}
-            value={dates.from ?? ""}
-            onChange={(e) => resetTo(() => setDates((d) => ({ ...d, from: e.target.value || undefined })))}
-            className="input w-auto text-xs"
-          />
-          <input
-            type="date"
-            aria-label={t("financial.to", "To")}
-            value={dates.to ?? ""}
-            onChange={(e) => resetTo(() => setDates((d) => ({ ...d, to: e.target.value || undefined })))}
-            className="input w-auto text-xs"
-          />
-        </div>
-
-        <div className="flex items-center gap-3 flex-wrap">
-          <select
-            aria-label={t("nav.levels", "Levels")}
-            value={levelId}
-            onChange={(e) => resetTo(() => { setLevelId(e.target.value); setFieldId(""); setProfId(""); setGroupId(""); })}
-            className="input w-auto min-w-[130px] text-xs"
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((open) => !open)}
+            aria-expanded={advancedOpen}
+            className={cn("btn text-xs", hasHierarchyFilters || hasDateFilters ? "btn-primary" : "btn-secondary")}
           >
-            <option value="">{t("students.allLevels", "All levels")}</option>
-            {levels
-              ?.filter((level) => !scoped.levels.size || scoped.levels.has(level.id))
-              .map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
-          </select>
-          <select
-            aria-label={t("nav.fields", "Fields")}
-            value={fieldId}
-            onChange={(e) => resetTo(() => { setFieldId(e.target.value); setProfId(""); setGroupId(""); })}
-            className="input w-auto min-w-[130px] text-xs"
-          >
-            <option value="">{t("students.allFields", "All fields")}</option>
-            {fields
-              ?.filter((f) => (!levelId || f.level_id === levelId) && (!scoped.fields.size || scoped.fields.has(f.id)))
-              .map((field) => (
-                <option key={field.id} value={field.id}>{field.name}</option>
-              ))}
-          </select>
-          <select
-            aria-label={t("nav.professors", "Professors")}
-            value={profId}
-            onChange={(e) => resetTo(() => { setProfId(e.target.value); setGroupId(""); })}
-            disabled={!fieldId}
-            className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
-          >
-            <option value="">{t("students.allProfessors", "All professors")}</option>
-            {professors
-              ?.filter((p) => !scoped.professors.size || scoped.professors.has(p.id))
-              .map((professor) => (
-                <option key={professor.id} value={professor.id}>{professor.full_name}</option>
-              ))}
-          </select>
-          <select
-            aria-label={t("nav.groups", "Groups")}
-            value={groupId}
-            onChange={(e) => resetTo(() => setGroupId(e.target.value))}
-            disabled={!profId}
-            className="input w-auto min-w-[130px] text-xs disabled:opacity-50"
-          >
-            <option value="">{t("students.allGroups", "All groups")}</option>
-            {groups
-              ?.filter((g) => !scoped.groups.size || scoped.groups.has(g.id))
-              .map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-          </select>
-
-          {QUICK.map((quick) => (
-            <button
-              key={quick.value}
-              type="button"
-              onClick={() => resetTo(() => setDates(quick.apply()))}
-              className="btn btn-secondary text-xs"
-            >
-              {t(quick.label)}
-            </button>
-          ))}
+            <SlidersHorizontal size={13} aria-hidden="true" />
+            {t("financial.advancedFilters", "Filtres avancés")}
+            <ChevronDown
+              size={13}
+              aria-hidden="true"
+              className={cn("transition-transform duration-150", advancedOpen && "rotate-180")}
+            />
+          </button>
 
           {hasFilters && (
             <button type="button" onClick={clearAll} className="btn btn-secondary text-xs">
@@ -335,6 +320,91 @@ function StudentPaymentsInner() {
             </button>
           )}
         </div>
+
+        {advancedOpen && (
+          <div className="space-y-3 rounded-btn bg-background p-3 border border-border">
+            <div className="flex items-center gap-3 flex-wrap">
+              <input
+                type="date"
+                aria-label={t("financial.from", "From")}
+                value={dates.from ?? ""}
+                onChange={(e) => resetTo(() => setDates((d) => ({ ...d, from: e.target.value || undefined })))}
+                className="input w-auto text-xs"
+              />
+              <span className="text-xs text-text-secondary">—</span>
+              <input
+                type="date"
+                aria-label={t("financial.to", "To")}
+                value={dates.to ?? ""}
+                onChange={(e) => resetTo(() => setDates((d) => ({ ...d, to: e.target.value || undefined })))}
+                className="input w-auto text-xs"
+              />
+              <span className="hidden sm:block w-px h-4 bg-border" aria-hidden="true" />
+              {QUICK.map((quick) => (
+                <button
+                  key={quick.value}
+                  type="button"
+                  onClick={() => resetTo(() => setDates(quick.apply()))}
+                  className="btn btn-secondary text-xs"
+                >
+                  {t(quick.label)}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <select
+                aria-label={t("nav.levels", "Levels")}
+                value={levelId}
+                onChange={(e) => resetTo(() => { setLevelId(e.target.value); setFieldId(""); setProfId(""); setGroupId(""); })}
+                className="input w-auto min-w-[130px] text-xs"
+              >
+              <option value="">{t("students.allLevels", "All levels")}</option>
+              {levels
+                ?.filter((level) => !scoped.levels.size || scoped.levels.has(level.id))
+                .map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
+            </select>
+            <select
+              aria-label={t("nav.fields", "Fields")}
+              value={fieldId}
+              onChange={(e) => resetTo(() => { setFieldId(e.target.value); setProfId(""); setGroupId(""); })}
+              className="input w-auto min-w-[130px] text-xs"
+            >
+              <option value="">{t("students.allFields", "All fields")}</option>
+              {fields
+                ?.filter((f) => (!levelId || f.level_id === levelId) && (!scoped.fields.size || scoped.fields.has(f.id)))
+                .map((field) => (
+                  <option key={field.id} value={field.id}>{field.name}</option>
+                ))}
+            </select>
+            <select
+              aria-label={t("nav.professors", "Professors")}
+              value={profId}
+              onChange={(e) => resetTo(() => { setProfId(e.target.value); setGroupId(""); })}
+              disabled={!fieldId}
+              className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
+            >
+              <option value="">{t("students.allProfessors", "All professors")}</option>
+              {professors
+                ?.filter((p) => !scoped.professors.size || scoped.professors.has(p.id))
+                .map((professor) => (
+                  <option key={professor.id} value={professor.id}>{professor.full_name}</option>
+                ))}
+            </select>
+            <select
+              aria-label={t("nav.groups", "Groups")}
+              value={groupId}
+              onChange={(e) => resetTo(() => setGroupId(e.target.value))}
+              disabled={!profId}
+              className="input w-auto min-w-[130px] text-xs disabled:opacity-50"
+            >
+              <option value="">{t("students.allGroups", "All groups")}</option>
+              {groups
+                ?.filter((g) => !scoped.groups.size || scoped.groups.has(g.id))
+                .map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+            </select>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-2 flex-wrap">
           {STATUSES.map((option) => (
@@ -399,55 +469,34 @@ function StudentPaymentsInner() {
               </thead>
               <tbody className="divide-y divide-border">
                 {rows.map((payment) => (
-                  <tr key={payment.id} className="hover:bg-background/50 transition-colors">
+                  <tr
+                    key={payment.id}
+                    onClick={() => router.push(`/students/${payment.student_id}/payments`)}
+                    className="hover:bg-background/50 transition-colors cursor-pointer"
+                  >
                     <td className="px-3 py-2.5">
                       <Link
                         href={`/students/${payment.student_id}/payments`}
+                        onClick={(e) => e.stopPropagation()}
                         className="text-primary hover:underline font-medium"
                       >
                         {payment.context.student_name ?? "—"}
                       </Link>
                     </td>
-                     <td className="px-3 py-2.5 text-text-secondary">
-                       <div className="flex flex-col gap-1">
-                         <div className="flex flex-wrap gap-1">
-                           {(payment.context.levels?.length ? payment.context.levels : payment.context.level ? [payment.context.level] : []).map((lv) => (
-                             <span key={lv.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                               {lv.name}
-                             </span>
-                           ))}
-                         </div>
-                         <div className="flex flex-wrap gap-1">
-                           {(payment.context.fields?.length ? payment.context.fields : payment.context.field ? [payment.context.field] : []).map((f) => (
-                             <span key={f.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                               {f.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: f.color }} />}
-                               {f.name}
-                             </span>
-                           ))}
-                         </div>
-                       </div>
-                     </td>
-                     <td className="px-3 py-2.5 text-text-secondary">
-                       <div className="flex flex-col gap-1">
-                         <div className="flex flex-wrap gap-1">
-                           {(payment.context.professors?.length ? payment.context.professors : payment.context.professor ? [payment.context.professor] : []).map((p) => (
-                             <span key={p.id} className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                               {p.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />}
-                               {p.name}
-                             </span>
-                           ))}
-                         </div>
-                         <div className="flex flex-wrap gap-1">
-                           {(payment.context.groups?.length ? payment.context.groups : payment.context.group ? [payment.context.group] : []).map((g) => (
-                             <span key={g.id} className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-text-secondary whitespace-nowrap">
-                               {g.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: g.color }} />}
-                               {g.name}
-                             </span>
-                           ))}
-                         </div>
-                       </div>
-                     </td>
-                    <td className="px-3 py-2.5 text-text-secondary">{formatPeriod(payment.period)}</td>
+                    <StructureCell payment={payment} />
+                    <ProfessorGroupCell payment={payment} />
+                    <td className="px-3 py-2.5 text-text-secondary">
+                      {formatPeriod(payment.period)}
+                      {payment.invoice_count > 1 && (
+                        <span
+                          className="ml-1.5 inline-flex rounded-full bg-neutral-soft px-1.5 py-0.5 text-[10px] font-medium text-text-secondary align-middle"
+                          title={t("payments.invoicesForStudent", "Factures de l'élève : {list}")
+                            .replace("{list}", (payment.periods ?? []).join(", "))}
+                        >
+                          {payment.invoice_count} {t("financial.invoices", "factures")}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 text-text-secondary">{formatDate(payment.due_date)}</td>
                     <td className="px-3 py-2.5 text-text-secondary font-mono text-xs">
                       {payment.receipt_number ?? "—"}
@@ -475,10 +524,13 @@ function StudentPaymentsInner() {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center justify-end gap-1">
-                        {payment.transactions.length > 0 && (
+                        {payment.receipt_number && (
                           <button
                             type="button"
-                            onClick={() => openReceipt("payment", payment.id).catch(() => {})}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openReceipt("payment", payment.receipt_payment_id ?? payment.action_payment_id ?? payment.id).catch(() => {});
+                            }}
                             aria-label={t("financial.printReceipt", "Print receipt")}
                             className="btn btn-secondary text-xs"
                           >
@@ -487,7 +539,10 @@ function StudentPaymentsInner() {
                         )}
                         <button
                           type="button"
-                          onClick={() => setSelected(payment)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelected(payment);
+                          }}
                           className="btn btn-secondary text-xs whitespace-nowrap"
                         >
                           {t("financial.manage", "Manage")}
@@ -509,7 +564,7 @@ function StudentPaymentsInner() {
               .replace("{page}", String(meta.page))
               .replace("{total}", String(meta.totalPages))}
             {" · "}
-            {meta.total} {t("financial.invoices", "invoices")}
+            {meta.total} {t("financial.students", "students")}
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -536,7 +591,8 @@ function StudentPaymentsInner() {
 
       {selected && (
         <PaymentActionsModal
-          payment={rows.find((row) => row.id === selected.id) ?? selected}
+          payment={selected.action_payment ?? selected}
+          payments={selected.payments}
           isOpen={!!selected}
           onClose={() => setSelected(null)}
         />
@@ -555,6 +611,67 @@ function Th({ children, right }: { children: React.ReactNode; right?: boolean })
     >
       {children}
     </th>
+  );
+}
+
+interface NamedEntity {
+  id: string;
+  name?: string;
+  color?: string | null;
+}
+
+/** First named entity, `+n` when several cover the same invoice. */
+function CompressedEntity({ items }: { items: NamedEntity[] }) {
+  if (items.length === 0) return <span>—</span>;
+  const first = items[0];
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {first.color && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: first.color }} />}
+      <span className="truncate">{first.name ?? "—"}</span>
+      {items.length > 1 && <span className="text-text-secondary">+{items.length - 1}</span>}
+    </span>
+  );
+}
+
+function StructureCell({ payment }: { payment: StudentPayment }) {
+  const levels: NamedEntity[] = payment.context.levels?.length
+    ? payment.context.levels
+    : payment.context.level
+      ? [payment.context.level]
+      : [];
+  const fields: NamedEntity[] = payment.context.fields?.length
+    ? payment.context.fields
+    : payment.context.field
+      ? [payment.context.field]
+      : [];
+  return (
+    <td className="px-3 py-2.5">
+      <div className="flex flex-col gap-0.5 text-xs text-text-secondary">
+        <CompressedEntity items={levels} />
+        <CompressedEntity items={fields} />
+      </div>
+    </td>
+  );
+}
+
+function ProfessorGroupCell({ payment }: { payment: StudentPayment }) {
+  const professors: NamedEntity[] = payment.context.professors?.length
+    ? payment.context.professors
+    : payment.context.professor
+      ? [payment.context.professor]
+      : [];
+  const groups: NamedEntity[] = payment.context.groups?.length
+    ? payment.context.groups
+    : payment.context.group
+      ? [payment.context.group]
+      : [];
+  return (
+    <td className="px-3 py-2.5">
+      <div className="flex flex-col gap-0.5 text-xs text-text-secondary">
+        <CompressedEntity items={professors} />
+        <CompressedEntity items={groups} />
+      </div>
+    </td>
   );
 }
 

@@ -246,6 +246,25 @@ export interface PaymentPage {
   };
 }
 
+/**
+ * A cash-desk row: one student with their matching invoices grouped, same
+ * columns as an invoice row but carrying totals. `action_payment` is the exact
+ * invoice the Manage actions (record/refund/correct/cancel) should target, and
+ * `receipt_payment_id` the invoice whose quittance is shown.
+ */
+export interface StudentLedgerRow extends StudentPayment {
+  view?: "student";
+  /** Distinct invoice periods, newest first. */
+  periods: string[];
+  invoice_count: number;
+  last_paid_at: string | null;
+  receipt_payment_id: string | null;
+  action_payment_id: string | null;
+  action_payment: StudentPayment | null;
+  /** Every matching invoice, for the Manage modal's invoice switcher. */
+  payments: StudentPayment[];
+}
+
 export interface KpiCard {
   value: string;
   [key: string]: unknown;
@@ -462,6 +481,13 @@ export interface ProfessorFinancialDetail {
     remaining_balance: string;
   };
   monthly_breakdown: { period: string; revenue: string; earned: string; paid: string }[];
+  group_breakdown: {
+    group: string;
+    students: number;
+    revenue: string;
+    professor_share: string;
+    school_share: string;
+  }[];
   payroll_history: PayrollPayment[];
 }
 

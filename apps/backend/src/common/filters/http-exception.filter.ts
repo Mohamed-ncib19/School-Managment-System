@@ -9,56 +9,59 @@ import {
 import { Request, Response } from "express";
 
 /**
- * Translates Prisma's error codes into the HTTP status and wording an
- * administrator can act on. Returns null for anything unrecognised, which then
- * falls through to the generic 500 path.
+ * Translates PostgreSQL's native error codes into the HTTP status and wording
+ * an administrator can act on. Returns null for anything unrecognised, which
+ * then falls through to the generic 500 path.
  */
-function mapPrismaError(
+function mapPgError(
   exception: unknown,
 ): { status: number; code: string; message: string } | null {
-  const err = exception as { code?: string; name?: string; meta?: Record<string, unknown> };
-  if (!err?.code || typeof err.code !== "string") {
-    // Malformed input Prisma rejects before it reaches the database.
-    if (err?.name === "PrismaClientValidationError") {
+  const err = exception as {
+    code?: string;
+    detail?: string;
+    constraint?: string;
+    table?: string;
+  };
+  if (!err?.code || typeof err.code !== "string") return null;
+
+  switch (err.code) {
+    case "23505":
+      return {
+        status: HttpStatus.CONFLICT,
+        code: "DUPLICATE_VALUE",
+        message: err.detail ?? "That record already exists.",
+      };
+    case "23503":
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        code: "INVALID_REFERENCE",
+        message: err.detail ?? "That references a record which does not exist.",
+      };
+    case "23514":
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        code: "CONSTRAINT_VIOLATION",
+        message: err.constraint
+          ? `This operation violates the "${err.constraint}" rule.`
+          : "This operation violates a database rule.",
+      };
+    case "23502":
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        code: "REQUIRED_FIELD",
+        message: err.detail ?? "A required value is missing.",
+      };
+    case "22P02":
       return {
         status: HttpStatus.BAD_REQUEST,
         code: "INVALID_INPUT",
         message: "One or more values are the wrong type or missing.",
       };
-    }
-    return null;
-  }
-
-  const target = Array.isArray(err.meta?.target)
-    ? (err.meta?.target as string[]).join(", ")
-    : typeof err.meta?.target === "string"
-      ? (err.meta.target as string)
-      : undefined;
-
-  switch (err.code) {
-    case "P2002":
-      return {
-        status: HttpStatus.CONFLICT,
-        code: "DUPLICATE_VALUE",
-        message: target ? `A record with this ${target} already exists.` : "That record already exists.",
-      };
-    case "P2003":
+    case "22003":
       return {
         status: HttpStatus.BAD_REQUEST,
-        code: "INVALID_REFERENCE",
-        message: "That references a record which does not exist.",
-      };
-    case "P2025":
-      return {
-        status: HttpStatus.NOT_FOUND,
-        code: "NOT_FOUND",
-        message: "The record was not found - it may already have been deleted.",
-      };
-    case "P2014":
-      return {
-        status: HttpStatus.BAD_REQUEST,
-        code: "RELATION_IN_USE",
-        message: "Other records still depend on this one, so it cannot be removed.",
+        code: "NUMBER_OUT_OF_RANGE",
+        message: "A number is too large for the column it was stored in.",
       };
     default:
       return null;
@@ -106,7 +109,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
        * reference to a deleted row read as "Internal server error", telling the
        * administrator nothing about what to correct.
        */
-      const mapped = mapPrismaError(exception);
+      const mapped = mapPgError(exception);
       if (mapped) {
         code = mapped.code;
         message = mapped.message;

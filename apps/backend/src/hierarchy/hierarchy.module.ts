@@ -1,10 +1,10 @@
 import { Module } from "@nestjs/common";
-import { HierarchyController } from "./hierarchy.controller";
 import { HierarchyService } from "./hierarchy.service";
-import { PrismaModule } from "../prisma/prisma.module";
+import { HierarchyController } from "./hierarchy.controller";
+import { DbModule } from "../db/db.module";
 
 @Module({
-  imports: [PrismaModule],
+  imports: [DbModule],
   controllers: [HierarchyController],
   providers: [HierarchyService],
   exports: [HierarchyService],

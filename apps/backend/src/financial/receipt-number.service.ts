@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { sql } from "drizzle-orm";
+import { DbService, Tx } from "../db/db.service";
+import { receiptCounters } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 
 export type ReceiptKind = "payment" | "payroll" | "settlement";
@@ -23,7 +24,7 @@ export type ReceiptKind = "payment" | "payroll" | "settlement";
 @Injectable()
 export class ReceiptNumberService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
   ) {}
 
@@ -31,10 +32,10 @@ export class ReceiptNumberService {
    * Reserves the next number for `kind` in the year of `when`.
    *
    * @param tx the transaction client of the enclosing write — not the bare
-   *           PrismaService, or the counter and the receipt can diverge.
+   *           DbService, or the counter and the receipt can diverge.
    */
   async next(
-    tx: Prisma.TransactionClient,
+    tx: Tx,
     kind: ReceiptKind,
     when: Date = new Date(),
   ): Promise<string> {
@@ -44,11 +45,14 @@ export class ReceiptNumberService {
 
     // Atomic read-modify-write: upsert increments under the row lock, so the
     // value returned is this caller's alone.
-    const counter = await tx.receipt_counters.upsert({
-      where: { scope },
-      create: { scope, value: 1 },
-      update: { value: { increment: 1 } },
-    });
+    const [counter] = await tx
+      .insert(receiptCounters)
+      .values({ scope, value: 1 })
+      .onConflictDoUpdate({
+        target: receiptCounters.scope,
+        set: { value: sql`${receiptCounters.value} + 1` },
+      })
+      .returning({ value: receiptCounters.value });
 
     const format =
       kind === "payroll"

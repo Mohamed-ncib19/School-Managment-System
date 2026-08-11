@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, eq, gte, inArray, isNotNull, lte, ne, sql, SQL } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { groups, paymentTransactions, payrollPayments, professors, studentAssignments, studentPayments, students } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { Money, ZERO, money, ratePercent, round2, toAmount } from "./money.util";
 import { AcademicFilter, paymentWhere, resolveRange, transactionWhere } from "./financial.filters";
@@ -49,7 +50,7 @@ const HIERARCHY: Dimension[] = ["level", "field", "professor", "group", "student
 @Injectable()
 export class AnalyticsService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
   ) {}
 
@@ -82,13 +83,21 @@ export class AnalyticsService {
   async revenueSeries(query: FinancialQueryDto): Promise<{ granularity: Granularity; points: SeriesPoint[] }> {
     const { range, granularity } = await this.rangeOf(query);
 
-    const rows = await this.prisma.payment_transactions.findMany({
-      where: {
-        ...transactionWhere(this.academicOf(query)),
-        paid_at: { gte: range.from, lte: range.to },
-      },
-      select: { paid_at: true, amount: true, school_share: true, professor_share: true },
-    });
+    const rows = await this.db.client
+      .select({
+        paid_at: paymentTransactions.paid_at,
+        amount: paymentTransactions.amount,
+        school_share: paymentTransactions.school_share,
+        professor_share: paymentTransactions.professor_share,
+      })
+      .from(paymentTransactions)
+      .where(
+        and(
+          transactionWhere(this.academicOf(query)),
+          gte(paymentTransactions.paid_at, range.from),
+          lte(paymentTransactions.paid_at, range.to),
+        ),
+      );
 
     const buckets = new Map<string, { revenue: Money; school: Money; professor: Money; count: number }>();
     for (const key of bucketsInRange(range, granularity)) {
@@ -130,13 +139,19 @@ export class AnalyticsService {
 
     const [revenue, payouts] = await Promise.all([
       this.revenueSeries(query),
-      this.prisma.payroll_payments.findMany({
-        where: {
-          ...(academic.profId ? { prof_id: academic.profId } : {}),
-          paid_at: { gte: range.from, lte: range.to },
-        },
-        select: { paid_at: true, amount: true },
-      }),
+      this.db.client
+        .select({
+          paid_at: payrollPayments.paid_at,
+          amount: payrollPayments.amount,
+        })
+        .from(payrollPayments)
+        .where(
+          and(
+            academic.profId ? eq(payrollPayments.prof_id, academic.profId) : undefined,
+            gte(payrollPayments.paid_at, range.from),
+            lte(payrollPayments.paid_at, range.to),
+          ),
+        ),
     ]);
 
     const payrollByBucket = new Map<string, Money>();
@@ -173,35 +188,46 @@ export class AnalyticsService {
     const academic = this.academicOf(query);
     const limit = query.limit ?? 20;
 
-    const where: Prisma.payment_transactionsWhereInput = {
-      ...transactionWhere(academic),
-      paid_at: { gte: range.from, lte: range.to },
-    };
+    const where: SQL | undefined = and(
+      transactionWhere(academic),
+      gte(paymentTransactions.paid_at, range.from),
+      lte(paymentTransactions.paid_at, range.to),
+    );
 
     // Professor is the one dimension the ledger stores directly.
     if (dimension === "professor") {
-      const grouped = await this.prisma.payment_transactions.groupBy({
-        by: ["prof_id"],
-        where,
-        _sum: { amount: true, school_share: true, professor_share: true },
-        _count: { _all: true },
-      });
+      const grouped = await this.db.client
+        .select({
+          prof_id: paymentTransactions.prof_id,
+          sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+          sum_school_share: sql<string | null>`sum(${paymentTransactions.school_share})`,
+          sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(paymentTransactions)
+        .where(where)
+        .groupBy(paymentTransactions.prof_id);
 
       const ids = grouped.map((g) => g.prof_id).filter((id): id is string => Boolean(id));
-      const professors = await this.prisma.professors.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, full_name: true },
+      const profRows = await this.db.client.query.professors.findMany({
+        where: inArray(professors.id, ids),
+        with: {
+          field: {
+            columns: { id: true, name: true },
+            with: { level: { columns: { id: true, name: true } } },
+          },
+        },
       });
-      const names = new Map(professors.map((p) => [p.id, p.full_name]));
+      const names = new Map(profRows.map((p) => [p.id, p.full_name]));
 
       return this.rank(
         grouped.map((g) => ({
           id: g.prof_id,
           name: g.prof_id ? (names.get(g.prof_id) ?? "Unknown") : "Unassigned",
-          revenue: money(g._sum.amount),
-          school: money(g._sum.school_share),
-          professor: money(g._sum.professor_share),
-          count: g._count._all,
+          revenue: money(g.sum_amount),
+          school: money(g.sum_school_share),
+          professor: money(g.sum_professor_share),
+          count: g.count,
           drill: this.drillTarget("professor"),
           filter: g.prof_id ? { profId: g.prof_id } : null,
         })),
@@ -214,27 +240,19 @@ export class AnalyticsService {
     // to a date range, which keeps this bounded. The chain is the invoice's
     // own enrollment — the group a collection was billed under — not the
     // student's primary group.
-    const rows = await this.prisma.payment_transactions.findMany({
+    const rows = await this.db.client.query.paymentTransactions.findMany({
       where,
-      select: {
-        amount: true,
-        school_share: true,
-        professor_share: true,
-        payment: {
-          select: {
-            student: {
-              select: { id: true, first_name: true, last_name: true },
-            },
+      with: {
+        studentPayment: {
+          with: {
+            student: { columns: { id: true, first_name: true, last_name: true } },
             group: {
-              select: {
-                id: true,
-                name: true,
+              with: {
                 professor: {
-                  select: {
-                    id: true,
-                    full_name: true,
+                  with: {
                     field: {
-                      select: { id: true, name: true, level: { select: { id: true, name: true } } },
+                      columns: { id: true, name: true },
+                      with: { level: { columns: { id: true, name: true } } },
                     },
                   },
                 },
@@ -251,8 +269,8 @@ export class AnalyticsService {
     >();
 
     for (const row of rows) {
-      const student = row.payment?.student;
-      const group = row.payment?.group;
+      const student = row.studentPayment?.student;
+      const group = row.studentPayment?.group;
       const professor = group?.professor;
       const field = professor?.field;
       const level = field?.level;
@@ -358,21 +376,28 @@ export class AnalyticsService {
   async statusDistribution(query: FinancialQueryDto) {
     const { range } = await this.rangeOf(query);
 
-    const grouped = await this.prisma.student_payments.groupBy({
-      by: ["status"],
-      where: {
-        ...paymentWhere(this.academicOf(query)),
-        due_date: { gte: range.from, lte: range.to },
-      },
-      _sum: { amount_due: true, paid_amount: true },
-      _count: { _all: true },
-    });
+    const grouped = await this.db.client
+      .select({
+        status: studentPayments.status,
+        sum_amount_due: sql<string | null>`sum(${studentPayments.amount_due})`,
+        sum_paid_amount: sql<string | null>`sum(${studentPayments.paid_amount})`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(studentPayments)
+      .where(
+        and(
+          paymentWhere(this.academicOf(query)),
+          gte(studentPayments.due_date, range.from),
+          lte(studentPayments.due_date, range.to),
+        ),
+      )
+      .groupBy(studentPayments.status);
 
     return grouped.map((row) => ({
       status: row.status,
-      count: row._count._all,
-      amount_due: toAmount(round2(money(row._sum.amount_due))),
-      paid_amount: toAmount(round2(money(row._sum.paid_amount))),
+      count: row.count,
+      amount_due: toAmount(round2(money(row.sum_amount_due))),
+      paid_amount: toAmount(round2(money(row.sum_paid_amount))),
     }));
   }
 
@@ -383,13 +408,21 @@ export class AnalyticsService {
   async latePaymentTrend(query: FinancialQueryDto) {
     const { range, granularity } = await this.rangeOf(query);
 
-    const rows = await this.prisma.student_payments.findMany({
-      where: {
-        ...paymentWhere(this.academicOf(query)),
-        paid_at: { not: null, gte: range.from, lte: range.to },
-      },
-      select: { paid_at: true, due_date: true, amount_due: true },
-    });
+    const rows = await this.db.client
+      .select({
+        paid_at: studentPayments.paid_at,
+        due_date: studentPayments.due_date,
+        amount_due: studentPayments.amount_due,
+      })
+      .from(studentPayments)
+      .where(
+        and(
+          paymentWhere(this.academicOf(query)),
+          isNotNull(studentPayments.paid_at),
+          gte(studentPayments.paid_at, range.from),
+          lte(studentPayments.paid_at, range.to),
+        ),
+      );
 
     const buckets = new Map<string, { late: number; onTime: number; lateAmount: Money }>();
     for (const key of bucketsInRange(range, granularity)) {
@@ -433,14 +466,21 @@ export class AnalyticsService {
   async collectionTrend(query: FinancialQueryDto) {
     const { range, granularity } = await this.rangeOf(query);
 
-    const rows = await this.prisma.student_payments.findMany({
-      where: {
-        ...paymentWhere(this.academicOf(query)),
-        due_date: { gte: range.from, lte: range.to },
-        status: { not: "cancelled" },
-      },
-      select: { due_date: true, amount_due: true, paid_amount: true },
-    });
+    const rows = await this.db.client
+      .select({
+        due_date: studentPayments.due_date,
+        amount_due: studentPayments.amount_due,
+        paid_amount: studentPayments.paid_amount,
+      })
+      .from(studentPayments)
+      .where(
+        and(
+          paymentWhere(this.academicOf(query)),
+          gte(studentPayments.due_date, range.from),
+          lte(studentPayments.due_date, range.to),
+          ne(studentPayments.status, "cancelled"),
+        ),
+      );
 
     const buckets = new Map<string, { expected: Money; collected: Money }>();
     for (const key of bucketsInRange(range, granularity)) {
@@ -478,45 +518,57 @@ export class AnalyticsService {
     const { range } = await this.rangeOf(query);
     const limit = query.limit ?? 10;
 
-    const grouped = await this.prisma.payment_transactions.groupBy({
-      by: ["prof_id"],
-      where: {
-        ...transactionWhere(this.academicOf(query)),
-        paid_at: { gte: range.from, lte: range.to },
-      },
-      _sum: { amount: true, professor_share: true, school_share: true },
-      _count: { _all: true },
-    });
+    const grouped = await this.db.client
+      .select({
+        prof_id: paymentTransactions.prof_id,
+        sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+        sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+        sum_school_share: sql<string | null>`sum(${paymentTransactions.school_share})`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(paymentTransactions)
+      .where(
+        and(
+          transactionWhere(this.academicOf(query)),
+          gte(paymentTransactions.paid_at, range.from),
+          lte(paymentTransactions.paid_at, range.to),
+        ),
+      )
+      .groupBy(paymentTransactions.prof_id);
 
     const ids = grouped.map((g) => g.prof_id).filter((id): id is string => Boolean(id));
     if (ids.length === 0) return [];
 
-    const [professors, enrollmentPairs] = await Promise.all([
-      this.prisma.professors.findMany({
-        where: { id: { in: ids } },
-        select: {
-          id: true,
-          full_name: true,
-          field: { select: { id: true, name: true, level: { select: { id: true, name: true } } } },
+    const [profRows, enrollmentPairs] = await Promise.all([
+      this.db.client.query.professors.findMany({
+        where: inArray(professors.id, ids),
+        with: {
+          field: {
+            columns: { id: true, name: true },
+            with: { level: { columns: { id: true, name: true } } },
+          },
         },
       }),
       // One row per active enrollment under any of these professors; a student
       // in two of their groups counts twice, because each enrollment is a
       // roster seat with its own fee.
-      this.prisma.student_assignments.findMany({
-        where: { student: { status: "active" }, group: { prof_id: { in: ids }, is_active: true } },
-        select: { student_id: true, group: { select: { prof_id: true } } },
-      }),
+      this.db.client
+        .select({ prof_id: groups.prof_id })
+        .from(studentAssignments)
+        .innerJoin(students, eq(studentAssignments.student_id, students.id))
+        .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
+        .where(
+          and(eq(students.status, "active"), inArray(groups.prof_id, ids), eq(groups.is_active, true)),
+        ),
     ]);
 
     const studentsByProf = new Map<string, number>();
     for (const row of enrollmentPairs) {
-      const owner = row.group?.prof_id;
-      if (!owner) continue;
-      studentsByProf.set(owner, (studentsByProf.get(owner) ?? 0) + 1);
+      if (!row.prof_id) continue;
+      studentsByProf.set(row.prof_id, (studentsByProf.get(row.prof_id) ?? 0) + 1);
     }
 
-    const byId = new Map(professors.map((p) => [p.id, p]));
+    const byId = new Map(profRows.map((p) => [p.id, p]));
 
     return grouped
       .filter((g) => g.prof_id)
@@ -529,11 +581,11 @@ export class AnalyticsService {
           level: professor?.field?.level
             ? { id: professor.field.level.id, name: professor.field.level.name }
             : null,
-          revenue_generated: toAmount(round2(money(g._sum.amount))),
-          professor_share: toAmount(round2(money(g._sum.professor_share))),
-          school_share: toAmount(round2(money(g._sum.school_share))),
+          revenue_generated: toAmount(round2(money(g.sum_amount))),
+          professor_share: toAmount(round2(money(g.sum_professor_share))),
+          school_share: toAmount(round2(money(g.sum_school_share))),
           student_count: studentsByProf.get(g.prof_id as string) ?? 0,
-          transactions: g._count._all,
+          transactions: g.count,
         };
       })
       .sort((a, b) => money(b.revenue_generated).comparedTo(money(a.revenue_generated)))

@@ -79,16 +79,16 @@ export function getCurrentPeriod(): string {
 export function getPaymentStatusColorLight(status: PaymentStatus | string): string {
   switch (status) {
     case "paid":
-      return "bg-success-soft text-success-strong border-success/30";
+      return "bg-success-soft text-success-strong border-success/30 dark:bg-success-dark-soft dark:text-success-dark-strong dark:border-success-dark/20";
     case "partially_paid":
-      return "bg-warning-soft text-warning-strong border-warning/30";
+      return "bg-warning-soft text-warning-strong border-warning/30 dark:bg-warning-dark-soft dark:text-warning-dark-strong dark:border-warning-dark/20";
     case "due_soon":
-      return "bg-gold-50 text-gold-700 border-gold-200";
+      return "bg-gold-50 text-gold-700 border-gold-200 dark:bg-gold-400/15 dark:text-gold-300 dark:border-gold-400/20";
     case "overdue":
-      return "bg-danger-soft text-danger-strong border-danger/30";
+      return "bg-danger-soft text-danger-strong border-danger/30 dark:bg-danger-dark-soft dark:text-danger-dark-strong dark:border-danger-dark/20";
     case "cancelled":
-      return "bg-danger-soft text-danger-strong border-danger/30 line-through";
+      return "bg-danger-soft text-danger-strong border-danger/30 line-through dark:bg-danger-dark-soft dark:text-danger-dark-strong dark:border-danger-dark/20";
     default:
-      return "bg-primary-50 text-primary-700 border-primary/30";
+      return "bg-primary-50 text-primary-700 border-primary/30 dark:bg-primary/15 dark:text-primary-300 dark:border-primary/30";
   }
 }

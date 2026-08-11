@@ -12,7 +12,14 @@ import {
 } from "recharts";
 import { formatCurrency } from "@/lib/utils/format";
 
-const COLORS = ["#264EAE", "#77D4F2", "#F5B940", "#22C55E", "#EF4444", "#3B82F6"];
+const COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--chart-1)",
+];
 
 interface RevenueChartProps {
   data: { month: string; revenue: number }[];
@@ -30,12 +37,12 @@ export function RevenueChart({ data }: RevenueChartProps) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-        <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#6B7280" }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fontSize: 12, fill: "#6B7280" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v}`} />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
+        <XAxis dataKey="month" tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v}`} />
         <Tooltip
           formatter={(value: number) => [formatCurrency(value), "Revenue"]}
-          contentStyle={{ borderRadius: 10, border: "1px solid #E5E7EB", boxShadow: "0 4px 16px rgba(0,0,0,0.06)" }}
+          contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
         />
         <Bar dataKey="revenue" radius={[6, 6, 0, 0]} maxBarSize={40}>
           {data.map((_, index) => (

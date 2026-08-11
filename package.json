@@ -3,13 +3,12 @@
   "private": true,
   "scripts": {
     "build": "pnpm -r run build",
-    "dev": "pnpm -r --parallel run dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:no-warm": "node scripts/dev.mjs --no-warm",
+    "dev:warm": "node scripts/prewarm.mjs",
     "lint": "pnpm -r run lint",
     "db:generate": "pnpm -C apps/backend run db:generate",
     "db:push": "pnpm -C apps/backend run db:push",
-    "db:migrate": "pnpm -C apps/backend run db:migrate",
-    "db:migrate:dev": "pnpm -C apps/backend run db:migrate:dev",
-    "db:reset": "pnpm -C apps/backend run db:reset",
     "db:seed": "pnpm -C apps/backend run db:seed",
     "db:seed:hierarchy": "pnpm -C apps/backend run db:seed:hierarchy",
     "db:studio": "pnpm -C apps/backend run db:studio"

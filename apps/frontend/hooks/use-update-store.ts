@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { updatesApi, UpdateStatus } from "@/lib/api/updates.api";
+import { updatesApi, UpdateStatus, UpdateProgress } from "@/lib/api/updates.api";
 
 /**
  * Shared update state. The poller (UpdateNotifier) writes status here; the
@@ -14,12 +14,16 @@ interface UpdateState {
   checking: boolean;
   applying: boolean;
   failed: boolean;
+  /** Live step/state of the update engine once "update now" is running. */
+  progress: UpdateProgress | null;
   refresh: (force?: boolean) => Promise<UpdateStatus | null>;
+  refreshProgress: () => Promise<UpdateProgress | null>;
   openDialog: () => void;
   closeDialog: () => void;
   setChecking: (v: boolean) => void;
   setApplying: (v: boolean) => void;
   setFailed: (v: boolean) => void;
+  setProgress: (p: UpdateProgress | null) => void;
 }
 
 export const useUpdateStore = create<UpdateState>()((set) => ({
@@ -28,6 +32,7 @@ export const useUpdateStore = create<UpdateState>()((set) => ({
   checking: false,
   applying: false,
   failed: false,
+  progress: null,
 
   refresh: async (force = false) => {
     set({ checking: true, failed: false });
@@ -41,9 +46,20 @@ export const useUpdateStore = create<UpdateState>()((set) => ({
     }
   },
 
+  refreshProgress: async () => {
+    try {
+      const progress = await updatesApi.progress();
+      set({ progress });
+      return progress;
+    } catch {
+      return null;
+    }
+  },
+
   openDialog: () => set({ open: true }),
   closeDialog: () => set({ open: false }),
   setChecking: (checking) => set({ checking }),
   setApplying: (applying) => set({ applying }),
   setFailed: (failed) => set({ failed }),
+  setProgress: (progress) => set({ progress }),
 }));

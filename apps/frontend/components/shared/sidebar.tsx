@@ -209,11 +209,11 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
     <>
       {mobileOpen && <MobileOverlay onClick={onCloseMobile} />}
       <aside
-        className={`fixed top-0 left-0 z-50 h-screen bg-primary dark:bg-primary-900 text-white flex flex-col transition-all duration-150 dark:glass ${
+        className={`fixed top-0 left-0 z-50 h-screen glass-sidebar border-r border-border text-text-primary flex flex-col transition-all duration-150 ${
           collapsed ? "w-[68px]" : "w-60"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
-        <div className="flex items-center justify-between h-16 px-4 border-b border-white/10">
+        <div className="flex items-center justify-between h-16 px-4 border-b border-border">
           {!collapsed && (
             <Link href="/dashboard" className="flex items-center gap-2">
               {brandLogo ? (
@@ -221,7 +221,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               ) : (
                 <BrandMark name={systemName} className="h-8 w-8 text-[11px]" />
               )}
-              <span className="font-bold text-sm tracking-tight">{systemName}</span>
+              <span className="font-bold text-sm tracking-tight truncate">{systemName}</span>
             </Link>
           )}
           {collapsed && (
@@ -236,14 +236,14 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
           <div className="flex items-center gap-1">
             <button
               onClick={onToggleCollapse}
-              className="hidden lg:flex h-8 w-8 items-center justify-center rounded-btn hover:bg-white/10 transition-colors"
+              className="hidden lg:flex h-8 w-8 items-center justify-center rounded-btn hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors text-text-secondary"
               aria-label={collapsed ? t("common.expandSidebar") : t("common.collapseSidebar")}
             >
               {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
             </button>
             <button
               onClick={onCloseMobile}
-              className="lg:hidden flex h-8 w-8 items-center justify-center rounded-btn hover:bg-white/10"
+              className="lg:hidden flex h-8 w-8 items-center justify-center rounded-btn hover:bg-black/[0.05] dark:hover:bg-white/[0.08] text-text-secondary"
               aria-label={t("common.closeMenu")}
             >
               <X size={18} />
@@ -261,7 +261,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 href={item.href}
                 onClick={onCloseMobile}
                 className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 ${
-                  isActive ? "bg-gold text-primary shadow-sm" : "text-white/80 hover:bg-white/10 hover:text-white"
+                  isActive
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                 }`}
               >
                 <Icon size={18} className="shrink-0" />
@@ -278,7 +280,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               <button
                 onClick={() => setFinancialOpen(!financialOpen)}
                 className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 w-full ${
-                  isOnFinancialPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                  isOnFinancialPage
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                 }`}
               >
                 <Wallet size={18} className="shrink-0" />
@@ -286,7 +290,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 <ChevronDown size={14} className={`transition-transform duration-150 ${financialOpen ? "rotate-180" : ""}`} />
               </button>
               {financialOpen && (
-                <div className="ml-6 mt-1 space-y-1 border-l-2 border-white/10 pl-3">
+                <div className="ml-6 mt-1 space-y-1 border-l border-border pl-3">
                   {financialItems.map((item) => {
                     // The dashboard sits at the segment root, so prefix matching
                     // would light it up on every financial screen.
@@ -299,8 +303,10 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                         key={item.href}
                         href={item.href}
                         onClick={onCloseMobile}
-                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-all duration-150 hover:scale-[1.02] hover:shadow-sm ${
-                          isActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white hover:border-l-2 hover:border-gold/50"
+                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-colors duration-150 ${
+                          isActive
+                            ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                            : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                         }`}
                       >
                         <Icon size={14} className="shrink-0" />
@@ -319,7 +325,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                   router.push(financialItems[0]?.href ?? "/financial")
                 }
                 className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
-                  isOnFinancialPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                  isOnFinancialPage
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                 }`}
                 aria-label={t("nav.financialManagement")}
                 title={t("nav.financialManagement")}
@@ -337,7 +345,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               <button
                 onClick={() => setHierarchyOpen(!hierarchyOpen)}
                 className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 w-full ${
-                  isOnHierarchyPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                  isOnHierarchyPage
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                 }`}
               >
                 <Network size={18} className="shrink-0" />
@@ -345,7 +355,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 <ChevronDown size={14} className={`transition-transform duration-150 ${hierarchyOpen ? "rotate-180" : ""}`} />
               </button>
               {hierarchyOpen && (
-                <div className="ml-6 mt-1 space-y-1 border-l-2 border-white/10 pl-3">
+                <div className="ml-6 mt-1 space-y-1 border-l border-border pl-3">
                   {visibleEntities.map((entity) => {
                     const isEntityActive = activeEntity === entity;
                     const Icon = ENTITY_ICONS[entity];
@@ -356,8 +366,10 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                         key={entity}
                         href={rootHref}
                         onClick={onCloseMobile}
-                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-all duration-150 hover:scale-[1.02] hover:shadow-sm ${
-                          isEntityActive ? "bg-gold text-primary shadow-sm" : "text-white/70 hover:bg-white/10 hover:text-white hover:border-l-2 hover:border-gold/50"
+                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-colors duration-150 ${
+                          isEntityActive
+                            ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                            : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                         }`}
                       >
                         <Icon size={14} className="shrink-0" />
@@ -377,7 +389,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                   router.push(visibleEntities[0] ? `/hierarchy/${visibleEntities[0]}` : "/hierarchy")
                 }
                 className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
-                  isOnHierarchyPage ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+                  isOnHierarchyPage
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                 }`}
                 aria-label={t("nav.fields")}
                 title={t("nav.fields")}
@@ -387,7 +401,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
             </div>
           )}
 
-          <div className="!my-2 border-t border-white/10" />
+          <div className="!my-2 border-t border-border" />
 
           {adminItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -398,7 +412,9 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 href={item.href}
                 onClick={onCloseMobile}
                 className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 ${
-                  isActive ? "bg-gold text-primary shadow-sm" : "text-white/80 hover:bg-white/10 hover:text-white"
+                  isActive
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
                 }`}
               >
                 <Icon size={18} className="shrink-0" />
@@ -408,16 +424,16 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
           })}
         </nav>
 
-        <div className="border-t border-white/10 p-3 space-y-2">
+        <div className="border-t border-border p-3 space-y-2">
           <ContactSupport collapsed={collapsed} />
           {!collapsed && user && (
             <div className="flex items-center gap-3 px-2 py-1">
-              <div className="h-8 w-8 rounded-full bg-sky-300/20 flex items-center justify-center text-xs font-bold shrink-0">
+              <div className="h-8 w-8 rounded-full bg-neutral-soft text-neutral-strong flex items-center justify-center text-xs font-bold shrink-0">
                 {user.full_name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium truncate">{user.full_name}</p>
-                <p className="text-xs text-white/50 capitalize">
+                <p className="text-xs text-text-secondary capitalize">
                   {user.role.replace("_", " ")}
                 </p>
               </div>
@@ -425,7 +441,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
           )}
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm text-white/70 hover:bg-white/10 hover:text-white transition-colors w-full"
+            className="flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary transition-colors w-full"
           >
             <LogOut size={16} className="shrink-0" />
             {!collapsed && <span>{t("nav.signOut")}</span>}

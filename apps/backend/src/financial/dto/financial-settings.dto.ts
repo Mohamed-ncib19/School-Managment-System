@@ -12,7 +12,9 @@
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import type { CompensationModel } from "@prisma/client";
+import type { compensationModel } from "../../db/schema";
+
+type CompensationModel = (typeof compensationModel.enumValues)[number];
 
 export const COMPENSATION_MODELS = [
   "percentage",
@@ -67,7 +69,7 @@ export class UpdateFinancialSettingsDto {
   default_compensation_model?: CompensationModel;
 
   /**
-   * Kept as a string to Prisma so the decimal never round-trips through a float.
+   * Kept as a string so the decimal never round-trips through a float.
    */
   @ApiPropertyOptional({ example: "60.00", description: "0-100" })
   @IsOptional()

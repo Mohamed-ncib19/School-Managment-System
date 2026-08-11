@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Power, PowerOff } from "lucide-react";
 import { systemApi } from "@/lib/api/system.api";
 import { useTranslation } from "@/lib/i18n/context";
@@ -76,15 +77,16 @@ export default function ShutdownButton() {
         <Power size={16} className="text-text-secondary" />
       </button>
 
-      {show && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="shutdown-title"
-          aria-describedby="shutdown-body"
-          onClick={() => !shuttingDown && setShow(false)}
-        >
+      {show &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="shutdown-title"
+            aria-describedby="shutdown-body"
+            onClick={() => !shuttingDown && setShow(false)}
+          >
           <div
             className="mx-4 w-full max-w-sm rounded-modal bg-surface p-6 shadow-modal"
             onClick={(e) => e.stopPropagation()}
@@ -148,8 +150,9 @@ export default function ShutdownButton() {
               )}
             </div>
           </div>
-        </div>
-      )}
+</div>,
+          document.body,
+        )}
     </>
   );
 }

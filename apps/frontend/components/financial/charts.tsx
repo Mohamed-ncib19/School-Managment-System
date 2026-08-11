@@ -26,6 +26,7 @@ import {
   compactAmount,
   formatBucket,
 } from "@/lib/charts/theme";
+import { useTranslation } from "@/lib/i18n/context";
 import { ChartTooltip } from "./chart-tooltip";
 
 const CHART_HEIGHT = 260;
@@ -227,28 +228,35 @@ interface StatusDonutProps {
  */
 export function StatusDonutChart({ data }: StatusDonutProps) {
   const total = data.reduce((sum, row) => sum + row.count, 0);
+  const { t } = useTranslation();
 
   return (
     <div className="flex items-center gap-6 flex-wrap">
-      <ResponsiveContainer width={200} height={200}>
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="count"
-            nameKey="label"
-            innerRadius={58}
-            outerRadius={88}
-            paddingAngle={2}
-            stroke={CHROME.surface}
-            strokeWidth={2}
-          >
-            {data.map((row) => (
-              <Cell key={row.status} fill={STATUS_COLOR[row.status] ?? CHROME.axis} />
-            ))}
-          </Pie>
-          <Tooltip content={<ChartTooltip countKeys={data.map((d) => "count")} labelFormatter={(v) => v} />} />
-        </PieChart>
-      </ResponsiveContainer>
+      <div className="relative shrink-0">
+        <ResponsiveContainer width={200} height={200}>
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="count"
+              nameKey="label"
+              innerRadius={58}
+              outerRadius={88}
+              paddingAngle={2}
+              stroke={CHROME.surface}
+              strokeWidth={2}
+            >
+              {data.map((row) => (
+                <Cell key={row.status} fill={STATUS_COLOR[row.status] ?? CHROME.axis} />
+              ))}
+            </Pie>
+            <Tooltip content={<ChartTooltip countKeys={data.map((d) => "count")} labelFormatter={(v) => v} />} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <p className="text-h4 font-bold tabular-nums text-text-primary leading-none">{total}</p>
+          <p className="text-xs text-text-secondary mt-1">{t("financial.invoices", "Factures")}</p>
+        </div>
+      </div>
 
       {/* Direct labels: identity and magnitude without reading the ring. */}
       <ul className="space-y-2 min-w-[160px] flex-1">

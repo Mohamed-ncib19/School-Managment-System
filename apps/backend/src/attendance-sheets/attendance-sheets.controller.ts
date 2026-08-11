@@ -21,7 +21,9 @@ import {
   SaveAttendanceSheetDto,
 } from "./dto/attendance-sheet.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { PrismaService } from "../prisma/prisma.service";
+import { DbService } from "../db/db.service";
+import { eq } from "drizzle-orm";
+import { financialSettings } from "../db/schema";
 import { AttendanceStudent } from "./attendance.types";
 
 @Controller("attendance-sheets")
@@ -32,7 +34,7 @@ export class AttendanceSheetsController {
     private readonly generation: AttendanceGenerationService,
     private readonly print: AttendancePrintService,
     private readonly exportService: AttendanceExportService,
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
   ) {}
 
   /** Everything a register is generated from, without persisting anything. */
@@ -72,7 +74,7 @@ export class AttendanceSheetsController {
     const sheet = await this.attendance.get(id);
     await this.attendance.assertCanAccessGroup(req.user?.id, sheet.group_id);
 
-    const settings = await this.prisma.financial_settings.findUnique({ where: { singleton: "global" } });
+    const settings = await this.db.client.query.financialSettings.findFirst({ where: eq(financialSettings.singleton, "global") });
     const academyName = settings?.academy_name || "School Management System";
     // The logo is embedded as a data URI straight from disk (the /uploads
     // folder is not HTTP-served), so the print head always carries the brand
@@ -110,7 +112,7 @@ export class AttendanceSheetsController {
     const sheet = await this.attendance.get(id);
     await this.attendance.assertCanAccessGroup(req.user?.id, sheet.group_id);
 
-    const settings = await this.prisma.financial_settings.findUnique({ where: { singleton: "global" } });
+    const settings = await this.db.client.query.financialSettings.findFirst({ where: eq(financialSettings.singleton, "global") });
     const academyName = settings?.academy_name || "School Management System";
 
     const { buffer, filename } = await this.exportService.exportExcel(

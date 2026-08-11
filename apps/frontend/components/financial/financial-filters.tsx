@@ -1,6 +1,7 @@
 "use client";
 
-import { CalendarDays, X } from "lucide-react";
+import { CalendarDays, ChevronDown, SlidersHorizontal, X } from "lucide-react";
+import { useState } from "react";
 import { useFields, useLevels, useProfessors, useGroups } from "@/hooks/use-queries";
 import { cn } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
@@ -33,7 +34,12 @@ interface FinancialFilterBarProps {
 }
 
 /**
- * One filter row above the charts, shared by every financial screen.
+ * One compact filter strip above the charts, shared by every financial screen.
+ *
+ * Everything sits on a single line: the period select, the custom date window,
+ * the bucket size and the "Filtres avancés" toggle. The academic cascade —
+ * level → field → professor → group — stays behind that toggle so the screens
+ * remain readable at a glance.
  *
  * The academic selects cascade down the hierarchy — picking a field narrows the
  * professors offered, and a change higher up clears everything below it, so the
@@ -50,6 +56,7 @@ export function FinancialFilterBar({
   showAcademic = true,
 }: FinancialFilterBarProps) {
   const { t } = useTranslation();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const { data: levels } = useLevels();
   const { data: fields } = useFields();
   const { data: professors } = useProfessors(value.fieldId || undefined);
@@ -57,72 +64,54 @@ export function FinancialFilterBar({
 
   const set = (patch: Partial<FinancialFilters>) => onChange({ ...value, ...patch });
 
-  const hasFilters = Boolean(
-    value.range ||
-      value.from ||
-      value.to ||
-      value.levelId ||
-      value.fieldId ||
-      value.profId ||
-      value.groupId,
-  );
+  const hasAcademic = Boolean(value.levelId || value.fieldId || value.profId || value.groupId);
 
   return (
-    <div className="card space-y-3">
-      <div>
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
-          {t("financial.period", "Period")}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {QUICK_RANGES.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() =>
-                set({
-                  range: value.range === option.value ? undefined : option.value,
-                  from: undefined,
-                  to: undefined,
-                })
-              }
-              aria-pressed={value.range === option.value}
-              className={cn(
-                "btn text-xs min-w-[110px]",
-                value.range === option.value ? "btn-primary" : "btn-secondary",
-              )}
-            >
-              {t(option.label)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
+    <div className="card px-4 py-2.5">
+      <div className="flex items-center gap-2.5 flex-wrap">
         <div className="flex items-center gap-2">
           <CalendarDays size={15} className="text-text-secondary shrink-0" aria-hidden="true" />
-          <input
-            type="date"
-            aria-label={t("financial.from", "From")}
-            value={value.from ?? ""}
-            onChange={(e) => set({ from: e.target.value || undefined, range: undefined })}
-            className="input w-auto text-xs"
-          />
-          <span className="text-text-secondary text-xs">&mdash;</span>
-          <input
-            type="date"
-            aria-label={t("financial.to", "To")}
-            value={value.to ?? ""}
-            onChange={(e) => set({ to: e.target.value || undefined, range: undefined })}
-            className="input w-auto text-xs"
-          />
+          <select
+            aria-label={t("financial.period", "Période")}
+            value={value.range ?? ""}
+            onChange={(e) =>
+              set({ range: (e.target.value || undefined) as NonNullable<FinancialFilters["range"]>, from: undefined, to: undefined })
+            }
+            className="input w-auto min-w-[160px] text-xs"
+          >
+            <option value="">{t("financial.allPeriod", "Toute la période")}</option>
+            {QUICK_RANGES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(option.label)}
+              </option>
+            ))}
+          </select>
         </div>
+
+        <input
+          type="date"
+          aria-label={t("financial.from", "Du")}
+          value={value.from ?? ""}
+          onChange={(e) => set({ from: e.target.value || undefined, range: undefined })}
+          className="input w-auto text-xs"
+        />
+        <span className="text-text-secondary text-xs" aria-hidden="true">
+          &mdash;
+        </span>
+        <input
+          type="date"
+          aria-label={t("financial.to", "Au")}
+          value={value.to ?? ""}
+          onChange={(e) => set({ to: e.target.value || undefined, range: undefined })}
+          className="input w-auto text-xs"
+        />
 
         {showGranularity && (
           <select
-            aria-label={t("financial.granularity", "Granularity")}
+            aria-label={t("financial.granularity", "Granularité")}
             value={value.granularity ?? "monthly"}
             onChange={(e) => set({ granularity: e.target.value as Granularity })}
-            className="input w-auto min-w-[120px] text-xs"
+            className="input w-auto min-w-[130px] text-xs"
           >
             {GRANULARITIES.map((option) => (
               <option key={option.value} value={option.value}>
@@ -133,89 +122,108 @@ export function FinancialFilterBar({
         )}
 
         {showAcademic && (
-          <>
-            <select
-              aria-label={t("nav.levels", "Levels")}
-              value={value.levelId ?? ""}
-              onChange={(e) =>
-                set({
-                  levelId: e.target.value || undefined,
-                  fieldId: undefined,
-                  profId: undefined,
-                  groupId: undefined,
-                })
-              }
-              className="input w-auto min-w-[130px] text-xs"
-            >
-              <option value="">{t("students.allLevels", "All levels")}</option>
-              {levels?.map((level) => (
-                <option key={level.id} value={level.id}>
-                  {level.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              aria-label={t("nav.fields", "Fields")}
-              value={value.fieldId ?? ""}
-              onChange={(e) =>
-                set({ fieldId: e.target.value || undefined, profId: undefined, groupId: undefined })
-              }
-              className="input w-auto min-w-[130px] text-xs"
-            >
-              <option value="">{t("students.allFields", "All fields")}</option>
-              {fields
-                ?.filter((field) => !value.levelId || field.level_id === value.levelId)
-                .map((field) => (
-                  <option key={field.id} value={field.id}>
-                    {field.name}
-                  </option>
-                ))}
-            </select>
-
-            <select
-              aria-label={t("nav.professors", "Professors")}
-              value={value.profId ?? ""}
-              onChange={(e) => set({ profId: e.target.value || undefined, groupId: undefined })}
-              disabled={!value.fieldId}
-              className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
-            >
-              <option value="">{t("students.allProfessors", "All professors")}</option>
-              {professors?.map((professor) => (
-                <option key={professor.id} value={professor.id}>
-                  {professor.full_name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              aria-label={t("nav.groups", "Groups")}
-              value={value.groupId ?? ""}
-              onChange={(e) => set({ groupId: e.target.value || undefined })}
-              disabled={!value.profId}
-              className="input w-auto min-w-[130px] text-xs disabled:opacity-50"
-            >
-              <option value="">{t("students.allGroups", "All groups")}</option>
-              {groups?.map((group) => (
-                <option key={group.id} value={group.id}>
-                  {group.name}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-
-        {hasFilters && (
           <button
             type="button"
-            onClick={() => onChange({ granularity: value.granularity })}
+            onClick={() => setAdvancedOpen((open) => !open)}
+            aria-expanded={advancedOpen}
+            className={cn("btn text-xs", hasAcademic ? "btn-primary" : "btn-secondary")}
+          >
+            <SlidersHorizontal size={13} aria-hidden="true" />
+            {t("financial.advancedFilters", "Filtres avancés")}
+            <ChevronDown
+              size={13}
+              aria-hidden="true"
+              className={cn("transition-transform duration-150", advancedOpen && "rotate-180")}
+            />
+          </button>
+        )}
+
+        {hasAcademic && (
+          <button
+            type="button"
+            onClick={() =>
+              set({ levelId: undefined, fieldId: undefined, profId: undefined, groupId: undefined })
+            }
             className="btn btn-secondary text-xs"
           >
             <X size={13} aria-hidden="true" />
-            {t("students.clearFilters", "Clear")}
+            {t("students.clearFilters", "Effacer")}
           </button>
         )}
       </div>
+
+      {showAcademic && advancedOpen && (
+        <div className="flex items-center gap-3 flex-wrap rounded-btn bg-background p-3 border border-border mt-3">
+          <select
+            aria-label={t("nav.levels", "Niveaux")}
+            value={value.levelId ?? ""}
+            onChange={(e) =>
+              set({
+                levelId: e.target.value || undefined,
+                fieldId: undefined,
+                profId: undefined,
+                groupId: undefined,
+              })
+            }
+            className="input w-auto min-w-[130px] text-xs"
+          >
+            <option value="">{t("students.allLevels", "Tous les niveaux")}</option>
+            {levels?.map((level) => (
+              <option key={level.id} value={level.id}>
+                {level.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            aria-label={t("nav.fields", "Filières")}
+            value={value.fieldId ?? ""}
+            onChange={(e) =>
+              set({ fieldId: e.target.value || undefined, profId: undefined, groupId: undefined })
+            }
+            className="input w-auto min-w-[130px] text-xs"
+          >
+            <option value="">{t("students.allFields", "Toutes les filières")}</option>
+            {fields
+              ?.filter((field) => !value.levelId || field.level_id === value.levelId)
+              .map((field) => (
+                <option key={field.id} value={field.id}>
+                  {field.name}
+                </option>
+              ))}
+          </select>
+
+          <select
+            aria-label={t("nav.professors", "Professeurs")}
+            value={value.profId ?? ""}
+            onChange={(e) => set({ profId: e.target.value || undefined, groupId: undefined })}
+            disabled={!value.fieldId}
+            className="input w-auto min-w-[140px] text-xs disabled:opacity-50"
+          >
+            <option value="">{t("students.allProfessors", "Tous les professeurs")}</option>
+            {professors?.map((professor) => (
+              <option key={professor.id} value={professor.id}>
+                {professor.full_name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            aria-label={t("nav.groups", "Groupes")}
+            value={value.groupId ?? ""}
+            onChange={(e) => set({ groupId: e.target.value || undefined })}
+            disabled={!value.profId}
+            className="input w-auto min-w-[130px] text-xs disabled:opacity-50"
+          >
+            <option value="">{t("students.allGroups", "Tous les groupes")}</option>
+            {groups?.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

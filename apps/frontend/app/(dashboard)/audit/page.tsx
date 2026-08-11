@@ -22,7 +22,7 @@ import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { formatDate } from "@/lib/utils/format";
+import { formatDate, cn } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 import type { AuditLog } from "@/types";
 
@@ -343,7 +343,12 @@ export default function AuditLogPage() {
             type="button"
             onClick={() => { setEntityFilter(""); setPage(1); }}
             aria-pressed={!entityFilter}
-            className={`btn px-4 py-1.5 text-xs ${!entityFilter ? "btn-primary" : "btn-secondary"}`}
+            className={cn(
+              "inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+              !entityFilter
+                ? "bg-surface text-text-primary border-border shadow-dropdown font-semibold"
+                : "border-transparent text-text-secondary hover:bg-black/[0.04] hover:text-text-primary dark:hover:bg-white/[0.06]",
+            )}
           >
             {t("audit.all")}
           </button>
@@ -353,7 +358,12 @@ export default function AuditLogPage() {
               type="button"
               onClick={() => { setEntityFilter(entity); setPage(1); }}
               aria-pressed={entityFilter === entity}
-              className={`btn px-4 py-1.5 text-xs ${entityFilter === entity ? "btn-primary" : "btn-secondary"}`}
+              className={cn(
+                "inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                entityFilter === entity
+                  ? "bg-surface text-text-primary border-border shadow-dropdown font-semibold"
+                  : "border-transparent text-text-secondary hover:bg-black/[0.04] hover:text-text-primary dark:hover:bg-white/[0.06]",
+              )}
             >
               {ENTITY_LABELS[entity] ?? entity}
             </button>
@@ -398,7 +408,9 @@ export default function AuditLogPage() {
                         className={`transition-colors hover:bg-background/60 ${hasDetail ? "cursor-pointer" : ""}`}
                         onClick={() => hasDetail && setExpanded(isOpen ? null : log.id)}
                       >
-                        <td className="px-4 py-3">
+                        <td className="timeline-cell pl-7 px-4 py-3">
+                          <span aria-hidden="true" className="timeline-stem" />
+                          <span aria-hidden="true" className="timeline-dot" />
                           <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${toneFor(log.action)}`}>
                             {actionLabel(log.action)}
                           </span>

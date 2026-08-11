@@ -1,12 +1,13 @@
-﻿import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PrismaService } from "../prisma/prisma.service";
+import { eq } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { payrollPayments, studentPayments } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { AuditService } from "../audit/audit.service";
 import { PayrollDocumentService } from "./payroll-document.service";
 import { money, round2, toAmount, Money } from "./money.util";
-import { billingPeriods } from "./billing.util";
 
 /**
  * Printable quittances.
@@ -20,7 +21,7 @@ import { billingPeriods } from "./billing.util";
 @Injectable()
 export class ReceiptService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly settings: FinancialSettingsService,
     private readonly audit: AuditService,
     private readonly payrollDocuments: PayrollDocumentService,
@@ -28,12 +29,12 @@ export class ReceiptService {
 
   /** A receipt for one invoice, listing every movement against it. */
   async forPayment(paymentId: string, userId?: string, logoUrl?: string | null): Promise<string> {
-    const payment = await this.prisma.student_payments.findUnique({
-      where: { id: paymentId },
-      include: {
+    const payment = await this.db.client.query.studentPayments.findFirst({
+      where: eq(studentPayments.id, paymentId),
+      with: {
         student: true,
-        group: { include: { professor: { include: { field: { include: { level: true } } } } } },
-        transactions: { orderBy: { paid_at: "asc" } },
+        group: { with: { professor: { with: { field: { with: { level: true } } } } } },
+        paymentTransactions: { orderBy: (t, { asc }) => [asc(t.paid_at)] },
       },
     });
     if (!payment) throw new NotFoundException(`Paiement ${paymentId} introuvable`);
@@ -41,25 +42,25 @@ export class ReceiptService {
     const settings = await this.settings.get();
     const student = payment.student;
     // The invoice names the enrollment it covers, so the receipt shows that
-    // group â€” for a multi-group student, the one this quittance bills.
+    // group — for a multi-group student, the one this quittance bills.
     const group = payment.group;
     const professor = group?.professor;
     const field = professor?.field;
     const level = field?.level;
 
     const collected = round2(
-      payment.transactions.reduce((acc, t) => acc.plus(money(t.amount)), money(0)),
+      payment.paymentTransactions.reduce((acc, t) => acc.plus(money(t.amount)), money(0)),
     );
     const balance = round2(money(payment.amount_due).minus(collected));
 
-    // A receipt leaving the building is worth recording â€” it is the document a
+    // A receipt leaving the building is worth recording — it is the document a
     // dispute will be argued over.
     if (userId) {
       await this.audit.record({
         action: "receipt.generated",
         entityType: "student_payment",
         entityId: paymentId,
-        entityLabel: `${payment.period} Â· ${toAmount(collected)}`,
+        entityLabel: `${payment.period} · ${toAmount(collected)}`,
         actorId: userId,
         meta: { student_id: payment.student_id, period: payment.period },
       });
@@ -67,16 +68,16 @@ export class ReceiptService {
 
     const fmt = this.formatters(settings.currency, settings.currency_locale);
     const primaryReceipt =
-      payment.transactions.find((t) => t.type === "payment")?.receipt_number ??
+      payment.paymentTransactions.find((t) => t.type === "payment")?.receipt_number ??
       payment.id.slice(0, 8).toUpperCase();
 
-    const rows = payment.transactions
+    const rows = payment.paymentTransactions
       .map(
         (t) => `
         <tr>
           <td>${fmt.date(t.paid_at)}</td>
           <td>${this.typeLabel(t.type)}</td>
-          <td>${t.receipt_number ?? "â€”"}</td>
+          <td>${t.receipt_number ?? "—"}</td>
           <td class="right ${money(t.amount).isNegative() ? "negative" : ""}">${fmt.currency(Number(t.amount))}</td>
         </tr>`,
       )
@@ -88,43 +89,43 @@ export class ReceiptService {
       logoUrl: await this.inlineLogo(logoUrl),
       receiptNumber: primaryReceipt,
       rows: [
-        ["NumÃ©ro de quittance", primaryReceipt],
-        ["Ã‰tudiant", student ? `${student.first_name} ${student.last_name}` : "â€”"],
-        ["TÃ©lÃ©phone", student?.phone ?? "â€”"],
-        ["Niveau", level?.name ?? "â€”"],
-        ["FiliÃ¨re", field?.name ?? "â€”"],
-        ["Professeur", professor?.full_name ?? "â€”"],
-        ["Groupe", group?.name ?? "â€”"],
-        ["PÃ©riode", payment.period],
-        ["Date d'Ã©chÃ©ance", fmt.date(payment.due_date)],
+        ["Numéro de quittance", primaryReceipt],
+        ["Étudiant", student ? `${student.first_name} ${student.last_name}` : "—"],
+        ["Téléphone", student?.phone ?? "—"],
+        ["Niveau", level?.name ?? "—"],
+        ["Filière", field?.name ?? "—"],
+        ["Professeur", professor?.full_name ?? "—"],
+        ["Groupe", group?.name ?? "—"],
+        ["Période", payment.period],
+        ["Date d'échéance", fmt.date(payment.due_date)],
         ["Statut", this.statusLabel(payment.status)],
-        ["Montant dÃ»", fmt.currency(Number(payment.amount_due))],
+        ["Montant dû", fmt.currency(Number(payment.amount_due))],
       ],
       ledger:
-        payment.transactions.length > 0
+        payment.paymentTransactions.length > 0
           ? `<div class="ledger">
-               <h3>DÃ©tail des rÃ¨glements</h3>
+               <h3>Détail des règlements</h3>
                <table class="ledger-table">
                  <thead><tr><th>Date</th><th>Type</th><th>Quittance</th><th class="right">Montant</th></tr></thead>
                  <tbody>${rows}</tbody>
                </table>
              </div>`
           : "",
-      headlineLabel: balance.greaterThan(0) ? "Montant payÃ© (solde restant)" : "Montant payÃ©",
+      headlineLabel: balance.greaterThan(0) ? "Montant payé (solde restant)" : "Montant payé",
       headlineValue: fmt.currency(Number(collected)),
       subline: balance.greaterThan(0)
         ? `Solde restant : ${fmt.currency(Number(balance))}`
-        : "RÃ©glÃ© intÃ©gralement",
+        : "Réglé intégralement",
     });
   }
 
   /** A receipt for money handed to a professor. */
   async forPayroll(payoutId: string, userId?: string, logoUrl?: string | null): Promise<string> {
-    const payout = await this.prisma.payroll_payments.findUnique({
-      where: { id: payoutId },
-      include: {
-        professor: { include: { field: { include: { level: true } } } },
-        recorder: { select: { full_name: true } },
+    const payout = await this.db.client.query.payrollPayments.findFirst({
+      where: eq(payrollPayments.id, payoutId),
+      with: {
+        professor: { with: { field: { with: { level: true } } } },
+        user: { columns: { full_name: true } },
       },
     });
     if (!payout) throw new NotFoundException(`Versement ${payoutId} introuvable`);
@@ -142,41 +143,41 @@ export class ReceiptService {
         action: "receipt.generated",
         entityType: "payroll_payment",
         entityId: payoutId,
-        entityLabel: `${payout.professor.full_name} Â· ${toAmount(money(payout.amount))}`,
+        entityLabel: `${payout.professor.full_name} · ${toAmount(money(payout.amount))}`,
         actorId: userId,
         meta: { prof_id: payout.prof_id, period: payout.period },
       });
     }
 
     const groupRows: [string, string][] = groups.flatMap((g) => [
-      [`Groupe : ${g.group}`, `Ã‰tudiants : ${g.students}`],
+      [`Groupe : ${g.group}`, `Étudiants : ${g.students}`],
       [`Encaissements : ${fmt.currency(Number(g.revenue))}`, `Part professeur : ${fmt.currency(Number(g.professor_share))}`],
-      [`Part acadÃ©mie : ${fmt.currency(Number(g.school_share))}`, ""],
+      [`Part académie : ${fmt.currency(Number(g.school_share))}`, ""],
     ]);
 
     return this.document({
-      title: "ReÃ§u de Paiement Professeur",
+      title: "Reçu de Paiement Professeur",
       brand: settings.academy_name,
       logoUrl: await this.inlineLogo(logoUrl),
       receiptNumber: payout.receipt_number ?? payout.id.slice(0, 8).toUpperCase(),
       rows: [
-        ["NumÃ©ro de reÃ§u", payout.receipt_number ?? payout.id.slice(0, 8).toUpperCase()],
+        ["Numéro de reçu", payout.receipt_number ?? payout.id.slice(0, 8).toUpperCase()],
         ["Professeur", payout.professor.full_name],
-        ["TÃ©lÃ©phone", payout.professor.phone],
-        ["Niveau", payout.professor.field?.level?.name ?? "â€”"],
-        ["FiliÃ¨re", payout.professor.field?.name ?? "â€”"],
-        ["PÃ©riode", payout.period ?? "â€”"],
+        ["Téléphone", payout.professor.phone],
+        ["Niveau", payout.professor.field?.level?.name ?? "—"],
+        ["Filière", payout.professor.field?.name ?? "—"],
+        ["Période", payout.period ?? "—"],
         ["Date de paiement", fmt.date(payout.paid_at)],
-        ["MÃ©thode de paiement", "EspÃ¨ces"],
-        ["EnregistrÃ© par", payout.recorder?.full_name ?? "â€”"],
-        ["Formule appliquÃ©e", formulaDesc],
+        ["Méthode de paiement", "Espèces"],
+        ["Enregistré par", payout.user?.full_name ?? "—"],
+        ["Formule appliquée", formulaDesc],
         ...(payout.notes ? [["Notes", payout.notes]] as [string, string][] : []),
         ...groupRows,
       ],
       ledger: "",
-      headlineLabel: "Montant versÃ©",
+      headlineLabel: "Montant versé",
       headlineValue: fmt.currency(Number(payout.amount)),
-      subline: groups.length > 1 ? `RÃ©partition sur ${groups.length} groupes` : "",
+      subline: groups.length > 1 ? `Répartition sur ${groups.length} groupes` : "",
     });
   }
 
@@ -196,7 +197,7 @@ export class ReceiptService {
         base = `Salaire fixe de ${fixed} / mois`;
         break;
       case "fixed_per_student":
-        base = `${fixed} par Ã©tudiant actif`;
+        base = `${fixed} par étudiant actif`;
         break;
       case "fixed_per_group":
         base = `${fixed} par groupe actif`;
@@ -205,12 +206,12 @@ export class ReceiptService {
         base = `${pct} des encaissements + fixe ${fixed} / mois`;
         break;
       case "custom":
-        base = `Formule personnalisÃ©e : ${rule.customFormula ?? "â€”"}`;
+        base = `Formule personnalisée : ${rule.customFormula ?? "—"}`;
         break;
       default:
         base = `${pct} des encaissements`;
     }
-    return rule.isOverride ? `${base} (arrangement individuel)` : `${base} (dÃ©faut acadÃ©mie)`;
+    return rule.isOverride ? `${base} (arrangement individuel)` : `${base} (défaut académie)`;
   }
 
   private formatters(currency: string, locale: string) {
@@ -227,7 +228,7 @@ export class ReceiptService {
 
     return {
       currency: (value: number) => currencyFormatter.format(value),
-      date: (value: Date | null) => (value ? dateFormatter.format(value) : "â€”"),
+      date: (value: Date | null) => (value ? dateFormatter.format(value) : "—"),
     };
   }
 
@@ -245,17 +246,17 @@ export class ReceiptService {
   private statusLabel(status: string): string {
     switch (status) {
       case "paid":
-        return "PAYÃ‰";
+        return "PAYÉ";
       case "partially_paid":
-        return "PARTIELLEMENT PAYÃ‰";
+        return "PARTIELLEMENT PAYÉ";
       case "overdue":
         return "EN RETARD";
       case "due_soon":
-        return "Ã‰CHÃ‰ANCE PROCHE";
+        return "ÉCHÉANCE PROCHE";
       case "cancelled":
-        return "ANNULÃ‰";
+        return "ANNULÉ";
       default:
-        return "NON PAYÃ‰";
+        return "NON PAYÉ";
     }
   }
 
@@ -314,7 +315,7 @@ export class ReceiptService {
   <style>
     /* 80mm thermal roll: the printable strip is ~72mm after the printer's
        own side margins, so the sheet is sized to the paper, not the paper
-       to the sheet. Monochrome, compact, tabular â€” no colour fills, no
+       to the sheet. Monochrome, compact, tabular — no colour fills, no
        floats, nothing a thermal head renders as a smudge. */
     @page { size: 80mm auto; margin: 2mm 3mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -379,7 +380,7 @@ export class ReceiptService {
     </div>
     <div class="ruled"></div>
     <div class="title">${this.escape(input.title)}</div>
-    <div class="no">NÂ° ${this.escape(input.receiptNumber)}</div>
+    <div class="no">N° ${this.escape(input.receiptNumber)}</div>
     <div class="details"><table class="kv">${details}</table></div>
     ${input.ledger}
     <div class="amount">

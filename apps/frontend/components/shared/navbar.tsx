@@ -21,7 +21,7 @@ export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarPro
   }, []);
 
   return (
-    <header className="sticky top-0 z-30 h-16 bg-surface border-b border-border flex items-center justify-between px-4 lg:px-8 dark:glass">
+    <header className="sticky top-0 z-30 h-16 glass border-b border-border flex items-center justify-between px-4 lg:px-8">
       <div className="flex items-center gap-4 min-w-0">
         <button
           onClick={onToggleSidebar}

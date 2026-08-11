@@ -20,7 +20,7 @@ export function ErrorState({
 
   return (
     <div
-      className={`flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-red-300/60 bg-red-50/40 px-6 py-10 text-center dark:border-red-500/30 dark:bg-red-500/5 ${className}`}
+      className={`flex flex-col items-center justify-center gap-3 rounded-card border border-dashed border-red-300/60 bg-red-50/40 px-6 py-10 text-center dark:border-red-500/30 dark:bg-red-500/5 ${className}`}
     >
       <span className="flex size-11 items-center justify-center rounded-full bg-red-100 text-lg text-red-500 dark:bg-red-500/15 dark:text-red-400">
         <AlertTriangle />

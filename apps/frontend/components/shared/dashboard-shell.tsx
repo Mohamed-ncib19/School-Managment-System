@@ -7,6 +7,7 @@ import Sidebar from "@/components/shared/sidebar";
 import Navbar from "@/components/shared/navbar";
 import PageBreadcrumbs from "@/components/shared/page-breadcrumbs";
 import ShutdownFailedBanner from "@/components/shared/shutdown-failed-banner";
+import { AnimatedPage } from "@/components/shared/animated-page";
 
 /** Most specific route first — the first match wins. */
 const TITLES: ReadonlyArray<[RegExp, string]> = [
@@ -14,6 +15,13 @@ const TITLES: ReadonlyArray<[RegExp, string]> = [
   [/^\/attendance-sheet/, "Feuille de Présence"],
   [/^\/students\/[^/]+\/payments/, "Historique des Paiements"],
   [/^\/payments/, "Paiements"],
+  [/^\/financial\/payments/, "Paiements Étudiants"],
+  [/^\/financial\/professors/, "Paiements Professeurs"],
+  [/^\/financial\/analytics/, "Analytiques"],
+  [/^\/financial\/reports/, "Rapports"],
+  [/^\/financial\/transactions/, "Historique des Transactions"],
+  [/^\/financial\/settings/, "Paramètres Financiers"],
+  [/^\/financial/, "Finance"],
   [/^\/import/, "Import de Données"],
   [/^\/audit/, "Journal d'Audit"],
   [/^\/settings/, "Paramètres"],
@@ -57,7 +65,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           breadcrumb={showBreadcrumb ? <PageBreadcrumbs pathname={pathname} /> : undefined}
         />
         <main className="flex-1 p-4 lg:p-8 overflow-y-auto">
-          {children}
+          <AnimatedPage>{children}</AnimatedPage>
         </main>
       </div>
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -19,10 +19,19 @@ const loginSchema = z.object({ email: z.string().email(), password: z.string().m
 
 export default function LoginPage() {
   const router = useRouter();
-  const setAuth = useAuthStore((s) => s.setAuth);
+  const { setSession, status, hydrate } = useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
+
+  // A visitor with a live session cookie (browser Back from the dashboard, a
+  // stale tab, a refresh on /login) must never land on the form: restore the
+  // identity and send them straight back. The middleware does the same check
+  // server-side before this even renders.
+  useEffect(() => {
+    if (status === "loading") void hydrate();
+    if (status === "authenticated") router.replace("/dashboard");
+  }, [status, router, hydrate]);
 
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -34,7 +43,9 @@ export default function LoginPage() {
   const mutation = useMutation({
     mutationFn: authApi.login,
     onSuccess: (data) => {
-      setAuth(data.access_token, data.user);
+      // The access token lives in an httpOnly cookie; only the identity is
+      // kept in memory.
+      setSession(data.user);
       router.push("/dashboard");
     },
     onError: () => {

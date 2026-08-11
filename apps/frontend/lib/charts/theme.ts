@@ -71,11 +71,11 @@ export function statusClasses(status: PaymentStatus | string): string {
 export function payrollStatusClasses(status: string): string {
   switch (status) {
     case "paid":
-      return "bg-success-soft text-success-strong border-success/30";
+      return "bg-success-soft text-success-strong border-success/30 dark:bg-success-dark-soft dark:text-success-dark-strong dark:border-success-dark/20";
     case "partial":
-      return "bg-gold-50 text-gold-700 border-gold-200";
+      return "bg-gold-50 text-gold-700 border-gold-200 dark:bg-gold-400/15 dark:text-gold-300 dark:border-gold-400/20";
     default:
-      return "bg-danger-soft text-danger-strong border-danger/30";
+      return "bg-danger-soft text-danger-strong border-danger/30 dark:bg-danger-dark-soft dark:text-danger-dark-strong dark:border-danger-dark/20";
   }
 }
 

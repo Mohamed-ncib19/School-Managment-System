@@ -3,11 +3,11 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 
 const STATUS_COLORS: Record<string, string> = {
-  paid: "#22C55E",
-  due_soon: "#F5B940",
-  partially_paid: "#F5B940",
-  not_paid: "#9CA3AF",
-  cancelled: "#9CA3AF",
+  paid: "var(--chart-paid)",
+  due_soon: "var(--chart-partial)",
+  partially_paid: "var(--chart-partial)",
+  not_paid: "var(--chart-pending)",
+  cancelled: "var(--chart-cancelled)",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -52,12 +52,12 @@ export function PaymentsByStatusChart({ data }: PaymentsByStatusChartProps) {
           dataKey="value"
         >
           {chartData.map((entry) => (
-            <Cell key={entry.status} fill={STATUS_COLORS[entry.status] ?? "#9CA3AF"} />
+            <Cell key={entry.status} fill={STATUS_COLORS[entry.status] ?? "var(--chart-pending)"} />
           ))}
         </Pie>
         <Tooltip
           formatter={(value: number) => [value, "Payments"]}
-          contentStyle={{ borderRadius: 10, border: "1px solid #E5E7EB", boxShadow: "0 4px 16px rgba(0,0,0,0.06)" }}
+          contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
         />
         <Legend
           formatter={(value) => <span className="text-xs text-text-secondary">{value}</span>}

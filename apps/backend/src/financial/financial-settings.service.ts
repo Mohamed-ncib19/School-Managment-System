@@ -1,9 +1,12 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { financial_settings } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { eq } from "drizzle-orm";
+import { DbService } from "../db/db.service";
+import { financialSettings } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { UpdateFinancialSettingsDto } from "./dto/financial-settings.dto";
 import { validateFormula } from "./formula.util";
+
+type financial_settings = typeof financialSettings.$inferSelect;
 
 const SINGLETON = "global";
 
@@ -21,7 +24,7 @@ export class FinancialSettingsService {
   private cached: financial_settings | null = null;
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
   ) {}
 
@@ -30,11 +33,13 @@ export class FinancialSettingsService {
 
     // The migration seeds this row and a CHECK constraint keeps it unique, so
     // the upsert is belt-and-braces for a database restored from an older dump.
-    const settings = await this.prisma.financial_settings.upsert({
-      where: { singleton: SINGLETON },
-      update: {},
-      create: { singleton: SINGLETON },
-    });
+    // updated_at is passed explicitly: older databases have no default on it.
+    const [inserted] = await this.db.client
+      .insert(financialSettings)
+      .values({ singleton: SINGLETON, updated_at: new Date() })
+      .onConflictDoNothing()
+      .returning();
+    const settings = inserted ?? (await this.db.client.select().from(financialSettings).where(eq(financialSettings.singleton, SINGLETON)).limit(1))[0];
 
     this.cached = settings;
     return settings;
@@ -60,9 +65,9 @@ export class FinancialSettingsService {
       );
     }
 
-    const updated = await this.prisma.financial_settings.update({
-      where: { singleton: SINGLETON },
-      data: {
+    const [updated] = await this.db.client
+      .update(financialSettings)
+      .set({
         ...(dto.academy_name !== undefined && { academy_name: dto.academy_name }),
         ...(dto.academy_address !== undefined && { academy_address: dto.academy_address }),
         ...(dto.academy_phone !== undefined && { academy_phone: dto.academy_phone }),
@@ -95,8 +100,9 @@ export class FinancialSettingsService {
         ...(dto.academic_year_start_month !== undefined && {
           academic_year_start_month: dto.academic_year_start_month,
         }),
-      },
-    });
+      })
+      .where(eq(financialSettings.singleton, SINGLETON))
+      .returning();
 
     this.cached = updated;
 
@@ -122,10 +128,11 @@ export class FinancialSettingsService {
 
   /** The branding controller stores the file and records the path here. */
   async updateLogoPath(logoPath: string | null): Promise<financial_settings> {
-    const updated = await this.prisma.financial_settings.update({
-      where: { singleton: SINGLETON },
-      data: { logo_path: logoPath },
-    });
+    const [updated] = await this.db.client
+      .update(financialSettings)
+      .set({ logo_path: logoPath })
+      .where(eq(financialSettings.singleton, SINGLETON))
+      .returning();
     this.cached = updated;
     return updated;
   }

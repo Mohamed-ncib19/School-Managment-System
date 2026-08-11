@@ -1,14 +1,17 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PayrollDocumentType, Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { DbService, Tx } from "../db/db.service";
+import { groups, paymentTransactions, payrollDocumentType, payrollDocuments, payrollPayments, professors, studentPayments } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { RevenueCalculationService, type CompensationRule } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
 import { Money, ZERO, money, percentOf, round2, sum, toAmount } from "./money.util";
 import { periodOfDate, parsePeriod } from "./period.util";
+
+type PayrollDocumentType = (typeof payrollDocumentType.enumValues)[number];
 
 /** Everything either document is rendered from, frozen at generation time. */
 export interface SettlementSnapshot {
@@ -93,7 +96,7 @@ export interface SettlementSnapshot {
   }[];
 }
 
-type Db = Prisma.TransactionClient | PrismaService;
+type DbClient = DbService["client"] | Tx;
 
 const MONTHS_FR = [
   "janvier",
@@ -129,7 +132,7 @@ const MONTHS_FR = [
 @Injectable()
 export class PayrollDocumentService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DbService,
     private readonly audit: AuditService,
     private readonly settings: FinancialSettingsService,
     private readonly revenue: RevenueCalculationService,
@@ -153,32 +156,38 @@ export class PayrollDocumentService {
   async settlementForPeriod(
     profId: string,
     period?: string,
-    db: Db = this.prisma,
+    db: DbClient = this.db.client,
   ): Promise<SettlementSnapshot> {
     const target = period && period.trim() ? period : periodOfDate(new Date());
     const [professor, entitlement, rule, shares, paid, settings] = await Promise.all([
-      db.professors.findUnique({
-        where: { id: profId },
-        include: { field: { include: { level: true } } },
+      db.query.professors.findFirst({
+        where: eq(professors.id, profId),
+        with: { field: { with: { level: true } } },
       }),
       this.revenue.periodEntitlement(profId, target),
       this.revenue.ruleFor(profId),
-      db.payment_transactions.aggregate({
-        where: { prof_id: profId, period: target },
-        _sum: { amount: true, professor_share: true, school_share: true },
-      }),
-      db.payroll_payments.aggregate({
-        where: { prof_id: profId, period: target },
-        _sum: { amount: true },
-      }),
+      db
+        .select({
+          sum_amount: sql<string | null>`sum(${paymentTransactions.amount})`,
+          sum_professor_share: sql<string | null>`sum(${paymentTransactions.professor_share})`,
+          sum_school_share: sql<string | null>`sum(${paymentTransactions.school_share})`,
+        })
+        .from(paymentTransactions)
+        .where(and(eq(paymentTransactions.prof_id, profId), eq(paymentTransactions.period, target)))
+        .then((rows) => rows[0]),
+      db
+        .select({ sum_amount: sql<string | null>`sum(${payrollPayments.amount})` })
+        .from(payrollPayments)
+        .where(and(eq(payrollPayments.prof_id, profId), eq(payrollPayments.period, target)))
+        .then((rows) => rows[0]),
       this.settings.get(),
     ]);
 
     if (!professor) throw new NotFoundException(`Professeur ${profId} introuvable`);
 
-    const revenue = round2(money(shares._sum.amount));
-    let professorShare = round2(money(shares._sum.professor_share));
-    let schoolShare = round2(money(shares._sum.school_share));
+    const revenue = round2(money(shares.sum_amount));
+    let professorShare = round2(money(shares.sum_professor_share));
+    let schoolShare = round2(money(shares.sum_school_share));
     // Percentage and hybrid settlements are priced live: the split printed on
     // the document is the percentage in force now applied to the period's net
     // collections, so a change of rate is reflected on the quittance the moment
@@ -188,7 +197,7 @@ export class PayrollDocumentService {
       professorShare = this.revenue.shareFor(rule, revenue);
       schoolShare = round2(revenue.minus(professorShare));
     }
-    const amountPaid = round2(money(paid._sum.amount));
+    const amountPaid = round2(money(paid.sum_amount));
     const earned = entitlement.total;
     const balance = round2(earned.minus(amountPaid));
 
@@ -266,20 +275,23 @@ export class PayrollDocumentService {
    * frozen on the document like everything else.
    */
   private async pendingForProfessor(
-    db: Db,
+    db: DbClient,
     profId: string,
     period: string,
     rule: { model: string; percentage: Money | null },
     revenue: Money,
     earned: Money,
   ): Promise<SettlementSnapshot["pending"]> {
-    const invoices = await db.student_payments.findMany({
-      where: {
-        period,
-        group: { prof_id: profId },
-      },
-      select: { amount_due: true, paid_amount: true, student_id: true, status: true },
-    });
+    const invoices = await db
+      .select({
+        amount_due: studentPayments.amount_due,
+        paid_amount: studentPayments.paid_amount,
+        student_id: studentPayments.student_id,
+        status: studentPayments.status,
+      })
+      .from(studentPayments)
+      .innerJoin(groups, eq(studentPayments.group_id, groups.id))
+      .where(and(eq(studentPayments.period, period), eq(groups.prof_id, profId)));
 
     // Every distinct student billed this period, whatever their status: a
     // paused (or withdrawn) student still gets an invoice, so the roster of
@@ -323,17 +335,14 @@ export class PayrollDocumentService {
   }
 
   /** Per-group rows for the settlement table, mirroring the Excel workbook. */
-  private async groupBreakdown(db: Db, profId: string, period: string, rule: CompensationRule) {
-    const txns = await db.payment_transactions.findMany({
-      where: { prof_id: profId, period },
-      select: {
-        amount: true,
-        professor_share: true,
-        school_share: true,
-        payment: {
-          select: {
-            student: { select: { id: true } },
-            group: { select: { id: true, name: true } },
+  private async groupBreakdown(db: DbClient, profId: string, period: string, rule: CompensationRule) {
+    const txns = await db.query.paymentTransactions.findMany({
+      where: and(eq(paymentTransactions.prof_id, profId), eq(paymentTransactions.period, period)),
+      with: {
+        studentPayment: {
+          with: {
+            student: { columns: { id: true } },
+            group: { columns: { id: true, name: true } },
           },
         },
       },
@@ -346,14 +355,14 @@ export class PayrollDocumentService {
 
     for (const txn of txns) {
       // The invoice's own group — the enrollment the money was billed under.
-      const key = txn.payment?.group?.id ?? "unassigned";
-      const name = txn.payment?.group?.name ?? "Sans groupe";
+      const key = txn.studentPayment?.group?.id ?? "unassigned";
+      const name = txn.studentPayment?.group?.name ?? "Sans groupe";
       let row = byGroup.get(key);
       if (!row) {
         row = { group: name, students: new Set(), revenue: ZERO, professorShare: ZERO, schoolShare: ZERO };
         byGroup.set(key, row);
       }
-      row.students.add(txn.payment?.student?.id ?? "unknown");
+      row.students.add(txn.studentPayment?.student?.id ?? "unknown");
       row.revenue = row.revenue.plus(money(txn.amount));
       row.professorShare = row.professorShare.plus(money(txn.professor_share));
       row.schoolShare = row.schoolShare.plus(money(txn.school_share));
@@ -440,12 +449,12 @@ export class PayrollDocumentService {
    * back, the number is released with it, and the two documents can never exist
    * for a payout that was never recorded.
    */
-  async generateForPayout(tx: Prisma.TransactionClient, payoutId: string, userId: string) {
-    const payout = await tx.payroll_payments.findUnique({
-      where: { id: payoutId },
-      include: {
+  async generateForPayout(tx: Tx, payoutId: string, userId: string) {
+    const payout = await tx.query.payrollPayments.findFirst({
+      where: eq(payrollPayments.id, payoutId),
+      with: {
         professor: true,
-        recorder: { select: { full_name: true } },
+        user: { columns: { full_name: true } },
       },
     });
     if (!payout) throw new NotFoundException(`Versement ${payoutId} introuvable`);
@@ -458,7 +467,7 @@ export class PayrollDocumentService {
       amount: toAmount(money(payout.amount)),
       paid_at: payout.paid_at.toISOString(),
       notes: payout.notes,
-      recorded_by_name: payout.recorder?.full_name ?? null,
+      recorded_by_name: payout.user?.full_name ?? null,
     };
 
     const settlementNo = await this.receipts.next(tx, "settlement", payout.paid_at);
@@ -505,7 +514,7 @@ export class PayrollDocumentService {
   }
 
   private async mint(
-    tx: Prisma.TransactionClient,
+    tx: Tx,
     input: {
       payoutId: string;
       type: PayrollDocumentType;
@@ -517,8 +526,9 @@ export class PayrollDocumentService {
       snapshot: SettlementSnapshot;
     },
   ) {
-    return tx.payroll_documents.create({
-      data: {
+    const [row] = await tx
+      .insert(payrollDocuments)
+      .values({
         payout_id: input.payoutId,
         type: input.type,
         document_no: input.documentNo,
@@ -526,17 +536,20 @@ export class PayrollDocumentService {
         period: input.period,
         generated_by: input.generatedBy,
         generated_at: input.generatedAt,
-        data: input.snapshot as unknown as Prisma.InputJsonValue,
-      },
-    });
+        data: input.snapshot,
+      })
+      .returning();
+    return row;
   }
 
   /** Re-issues the pair of documents, e.g. after a payout was corrected. */
   async regenerate(payoutId: string, userId: string) {
-    const payout = await this.prisma.payroll_payments.findUnique({ where: { id: payoutId } });
-    if (!payout) throw new NotFoundException(`Versement ${payoutId} introuvable`);
+    await this.db.client.query.payrollPayments.findFirst({
+      where: eq(payrollPayments.id, payoutId),
+      columns: { id: true },
+    });
 
-    return this.prisma.$transaction((tx) => this.generateForPayout(tx, payoutId, userId));
+    return this.db.client.transaction((tx) => this.generateForPayout(tx, payoutId, userId));
   }
 
   // ---------------------------------------------------------------------------
@@ -544,30 +557,36 @@ export class PayrollDocumentService {
   // ---------------------------------------------------------------------------
 
   async listForPayout(payoutId: string) {
-    const docs = await this.prisma.payroll_documents.findMany({
-      where: { payout_id: payoutId },
-      include: { generator: { select: { full_name: true } } },
-      orderBy: { generated_at: "desc" },
+    const docs = await this.db.client.query.payrollDocuments.findMany({
+      where: eq(payrollDocuments.payout_id, payoutId),
+      with: { user: { columns: { full_name: true } } },
+      orderBy: (d, { desc }) => [desc(d.generated_at)],
     });
     return docs.map((doc) => this.summary(doc));
   }
 
   /** Every settlement paper for a professor, newest first — the reprint list. */
   async listForProfessor(profId: string, period?: string) {
-    const payouts = await this.prisma.payroll_payments.findMany({
-      where: { prof_id: profId, ...(period ? { period } : {}) },
-      select: { id: true },
-      orderBy: { paid_at: "desc" },
-      take: 200,
+    const payouts = await this.db.client.query.payrollPayments.findMany({
+      where: and(
+        eq(payrollPayments.prof_id, profId),
+        ...(period ? [eq(payrollPayments.period, period)] : []),
+      ),
+      columns: { id: true },
+      orderBy: (p, { desc }) => [desc(p.paid_at)],
+      limit: 200,
     });
-    const docs = await this.prisma.payroll_documents.findMany({
-      where: { payout_id: { in: payouts.map((p) => p.id) } },
-      include: {
-        generator: { select: { full_name: true } },
-        payout: { select: { id: true, period: true, paid_at: true } },
+    const docs = await this.db.client.query.payrollDocuments.findMany({
+      where: inArray(
+        payrollDocuments.payout_id,
+        payouts.map((p) => p.id),
+      ),
+      with: {
+        user: { columns: { full_name: true } },
+        payrollPayment: { columns: { id: true, period: true, paid_at: true } },
       },
-      orderBy: { generated_at: "desc" },
-      take: 400,
+      orderBy: (d, { desc }) => [desc(d.generated_at)],
+      limit: 400,
     });
     return docs.map((doc) => this.summary(doc));
   }
@@ -580,8 +599,8 @@ export class PayrollDocumentService {
     period: string | null;
     generated_by: string | null;
     generated_at: Date;
-    generator: { full_name: string } | null;
-    payout?: { id: string; period: string | null; paid_at: Date };
+    user: { full_name: string } | null;
+    payrollPayment?: { id: string; period: string | null; paid_at: Date };
   }) {
     return {
       id: doc.id,
@@ -590,10 +609,10 @@ export class PayrollDocumentService {
       title: doc.title,
       period: doc.period,
       generated_at: doc.generated_at.toISOString(),
-      generated_by: doc.generator?.full_name ?? null,
-      payout_id: doc.payout?.id ?? null,
-      payout_period: doc.payout?.period ?? null,
-      payout_paid_at: doc.payout?.paid_at.toISOString() ?? null,
+      generated_by: doc.user?.full_name ?? null,
+      payout_id: doc.payrollPayment?.id ?? null,
+      payout_period: doc.payrollPayment?.period ?? null,
+      payout_paid_at: doc.payrollPayment?.paid_at.toISOString() ?? null,
     };
   }
 
@@ -608,9 +627,9 @@ export class PayrollDocumentService {
    * quittances and report exports already follow.
    */
   async render(docId: string, logoUrl?: string | null): Promise<string> {
-    const doc = await this.prisma.payroll_documents.findUnique({
-      where: { id: docId },
-      include: { generator: { select: { full_name: true } } },
+    const doc = await this.db.client.query.payrollDocuments.findFirst({
+      where: eq(payrollDocuments.id, docId),
+      with: { user: { columns: { full_name: true } } },
     });
     if (!doc) throw new NotFoundException(`Document de règlement ${docId} introuvable`);
 

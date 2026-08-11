@@ -11,7 +11,14 @@ import {
   Cell,
 } from "recharts";
 
-const COLORS = ["#264EAE", "#77D4F2", "#F5B940", "#22C55E", "#3B82F6", "#EF4444"];
+const COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--chart-1)",
+];
 
 interface StudentsByFieldChartProps {
   data: { field: string; count: number }[];
@@ -29,12 +36,12 @@ export function StudentsByFieldChart({ data }: StudentsByFieldChartProps) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-        <XAxis dataKey="field" tick={{ fontSize: 12, fill: "#6B7280" }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fontSize: 12, fill: "#6B7280" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
+        <XAxis dataKey="field" tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} allowDecimals={false} />
         <Tooltip
           formatter={(value: number) => [value, "Students"]}
-          contentStyle={{ borderRadius: 10, border: "1px solid #E5E7EB", boxShadow: "0 4px 16px rgba(0,0,0,0.06)" }}
+          contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
         />
         <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={48}>
           {data.map((_, index) => (

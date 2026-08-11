@@ -4,6 +4,7 @@ module.exports = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./lib/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
@@ -16,10 +17,10 @@ module.exports = {
         },
         surface: {
           DEFAULT: "var(--color-surface)",
-          elevated: "var(--color-surface-elevated, #F8FAFC)",
+          elevated: "var(--color-surface-elevated, #FFFFFF)",
           hover: "var(--color-surface-hover, transparent)",
           active: "var(--color-surface-active, transparent)",
-          inset: "var(--color-surface-inset, #F1F5F9)",
+          inset: "var(--color-surface-inset, #F5F5F7)",
         },
         border: {
           DEFAULT: "var(--color-border)",
@@ -37,7 +38,7 @@ module.exports = {
         neutral: { soft: "#F3F4F6", strong: "#4B5563", dark: { soft: "rgba(255,255,255,0.08)", strong: "#9CA3AF" } },
       },
       fontFamily: {
-        sans: ["var(--font-poppins)", "Manrope", "Nunito", "ui-sans-serif", "system-ui"],
+        sans: ["var(--font-inter)", "SF Pro Display", "Segoe UI", "ui-sans-serif", "system-ui"],
       },
       fontSize: {
         h1: "32px",
@@ -57,14 +58,14 @@ module.exports = {
         btn: "10px",
         input: "10px",
         card: "14px",
-        modal: "18px",
+        modal: "20px",
         table: "12px",
       },
       boxShadow: {
-        card: "var(--shadow-card, 0 4px 16px rgba(0,0,0,0.06))",
-        hover: "var(--shadow-hover, 0 8px 24px rgba(0,0,0,0.08))",
-        modal: "var(--shadow-modal, 0 16px 48px rgba(0,0,0,0.12))",
-        dropdown: "var(--shadow-dropdown, 0 8px 24px rgba(0,0,0,0.10))",
+        card: "var(--shadow-card, 0 1px 2px rgba(0,0,0,0.05), 0 6px 16px rgba(0,0,0,0.05))",
+        hover: "var(--shadow-hover, 0 2px 4px rgba(0,0,0,0.06), 0 12px 24px rgba(0,0,0,0.10))",
+        modal: "var(--shadow-modal, 0 8px 16px rgba(0,0,0,0.08), 0 32px 80px rgba(0,0,0,0.20))",
+        dropdown: "var(--shadow-dropdown, 0 2px 4px rgba(0,0,0,0.05), 0 12px 32px rgba(0,0,0,0.12))",
       },
       spacing: {
         1: "4px",

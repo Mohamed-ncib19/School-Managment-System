@@ -5,9 +5,8 @@ import Link from "next/link";
 import {
   Users,
   CircleDollarSign,
-  AlertTriangle,
   ArrowUpRight,
-  TrendingUp,
+  AlertTriangle,
   Clock,
   BookOpen,
   ClipboardList,
@@ -15,7 +14,7 @@ import {
 } from "lucide-react";
 import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { DashboardSkeleton, PageLoader } from "@/components/shared/skeletons";
+import { PageLoader } from "@/components/shared/skeletons";
 import { RevenueChart } from "@/components/charts/revenue-chart";
 import { PaymentsByStatusChart } from "@/components/charts/payments-by-status-chart";
 import { StudentsByFieldChart } from "@/components/charts/students-by-field-chart";
@@ -96,7 +95,7 @@ export default function DashboardPage() {
   const isLoading = hierarchyLoading || financeLoading;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
         <h1 className="text-h2 font-bold text-text-primary mb-1">{t("dashboard.welcomeBack")}</h1>
         <p className="text-sm text-text-secondary">{t("dashboard.subtitle")}</p>
@@ -105,96 +104,121 @@ export default function DashboardPage() {
       {isLoading ? (
         <PageLoader text={t("common.loading", "Loading…")} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          <StatCard icon={<Users size={20} />} title={t("dashboard.totalStudents")} value={totalStudents} />
-          <StatCard icon={<UserCheck size={20} />} title={t("dashboard.totalFields", "Total Professors")} value={totalProfessors} />
-          <StatCard icon={<CircleDollarSign size={20} />} title={t("dashboard.monthlyRevenue")} value={formatCurrency(totalRevenue)} />
-          <StatCard icon={<Clock size={20} className="text-sky-400" />} title={"Today's Payments"} value={todayPaymentsCount} />
-          <StatCard icon={<AlertTriangle size={20} className="text-gold-500" />} title={"Pending"} value={pendingCount} />
-          <StatCard icon={<AlertTriangle size={20} className="text-red-500" />} title={t("dashboard.overdue")} value={overdueCount} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <StatCard icon={<Users size={18} />} title={t("dashboard.totalStudents")} value={totalStudents} />
+          <StatCard icon={<UserCheck size={18} />} title={t("dashboard.totalFields", "Total Professors")} value={totalProfessors} />
+          <StatCard icon={<CircleDollarSign size={18} />} title={t("dashboard.monthlyRevenue")} value={formatCurrency(totalRevenue)} />
+          <StatCard icon={<Clock size={18} />} title={"Today's Payments"} value={todayPaymentsCount} />
         </div>
       )}
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Link href="/hierarchy/student" className="card hover:shadow-hover transition-shadow group">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors">
-              <Users size={24} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-text-primary">{t("nav.students")}</p>
-              <p className="text-xs text-text-secondary">{t("dashboard.totalStudents")}: {totalStudents}</p>
-            </div>
-          </div>
-        </Link>
-        <Link href="/financial/payments" className="card hover:shadow-hover transition-shadow group">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-card bg-gold-50 dark:bg-gold/15 flex items-center justify-center text-gold-700 dark:text-gold-400 group-hover:bg-gold group-hover:text-white transition-colors">
-              <CircleDollarSign size={24} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-text-primary">{t("nav.studentPayments")}</p>
-              <p className="text-xs text-text-secondary">{t("dashboard.monthlyRevenue")}: {formatCurrency(totalRevenue)}</p>
-            </div>
-          </div>
-        </Link>
-        <Link href="/hierarchy" className="card hover:shadow-hover transition-shadow group">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-card bg-sky-50 dark:bg-sky/15 flex items-center justify-center text-sky-600 dark:text-sky-400 group-hover:bg-sky-500 group-hover:text-white transition-colors">
-              <BookOpen size={24} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-text-primary">{t("nav.fields")}</p>
-              <p className="text-xs text-text-secondary">{t("dashboard.totalFields", "Fields")}: {totalFields}</p>
-            </div>
-          </div>
-        </Link>
-        <Link href="/audit" className="card hover:shadow-hover transition-shadow group">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors">
-              <ClipboardList size={24} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-text-primary">{t("nav.audit")}</p>
-              <p className="text-xs text-text-secondary">{t("dashboard.viewLogs", "View logs")}</p>
-            </div>
-          </div>
-        </Link>
-      </div>
+      {/* Attention banners: the unpaid invoices, distilled. */}
+      {(dueSoonCount > 0 || overdueCount > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {dueSoonCount > 0 && (
+            <Link
+              href="/financial/payments?status=due_soon"
+              className="flex items-center gap-3 rounded-btn border border-gold/30 bg-gold-50 dark:bg-gold/10 px-4 py-3 transition-colors hover:bg-gold-100 dark:hover:bg-gold/15"
+            >
+              <Clock size={18} className="text-gold-500 dark:text-gold-400 shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-text-primary">
+                  {dueSoonCount} {t("dashboard.paymentsDueSoon")}
+                </p>
+                <p className="text-xs text-text-secondary truncate">{t("dashboard.checkPayments")}</p>
+              </div>
+              <ArrowUpRight size={16} className="ml-auto shrink-0 text-text-secondary" aria-hidden="true" />
+            </Link>
+          )}
+          {overdueCount > 0 && (
+            <Link
+              href="/financial/payments?status=overdue"
+              className="flex items-center gap-3 rounded-btn border border-danger/30 bg-danger-soft dark:bg-danger/10 px-4 py-3 transition-colors hover:bg-danger/10 dark:hover:bg-danger/15"
+            >
+              <AlertTriangle size={18} className="text-danger shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-text-primary">
+                  {overdueCount} {t("dashboard.overduePayments")}
+                </p>
+                <p className="text-xs text-text-secondary truncate">{t("dashboard.takeAction")}</p>
+              </div>
+              <ArrowUpRight size={16} className="ml-auto shrink-0 text-text-secondary" aria-hidden="true" />
+            </Link>
+          )}
+        </div>
+      )}
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      {/* Quick actions */}
+      <section>
+        <h2 className="text-sm font-semibold text-text-secondary mb-3">{t("dashboard.quickActions", "Accès rapides")}</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Link href="/hierarchy/student" className="card hover:shadow-hover transition-shadow group">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-card bg-neutral-soft dark:bg-white/10 flex items-center justify-center text-text-secondary group-hover:text-primary transition-colors">
+                <Users size={20} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary truncate">{t("nav.students")}</p>
+                <p className="text-xs text-text-secondary tabular-nums">{totalStudents}</p>
+              </div>
+            </div>
+          </Link>
+          <Link href="/financial/payments" className="card hover:shadow-hover transition-shadow group">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-card bg-neutral-soft dark:bg-white/10 flex items-center justify-center text-text-secondary group-hover:text-primary transition-colors">
+                <CircleDollarSign size={20} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary truncate">{t("nav.studentPayments")}</p>
+                <p className="text-xs text-text-secondary truncate">{formatCurrency(totalRevenue)}</p>
+              </div>
+            </div>
+          </Link>
+          <Link href="/hierarchy" className="card hover:shadow-hover transition-shadow group">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-card bg-neutral-soft dark:bg-white/10 flex items-center justify-center text-text-secondary group-hover:text-primary transition-colors">
+                <BookOpen size={20} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary truncate">{t("nav.fields")}</p>
+                <p className="text-xs text-text-secondary tabular-nums">{totalFields}</p>
+              </div>
+            </div>
+          </Link>
+          <Link href="/audit" className="card hover:shadow-hover transition-shadow group">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-card bg-neutral-soft dark:bg-white/10 flex items-center justify-center text-text-secondary group-hover:text-primary transition-colors">
+                <ClipboardList size={20} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary truncate">{t("nav.audit")}</p>
+                <p className="text-xs text-text-secondary truncate">{t("dashboard.viewLogs", "View logs")}</p>
+              </div>
+            </div>
+          </Link>
+        </div>
+      </section>
+
+      {/* Charts */}
+      <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="card">
-          <h2 className="text-h4 font-bold text-text-primary flex items-center gap-2 mb-4">
-            <CircleDollarSign size={18} className="text-primary" />
-            {t("dashboard.revenueByMonth")}
-          </h2>
+          <h2 className="text-h4 font-bold text-text-primary mb-4">{t("dashboard.revenueByMonth")}</h2>
           <RevenueChart data={revenueByMonth} />
         </div>
         <div className="card">
-          <h2 className="text-h4 font-bold text-text-primary flex items-center gap-2 mb-4">
-            <TrendingUp size={18} className="text-primary" />
-            {t("dashboard.paymentsByStatus")}
-          </h2>
+          <h2 className="text-h4 font-bold text-text-primary mb-4">{t("dashboard.paymentsByStatus")}</h2>
           <PaymentsByStatusChart data={paymentsByStatus} />
         </div>
         <div className="card">
-          <h2 className="text-h4 font-bold text-text-primary flex items-center gap-2 mb-4">
-            <Users size={18} className="text-primary" />
-            {t("dashboard.studentsPerField")}
-          </h2>
+          <h2 className="text-h4 font-bold text-text-primary mb-4">{t("dashboard.studentsPerField")}</h2>
           <StudentsByFieldChart data={studentsByField} />
         </div>
-      </div>
+      </section>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-h4 font-bold text-text-primary flex items-center gap-2">
-              <CircleDollarSign size={18} className="text-primary" />
-              {t("dashboard.recentPayments")}
-            </h2>
+            <h2 className="text-h4 font-bold text-text-primary">{t("dashboard.recentPayments")}</h2>
             <Link href="/financial/payments" className="text-xs text-primary hover:text-primary-600 flex items-center gap-1">
               {t("dashboard.viewAll")} <ArrowUpRight size={12} />
             </Link>
@@ -222,7 +246,7 @@ export default function DashboardPage() {
                       </td>
                       <td className="px-4 py-3 text-text-secondary">{p.period}</td>
                       <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
-                      <td className="px-4 py-3 text-right font-medium">{p.paid_amount ? formatCurrency(p.paid_amount) : "-"}</td>
+                      <td className="px-4 py-3 text-right font-medium tabular-nums">{p.paid_amount ? formatCurrency(p.paid_amount) : "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -233,10 +257,7 @@ export default function DashboardPage() {
 
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-h4 font-bold text-text-primary flex items-center gap-2">
-              <TrendingUp size={18} className="text-primary" />
-              {t("dashboard.latestEnrollments")}
-            </h2>
+            <h2 className="text-h4 font-bold text-text-primary">{t("dashboard.latestEnrollments")}</h2>
             <Link href="/hierarchy" className="text-xs text-primary hover:text-primary-600 flex items-center gap-1">
               {t("dashboard.viewAll")} <ArrowUpRight size={12} />
             </Link>
@@ -258,7 +279,7 @@ export default function DashboardPage() {
                     <tr key={s.id} className="hover:bg-background/50 transition-colors">
                       <td className="px-4 py-3 font-medium">{s.first_name} {s.last_name}</td>
                       <td className="px-4 py-3 text-text-secondary">{formatDate(s.enrollment_date)}</td>
-                      <td className="px-4 py-3">{formatCurrency(s.monthly_fee)}</td>
+                      <td className="px-4 py-3 tabular-nums">{formatCurrency(s.monthly_fee)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -266,34 +287,12 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-      </div>
+      </section>
 
-      {dueSoonCount > 0 && (
-        <div className="card border-l-4 border-l-gold bg-gold-50 dark:bg-gold/10">
-          <div className="flex items-center gap-3">
-            <Clock size={20} className="text-gold-500 dark:text-gold-400 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-text-primary">
-                <span className="font-bold">{dueSoonCount}</span> {t("dashboard.paymentsDueSoon")}
-              </p>
-              <p className="text-xs text-text-secondary">{t("dashboard.checkPayments")}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {overdueCount > 0 && (
-        <div className="card border-l-4 border-l-danger bg-danger-soft dark:bg-danger/10">
-          <div className="flex items-center gap-3">
-            <AlertTriangle size={20} className="text-danger shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-text-primary">
-                <span className="font-bold">{overdueCount}</span> {t("dashboard.overduePayments")}
-              </p>
-              <p className="text-xs text-text-secondary">{t("dashboard.takeAction")}</p>
-            </div>
-          </div>
-        </div>
+      {pendingCount > 0 && (
+        <p className="text-xs text-text-secondary text-center">
+          {pendingCount} {t("dashboard.paymentsDueSoon", "paiements en attente")}
+        </p>
       )}
     </div>
   );

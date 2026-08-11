@@ -1,50 +1,56 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { authApi } from "@/lib/api/auth.api";
 
 type UserRole = "super_admin";
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   full_name: string;
   role: UserRole;
 }
 
+/**
+ * In-memory session state — deliberately NOT persisted anywhere.
+ *
+ * The session itself lives in httpOnly cookies set by the backend (`iq_session`
+ * / `iq_refresh`): the browser sends them automatically, the server validates
+ * them, and no script on this page can ever read or forge them. Reloading the
+ * app therefore re-hydrates from `GET /auth/me`, not from storage, so the
+ * source of truth stays server-side.
+ */
 interface AuthState {
-  token: string | null;
   user: AuthUser | null;
-  hydrated: boolean;
-  isAuthenticated: boolean;
-  setAuth: (token: string, user: AuthUser) => void;
-  setHydrated: () => void;
-  logout: () => Promise<void>;
+  /** `loading` until the first `/auth/me` settles; gates the dashboard shell. */
+  status: "loading" | "authenticated" | "unauthenticated";
+  /** Restores the session on boot; 401s leave the user signed out. */
+  hydrate: () => Promise<void>;
+  /** Adopts the user returned by login / refresh / change-password. */
+  setSession: (user: AuthUser) => void;
   clearSession: () => void;
+  logout: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      token: null,
-      user: null,
-      hydrated: false,
-      isAuthenticated: false,
-      setAuth: (token: string, user: AuthUser) => set({ token, user, isAuthenticated: true, hydrated: true }),
-      setHydrated: () => set((s) => ({ hydrated: true, isAuthenticated: Boolean(s.token) })),
-      clearSession: () => set({ token: null, user: null, isAuthenticated: false, hydrated: true }),
-      logout: async () => {
-        try {
-          await authApi.logout();
-        } catch {
-          // ignore logout errors — we're clearing local state regardless
-        }
-        set({ token: null, user: null, isAuthenticated: false, hydrated: true });
-      },
-    }),
-    {
-      name: "iq-auth",
-      partialize: (s) => ({ token: s.token, user: s.user }),
-      onRehydrateStorage: () => (state) => state?.setHydrated(),
-    },
-  ),
-);
+export const useAuthStore = create<AuthState>()((set) => ({
+  user: null,
+  status: "loading",
+  hydrate: async () => {
+    try {
+      const user = await authApi.me();
+      set({ user, status: "authenticated" });
+    } catch {
+      set({ user: null, status: "unauthenticated" });
+    }
+  },
+  setSession: (user: AuthUser) => set({ user, status: "authenticated" }),
+  clearSession: () => set({ user: null, status: "unauthenticated" }),
+  logout: async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // The cookie is cleared server-side regardless; local state must not
+      // depend on the network.
+    }
+    set({ user: null, status: "unauthenticated" });
+  },
+}));

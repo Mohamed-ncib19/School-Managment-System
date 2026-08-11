@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import type { LucideIcon } from "lucide-react";
+import { ArrowUpRight, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils/format";
 
 type Tone = "neutral" | "positive" | "warning" | "danger" | "brand";
 
 const TONE_STYLES: Record<Tone, { icon: string; value: string }> = {
-  neutral: { icon: "bg-neutral-soft text-neutral-strong", value: "text-text-primary" },
-  brand: { icon: "bg-primary-50 text-primary", value: "text-text-primary" },
-  positive: { icon: "bg-success-soft text-success-strong", value: "text-success-strong" },
-  warning: { icon: "bg-gold-50 text-gold-700", value: "text-gold-700" },
-  danger: { icon: "bg-danger-soft text-danger-strong", value: "text-danger-strong" },
+  neutral: { icon: "bg-neutral-soft dark:bg-white/[0.08] text-neutral-strong", value: "text-text-primary" },
+  brand: { icon: "bg-primary-50 dark:bg-primary/15 text-primary", value: "text-text-primary" },
+  positive: { icon: "bg-success-soft dark:bg-success-dark-soft text-success-strong dark:text-success-dark-strong", value: "text-success-strong dark:text-success-dark-strong" },
+  warning: { icon: "bg-gold-50 dark:bg-gold/15 text-gold-700 dark:text-gold-400", value: "text-gold-700 dark:text-gold-400" },
+  danger: { icon: "bg-danger-soft dark:bg-danger-dark-soft text-danger-strong dark:text-danger-dark-strong", value: "text-danger-strong dark:text-danger-dark-strong" },
 };
 
 interface KpiCardProps {
@@ -40,6 +40,13 @@ export function KpiCard({ label, value, icon: Icon, tone = "neutral", hint, mete
 
   const body = (
     <div className="flex flex-col gap-3">
+      {href && (
+        <ArrowUpRight
+          size={14}
+          aria-hidden="true"
+          className="absolute top-3 right-3 text-text-tertiary transition-colors group-hover:text-primary"
+        />
+      )}
       <div className="flex items-start gap-3">
         <div className={cn("h-10 w-10 shrink-0 rounded-btn flex items-center justify-center", styles.icon)}>
           <Icon size={18} aria-hidden="true" />
@@ -75,7 +82,7 @@ export function KpiCard({ label, value, icon: Icon, tone = "neutral", hint, mete
 
   if (href) {
     return (
-      <Link href={href} className="card flex flex-col gap-3 transition-colors hover:border-primary/50">
+      <Link href={href} className="card relative flex flex-col gap-3 group transition-colors hover:border-primary/40">
         {body}
       </Link>
     );
