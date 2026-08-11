@@ -7,6 +7,7 @@ const STATUS_COLORS: Record<string, string> = {
   due_soon: "var(--chart-partial)",
   partially_paid: "var(--chart-partial)",
   not_paid: "var(--chart-pending)",
+  overdue: "var(--chart-overdue)",
   cancelled: "var(--chart-cancelled)",
 };
 
@@ -15,6 +16,7 @@ const STATUS_LABELS: Record<string, string> = {
   due_soon: "Due Soon",
   partially_paid: "Partially Paid",
   not_paid: "Not Paid",
+  overdue: "Overdue",
   cancelled: "Cancelled",
 };
 
