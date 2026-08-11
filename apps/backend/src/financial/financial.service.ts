@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { and, eq, gte, inArray, lte, ne, sql, SQL } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, lte, ne, sql, SQL } from "drizzle-orm";
 import { DbService } from "../db/db.service";
 import { payrollPayments, paymentTransactions, professors, studentPayments } from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
@@ -117,16 +117,13 @@ export class FinancialService {
         this.aggregateInvoices(invoiceScope),
         this.aggregateLedger(ledgerScope),
         this.aggregateInvoices(
-          and(paymentWhere(academic), inArray(studentPayments.status, ["not_paid", "due_soon", "partially_paid"]), gte(studentPayments.due_date, today)),
+          and(paymentWhere(academic), inArray(studentPayments.status, ["not_paid", "due_soon", "partially_paid"]), gt(studentPayments.due_date, today)),
         ),
         this.aggregateInvoices(
           and(
             paymentWhere(academic),
-            // "Overdue" is a derived view, not a stored state: invoices past
-            // their due date are plain not_paid (or partially paid). Count the
-            // outstanding balance of every invoice whose due date has passed.
-            inArray(studentPayments.status, ["not_paid", "due_soon", "partially_paid"]),
-            lte(studentPayments.due_date, today),
+            inArray(studentPayments.status, ["not_paid", "partially_paid"]),
+            lt(studentPayments.due_date, today),
           ),
         ),
         this.aggregateLedger(
@@ -289,7 +286,7 @@ export class FinancialService {
         this.aggregateInvoices(
           and(eq(studentPayments.period, currentPeriod), ne(studentPayments.status, "cancelled")),
         ),
-        this.countOverdue(and(inArray(studentPayments.status, ["overdue", "partially_paid"]), lte(studentPayments.due_date, today))),
+        this.countOverdue(and(inArray(studentPayments.status, ["not_paid", "partially_paid"]), lt(studentPayments.due_date, today))),
       ]);
 
       const expected = round2(money(invoiced.sum_amount_due));
