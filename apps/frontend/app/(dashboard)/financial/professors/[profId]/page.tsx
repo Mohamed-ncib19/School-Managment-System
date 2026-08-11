@@ -38,6 +38,18 @@ export default function ProfessorFinancialPage() {
   const { data, isLoading, isError, refetch } = useProfessorFinancials(profId, period || undefined);
   const { data: documents } = useProfessorDocuments(profId, period || undefined);
 
+  const groups = useMemo(() => {
+    if (!data?.assignments) return [];
+    return data.assignments.map((a) => ({ id: a.id, name: a.name }));
+  }, [data?.assignments]);
+
+  const selectedGroupBreakdown = useMemo(() => {
+    if (!selectedGroup || !data?.group_breakdown) return null;
+    return data.group_breakdown.find((g) => g.group === selectedGroup) ?? null;
+  }, [selectedGroup, data?.group_breakdown]);
+
+  const displayedBreakdown = selectedGroup ? selectedGroupBreakdown : null;
+
   if (isError) {
     return (
       <div className="space-y-4">
@@ -60,18 +72,6 @@ export default function ProfessorFinancialPage() {
   }
 
   const { professor, compensation, period: current, payroll_history, group_breakdown } = data;
-
-  const groups = useMemo(
-    () => data.assignments?.map((a) => ({ id: a.id, name: a.name })) ?? [],
-    [data.assignments],
-  );
-
-  const selectedGroupBreakdown = useMemo(() => {
-    if (!selectedGroup || !group_breakdown) return null;
-    return group_breakdown.find((g) => g.group === selectedGroup) ?? null;
-  }, [selectedGroup, group_breakdown]);
-
-  const displayedBreakdown = selectedGroup ? selectedGroupBreakdown : null;
 
   const breakdownSeries = [
     { key: "revenue", label: t("financial.revenueGenerated", "Revenue generated"), color: SERIES.revenue },
