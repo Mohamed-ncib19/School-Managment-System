@@ -2,12 +2,13 @@
 # ============================================================
 #  School Management System - Start All Servers (macOS / Linux)
 #
+#  Usage:  ./tools/macos/start.sh [start^|stop^|restart^|status]
+#  Double-click or no argument = start.
+#
 #  On first run it asks for the school name and admin account,
 #  generates the database credentials and secrets, then starts
 #  PostgreSQL, installs dependencies, applies migrations, seeds
 #  the admin account, and launches the API + web portal.
-#
-#  Run via:  ./tools/macos/start.sh
 # ============================================================
 set -euo pipefail
 
@@ -85,6 +86,37 @@ school_name() {
   local n; n=$(get_env "$BACKEND_DIR/.env" "SCHOOL_NAME")
   printf '%s' "${n:-School Management System}"
 }
+
+# --- PID file management ---------------------------------------------------
+write_pid() {
+  local name="$1" pid="$2"
+  mkdir -p "$LOG_DIR"
+  echo "$pid" > "$LOG_DIR/${name}.pid"
+}
+
+cleanup_stale_pids() {
+  rm -f "$LOG_DIR/backend.pid" "$LOG_DIR/frontend.pid"
+}
+
+read_pid() {
+  local name="$1"
+  local pid_file="$LOG_DIR/${name}.pid"
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "$pid"
+      return 0
+    fi
+    rm -f "$pid_file"
+  fi
+  return 1
+}
+
+# ===========================================================================
+#  START SEQUENCE
+# ===========================================================================
+run_start_sequence() {
 
 # ===========================================================================
 #  BANNER
@@ -278,8 +310,6 @@ if command -v psql &>/dev/null; then
 
   if [[ "$tables" == "-1" ]]; then
     info "Application login failed - setting up the role and database..."
-    # On Windows the portable cluster's superuser was created by the wizard
-    # (POSTGRES_SUPERUSER_PASSWORD in .env). macOS/Linux keep the old default.
     SUPER_PASS="$(get_env "$BACKEND_ENV" "POSTGRES_SUPERUSER_PASSWORD")"
     SUPER_PASS="${SUPER_PASS:-iq_academy_local}"
     export PGPASSWORD="$SUPER_PASS"
@@ -374,7 +404,7 @@ ok "Administrator account ready"
 # ===========================================================================
 write_step "Starting servers"
 
-mkdir -p "$LOG_DIR"
+cleanup_stale_pids
 
 api_up=false; web_up=false
 test_port "$BACKEND_PORT" && api_up=true
@@ -384,6 +414,7 @@ if [[ "$api_up" == "true" ]]; then
   ok "API already running" "port $BACKEND_PORT"
 else
   (cd "$BACKEND_DIR" && nohup pnpm run start:dev > "$LOG_DIR/backend.log" 2>&1 &)
+  echo $! > "$LOG_DIR/backend.pid"
   ok "API starting" "port $BACKEND_PORT"
 fi
 
@@ -391,6 +422,7 @@ if [[ "$web_up" == "true" ]]; then
   ok "Web portal already running" "port $FRONTEND_PORT"
 else
   (cd "$FRONTEND_DIR" && nohup pnpm run dev > "$LOG_DIR/frontend.log" 2>&1 &)
+  echo $! > "$LOG_DIR/frontend.pid"
   ok "Web portal starting" "port $FRONTEND_PORT"
 fi
 
@@ -435,3 +467,47 @@ printf '  └──────────────────────�
 printf "\n  Ready in $(elapsed).\n"
 echo "  This terminal can be closed - the servers keep running in the background."
 echo ""
+
+} # end run_start_sequence
+
+# ===========================================================================
+#  STOP
+# ===========================================================================
+do_stop() {
+  "$SCRIPT_DIR/scripts/stop.sh"
+}
+
+# ===========================================================================
+#  STATUS
+# ===========================================================================
+do_status() {
+  api_up=false; web_up=false
+  test_port "$BACKEND_PORT" && api_up=true
+  test_port "$FRONTEND_PORT" && web_up=true
+
+  if $api_up; then
+    printf "  ${GREEN}API is running${NC}       port %s\n" "$BACKEND_PORT"
+  else
+    printf "  ${DIM}API is stopped${NC}       port %s\n" "$BACKEND_PORT"
+  fi
+
+  if $web_up; then
+    printf "  ${GREEN}Web portal is running${NC} port %s\n" "$FRONTEND_PORT"
+  else
+    printf "  ${DIM}Web portal is stopped${NC} port %s\n" "$FRONTEND_PORT"
+  fi
+}
+
+# ===========================================================================
+#  MAIN - dispatch on the first argument
+# ===========================================================================
+case "${1:-start}" in
+  start)   run_start_sequence ;;
+  stop)    do_stop ;;
+  restart) do_stop 2>/dev/null || true; sleep 2; run_start_sequence ;;
+  status)  do_status ;;
+  *)
+    echo "Usage: $0 [start^|stop^|restart^|status]"
+    exit 1
+    ;;
+esac

@@ -13,7 +13,9 @@
 [CmdletBinding()]
 param(
   # Build and run production servers instead of the dev servers.
-  [switch]$Prod
+  [switch]$Prod,
+  # Show running status and exit without starting anything.
+  [switch]$Status
 )
 
 $ErrorActionPreference = "Continue"
@@ -121,10 +123,22 @@ if ($machineCode -eq 2) {
 } elseif ($machineCode -eq 0) {
   Write-Ok "Machine licence verified" "machine.lock OK"
 } else {
-  Write-Warn2 "Machine check returned an unknown code ($machineCode) - continuing"
-}
+    Write-Warn2 "Machine check returned an unknown code ($machineCode) - continuing"
+  }
 
-# ===========================================================================
+  if ($Status) {
+    foreach ($port in 3000, 3001) {
+      $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($listener) {
+        Write-Host "  Port $port : RUNNING (PID $($listener.OwningProcess))" -ForegroundColor Green
+      } else {
+        Write-Host "  Port $port : stopped" -ForegroundColor DarkGray
+      }
+    }
+    exit 0
+  }
+
+  # ===========================================================================
 #  1. TOOLCHAIN
 # ===========================================================================
 Write-Step "Checking prerequisites"
@@ -451,17 +465,19 @@ $webUp = Test-Port $FrontendPort
 if ($apiUp) {
   Write-Ok "API already running" "port $BackendPort"
 } else {
-  Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $BackendDir `
+  $backendProc = Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $BackendDir -PassThru `
     -ArgumentList "-NoLogo", "-NoProfile", "-Command",
       "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - API'; $backendCmd 2>&1 | Tee-Object -FilePath '$LogDir\backend.log'"
+  if ($backendProc) { $backendProc.Id | Out-File -FilePath (Join-Path $LogDir "backend.pid") -Encoding ascii }
 }
 
 if ($webUp) {
   Write-Ok "Web portal already running" "port $FrontendPort"
 } else {
-  Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $FrontendDir `
+  $webProc = Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $FrontendDir -PassThru `
     -ArgumentList "-NoLogo", "-NoProfile", "-Command",
       "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
+  if ($webProc) { $webProc.Id | Out-File -FilePath (Join-Path $LogDir "frontend.pid") -Encoding ascii }
 }
 
 if (-not $apiUp -or -not $webUp) {

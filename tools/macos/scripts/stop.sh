@@ -6,9 +6,15 @@
 #  (POST /api/system/stop). Kills the API and web portal
 #  process trees by port. PostgreSQL is left running.
 #
-#  Invoked detached by the backend.
+#  Also honours PID files written by start.sh for fast, precise
+#  shutdown. Falls back to port-based detection when no PID file
+#  exists or it is stale.
 # ============================================================
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_DIR="$ROOT_DIR/logs"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
 DIM='\033[0;90m'; NC='\033[0m'
@@ -33,6 +39,23 @@ kill_tree() {
     kill_tree "$child"
   done
   kill "$pid" 2>/dev/null || true
+}
+
+# Read PID from file; returns 0 and prints the PID if alive, 1 otherwise.
+read_pid() {
+  local name="$1"
+  local pid_file="$LOG_DIR/${name}.pid"
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "$pid"
+      return 0
+    fi
+    # Stale PID file - remove it.
+    rm -f "$pid_file"
+  fi
+  return 1
 }
 
 # Find PIDs listening on a port
@@ -60,30 +83,42 @@ banner "SCHOOL MANAGEMENT SYSTEM - Shutting down"
 
 PORTS=(3000 3001)
 LABELS=("Web portal" "API")
+PID_NAMES=("frontend" "backend")
 stopped=0
 
 for i in "${!PORTS[@]}"; do
   port="${PORTS[$i]}"
   name="${LABELS[$i]}"
+  pid_name="${PID_NAMES[$i]}"
   printf "  ==> %s (port %s)\n" "$name" "$port"
 
-  pids=$(find_pids "$port")
-  if [[ -z "$pids" ]]; then
-    info "Not running"
-    continue
-  fi
-
-  # Kill the process tree for each listener
-  for pid in $pids; do
-    info "Killing PID $pid and its children"
+  # Try PID file first (fast and precise).
+  pid=$(read_pid "$pid_name" 2>/dev/null || true)
+  if [[ -n "$pid" ]]; then
+    info "Killing PID $pid and its children (from PID file)"
     kill_tree "$pid"
-  done
+    rm -f "$LOG_DIR/${pid_name}.pid"
+  else
+    # Fall back to port-based detection.
+    pids=$(find_pids "$port")
+    if [[ -z "$pids" ]]; then
+      info "Not running"
+      continue
+    fi
+
+    # Kill the process tree for each listener
+    for pid in $pids; do
+      info "Killing PID $pid and its children"
+      kill_tree "$pid"
+    done
+  fi
 
   # Wait for port to free up
   freed=false
   for attempt in $(seq 1 10); do
     sleep 0.5
-    if [[ -z "$(find_pids "$port")" ]]; then
+    pid=$(read_pid "$pid_name" 2>/dev/null || true)
+    if [[ -z "$pid" ]] && [[ -z "$(find_pids "$port")" ]]; then
       freed=true; break
     fi
   done
@@ -111,3 +146,4 @@ else
 fi
 printf '  └──────────────────────────────────────────────────────┘\n'
 echo ""
+

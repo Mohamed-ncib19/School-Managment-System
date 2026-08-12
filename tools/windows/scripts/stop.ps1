@@ -29,6 +29,7 @@ $ErrorActionPreference = "Continue"
 #>
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $RootPattern = "*" + [System.Management.Automation.WildcardPattern]::Escape($ProjectRoot) + "*"
+$LogDir      = Join-Path $ProjectRoot "logs"
 
 # Only ever consider killing these. Anything else is somebody else's process.
 $KillableNames = @('node.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'nest.exe', 'next.exe')
@@ -106,8 +107,23 @@ foreach ($port in $Ports) {
     continue
   }
 
-  $root = Get-TreeRoot -ProcessId $listener.OwningProcess
-  $targetId = if ($root) { $root.ProcessId } else { $listener.OwningProcess }
+  # Try the PID file first (faster and more precise than walking from the port).
+  $pidFile = Join-Path $LogDir "$(if ($port -eq 3000) { 'frontend' } else { 'backend' }).pid"
+  $targetId = $null
+  if (Test-Path $pidFile) {
+    $storedPid = Get-Content $pidFile -Raw -ErrorAction SilentlyContinue
+    if ($storedPid -and (Get-Process -Id $storedPid -ErrorAction SilentlyContinue)) {
+      $root = Get-TreeRoot -ProcessId $storedPid
+      $targetId = if ($root) { $root.ProcessId } else { [int]$storedPid }
+    }
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
+  }
+
+  # Fall back to port detection when no PID file or it is stale.
+  if (-not $targetId) {
+    $root = Get-TreeRoot -ProcessId $listener.OwningProcess
+    $targetId = if ($root) { $root.ProcessId } else { $listener.OwningProcess }
+  }
 
   # /T takes the children with it, which is what stops the respawn.
   & taskkill.exe /PID $targetId /T /F 2>&1 | Out-Null

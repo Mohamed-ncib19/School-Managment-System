@@ -11,7 +11,8 @@
     "db:push": "pnpm -C apps/backend run db:push",
     "db:seed": "pnpm -C apps/backend run db:seed",
     "db:seed:hierarchy": "pnpm -C apps/backend run db:seed:hierarchy",
-    "db:studio": "pnpm -C apps/backend run db:studio"
+    "db:studio": "pnpm -C apps/backend run db:studio",
+    "postinstall": "node scripts/check-builds.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.0"
