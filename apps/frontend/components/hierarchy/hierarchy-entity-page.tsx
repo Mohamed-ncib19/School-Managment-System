@@ -28,7 +28,8 @@ import { studentsApi } from "@/lib/api/students.api";
 import { useGenerateInvoiceForStudent } from "@/hooks/use-financial";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { useViewMode } from "@/hooks/use-view-mode";
-import type { Level, Field, Professor, Group, Student, StudentStatus } from "@/types";
+import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
+import type { Level, Field, Professor, Group, Student, StudentStatus, TileDto } from "@/types";
 import { PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -48,6 +49,7 @@ import AssignmentSlotsPicker, {
   emptyAssignmentSlot,
   type AssignmentSlot,
 } from "@/components/hierarchy/assignment-slots-picker";
+import { WeeklyScheduleBuilder } from "@/components/scheduling/weekly-schedule-builder";
 
 const ENTITY_ICONS: Record<HierarchyEntity, any> = {
   level: Layers,
@@ -234,11 +236,15 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [parentPhone, setParentPhone] = useState("");
   const [enrollmentDate, setEnrollmentDate] = useState(new Date().toISOString().split("T")[0]);
   const [formStatus, setFormStatus] = useState<StudentStatus>("active");
-
   // Group-specific form state
-  const [formCapacity, setFormCapacity] = useState("");
-  const [formSchedule, setFormSchedule] = useState("");
 
+  const [formCapacity, setFormCapacity] = useState("");
+
+  const [formTiles, setFormTiles] = useState<TileDto[]>([]);
+
+  const { data: timeSlots } = useTimeSlots();
+
+  const { data: classrooms } = useClassrooms();
   // Accent color + list controls
   const [formColor, setFormColor] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -544,7 +550,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     setEnrollmentDate(new Date().toISOString().split("T")[0]);
     setFormStatus("active");
     setFormCapacity("");
-    setFormSchedule("");
+    setFormTiles([]);
     setFormColor(null);
     setParentPath([]);
     setAssignmentSlots([emptyAssignmentSlot()]);
@@ -589,7 +595,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     } else if (entityType === "group") {
       setFormName(entity.name ?? "");
       setFormCapacity(entity.capacity?.toString() ?? "");
-      setFormSchedule(entity.schedule_notes ?? "");
+      setFormTiles([]);
     } else {
       setFormName(entity.name ?? "");
       setFormDescription(entity.description ?? "");
@@ -677,7 +683,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     if (entityType === "group") {
       data.name = formName.trim();
       data.capacity = formCapacity ? parseInt(formCapacity) : undefined;
-      data.schedule_notes = formSchedule.trim() || undefined;
+      data.scheduleTiles = formTiles.length ? formTiles : undefined;
     }
 
     if (editingId) {
@@ -1524,12 +1530,12 @@ const childrenLabel =
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.scheduleNotes")}</label>
-                        <textarea
-                          value={formSchedule}
-                          onChange={(e) => setFormSchedule(e.target.value)}
-                          className="input"
-                          rows={2}
+                        <label className="block text-sm font-medium mb-1">{t("scheduling.schedule", "Schedule")}</label>
+                        <WeeklyScheduleBuilder
+                          groupId={editingId || undefined}
+                          profId={parentPath.find((p) => p.type === "professor")?.id || null}
+                          initialTiles={[]}
+                          onChange={setFormTiles}
                         />
                       </div>
                     </>

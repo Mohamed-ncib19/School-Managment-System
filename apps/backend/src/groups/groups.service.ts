@@ -5,12 +5,14 @@ import { groups, studentAssignments, students } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
+import { GroupScheduleService } from "../scheduling/group-schedule/group-schedule.service";
 
 @Injectable()
 export class GroupsService {
   constructor(
     private readonly db: DbService,
     private readonly auditService: AuditService,
+    private readonly groupSchedule: GroupScheduleService,
   ) {}
 
   /** Parent chain a group carries for display: professor -> field -> level. */
@@ -81,6 +83,7 @@ export class GroupsService {
     capacity?: number;
     schedule_notes?: string;
     color?: string;
+    scheduleTiles?: { day_of_week: number; start_time: string; end_time: string; classroom_id?: string | null }[];
   }, userId?: string) {
     const [group] = await this.db.client
       .insert(groups)
@@ -106,6 +109,14 @@ export class GroupsService {
         color: group.color,
       },
     });
+
+    if (dto.scheduleTiles?.length) {
+      const { conflicts } = await this.groupSchedule.syncTiles(group.id, dto.scheduleTiles, dto.prof_id);
+      if (conflicts.length > 0) {
+        return { ...group, _meta: { conflicts } };
+      }
+    }
+
     return group;
   }
 
@@ -114,6 +125,7 @@ export class GroupsService {
     capacity?: number;
     schedule_notes?: string;
     color?: string;
+    scheduleTiles?: { day_of_week: number; start_time: string; end_time: string; classroom_id?: string | null }[];
   }, userId?: string) {
     const before = await this.getGroup(id);
     const data: Partial<typeof groups.$inferInsert> = {};
@@ -138,6 +150,14 @@ export class GroupsService {
       newValues,
       meta: { changed_fields: changed },
     });
+
+    if (dto.scheduleTiles?.length) {
+      const { conflicts } = await this.groupSchedule.syncTiles(id, dto.scheduleTiles, before.prof_id);
+      if (conflicts.length > 0) {
+        return { ...updated, _meta: { conflicts } };
+      }
+    }
+
     return updated;
   }
 

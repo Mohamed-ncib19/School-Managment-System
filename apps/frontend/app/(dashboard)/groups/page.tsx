@@ -8,12 +8,14 @@ import { Plus, Pencil, Trash2, ChevronRight, Printer, Search } from "lucide-reac
 import { groupsApi } from "@/lib/api/groups.api";
 import { useProfessors, useFields, useLevels } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
-import type { Group, Professor, Field } from "@/types";
+import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
+import type { Group, Professor, Field, TileDto } from "@/types";
 import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { ViewToggle } from "@/components/shared/view-toggle";
+import { WeeklyScheduleBuilder } from "@/components/scheduling/weekly-schedule-builder";
 import { useTranslation } from "@/lib/i18n/context";
 
 export default function GroupsPage() {
@@ -35,10 +37,12 @@ export default function GroupsPage() {
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("");
-  const [scheduleNotes, setScheduleNotes] = useState("");
   const [profId, setProfId] = useState("");
+  const [tiles, setTiles] = useState<TileDto[]>([]);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deletedOpen, setDeletedOpen] = useState(false);
+  const { data: timeSlots } = useTimeSlots();
+  const { data: classrooms } = useClassrooms();
 
   // Filters
   const [search, setSearch] = useState("");
@@ -79,15 +83,15 @@ export default function GroupsPage() {
     return (professors ?? []).filter((p) => p.id === profId);
   }, [profId, professors]);
 
-  const resetForm = () => { setName(""); setCapacity(""); setScheduleNotes(""); setProfId(""); setEditingGroup(null); };
+  const resetForm = () => { setName(""); setCapacity(""); setProfId(""); setTiles([]); setEditingGroup(null); };
 
   const createMutation = useMutation({
-    mutationFn: (data: { prof_id: string; name: string; capacity?: number; schedule_notes?: string }) => groupsApi.create(data),
+    mutationFn: (data: { prof_id: string; name: string; capacity?: number; scheduleTiles?: TileDto[] }) => groupsApi.create(data),
     onSuccess: () => { qc.invalidateQueries(); setCreateOpen(false); resetForm(); },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; capacity?: number; schedule_notes?: string } }) => groupsApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; capacity?: number; scheduleTiles?: TileDto[] } }) => groupsApi.update(id, data),
     onSuccess: () => { qc.invalidateQueries(); setCreateOpen(false); resetForm(); },
   });
 
@@ -100,8 +104,8 @@ export default function GroupsPage() {
     setEditingGroup(group);
     setName(group.name);
     setCapacity(group.capacity?.toString() ?? "");
-    setScheduleNotes(group.schedule_notes ?? "");
     setProfId(group.professor?.id ?? "");
+    setTiles([]);
     setCreateOpen(true);
   };
 
@@ -316,11 +320,10 @@ export default function GroupsPage() {
           <div className="bg-surface rounded-modal shadow-hover p-6 w-full max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-h4 font-bold mb-4">{editingGroup ? t("fieldsHierarchy.editGroup", "Edit Group") : t("fieldsHierarchy.newGroup")}</h3>
             <form onSubmit={(e) => { e.preventDefault(); if (name.trim() && profId) {
-              const data = { name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, schedule_notes: scheduleNotes.trim() || undefined };
               if (editingGroup) {
-                updateMutation.mutate({ id: editingGroup.id, data });
+                updateMutation.mutate({ id: editingGroup.id, data: { name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, scheduleTiles: tiles.length ? tiles : undefined } });
               } else {
-                createMutation.mutate({ prof_id: profId, ...data });
+                createMutation.mutate({ prof_id: profId, name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, scheduleTiles: tiles.length ? tiles : undefined });
               }
             }}} className="space-y-3">
               <div>
@@ -339,8 +342,13 @@ export default function GroupsPage() {
                 <input type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} className="input" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.scheduleNotes")}</label>
-                <textarea value={scheduleNotes} onChange={(e) => setScheduleNotes(e.target.value)} className="input" rows={2} />
+                <label className="block text-sm font-medium mb-1">{t("scheduling.schedule", "Schedule")}</label>
+                <WeeklyScheduleBuilder
+                  groupId={editingGroup?.id}
+                  profId={profId || null}
+                  initialTiles={[]}
+                  onChange={setTiles}
+                />
               </div>
               <div className="flex gap-3 justify-end pt-2">
                 <button type="button" className="btn btn-secondary" onClick={() => { setCreateOpen(false); resetForm(); }}>{t("fieldsHierarchy.cancel")}</button>

@@ -18,6 +18,7 @@ import { AttendanceSheetsModule } from "./attendance-sheets/attendance-sheets.mo
 import { AiModule } from "./ai/ai.module";
 import { UpdatesModule } from "./updates/updates.module";
 import { SystemModule } from "./system/system.module";
+import { SchedulingModule } from "./scheduling/scheduling.module";
 import { MachineBindingService } from "./machine/machine-binding.service";
 
 @Module({
@@ -41,6 +42,7 @@ import { MachineBindingService } from "./machine/machine-binding.service";
     AiModule,
     UpdatesModule,
     SystemModule,
+    SchedulingModule,
   ],
   providers: [MachineBindingService],
 })

@@ -3,6 +3,27 @@ import { Transform, Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { ENTITY_COLOR_PATTERN, ENTITY_COLOR_MESSAGE } from "../../common/color.util";
 
+export class TileDto {
+  @ApiProperty({ minimum: 0, maximum: 6 })
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  day_of_week!: number;
+
+  @ApiProperty({ example: "09:00" })
+  @IsString()
+  start_time!: string;
+
+  @ApiProperty({ example: "10:30" })
+  @IsString()
+  end_time!: string;
+
+  @ApiPropertyOptional({ format: "uuid", nullable: true })
+  @IsOptional()
+  @IsUUID("4")
+  classroom_id?: string | null;
+}
+
 export class CreateGroupDto {
   @ApiProperty({ format: "uuid" })
   @IsUUID("4", { message: "prof_id must be a valid professor id" })
@@ -29,6 +50,10 @@ export class CreateGroupDto {
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @MaxLength(500)
   schedule_notes?: string;
+
+  @ApiPropertyOptional({ type: [TileDto], description: "Structured weekly schedule tiles" })
+  @IsOptional()
+  scheduleTiles?: TileDto[];
 
   @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
   @IsOptional()
@@ -59,6 +84,10 @@ export class UpdateGroupDto {
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @MaxLength(500)
   schedule_notes?: string;
+
+  @ApiPropertyOptional({ type: [TileDto], description: "Structured weekly schedule tiles" })
+  @IsOptional()
+  scheduleTiles?: TileDto[];
 
   @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
   @IsOptional()

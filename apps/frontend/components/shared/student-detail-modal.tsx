@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, DollarSign, Trash2, Pencil, ChevronRight } from "lucide-react";
+import { X, DollarSign, Trash2, Pencil, ChevronRight, CalendarDays } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
@@ -18,6 +18,8 @@ import AssignmentSlotsPicker, {
   emptyAssignmentSlot,
   type AssignmentSlot,
 } from "@/components/hierarchy/assignment-slots-picker";
+import { useMultiGroupCheck } from "@/hooks/use-scheduling";
+import { StudentTimetableModal } from "@/components/scheduling/student-timetable-modal";
 
 interface StudentDetailModalProps {
   studentId: string;
@@ -53,6 +55,8 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
     group_id: "",
   });
   const [assignmentSlots, setAssignmentSlots] = useState<AssignmentSlot[]>([emptyAssignmentSlot()]);
+  const [timetableOpen, setTimetableOpen] = useState(false);
+  const { data: eligibility } = useMultiGroupCheck(studentId);
 
   useEffect(() => {
     if (student) {
@@ -350,8 +354,24 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       </div>
                     ))}
                   </div>
+                  {eligibility?.eligible && (
+                    <button
+                      onClick={() => setTimetableOpen(true)}
+                      className="btn btn-secondary text-xs mt-3 flex items-center gap-2"
+                    >
+                      <CalendarDays size={14} />
+                      {t("scheduling.generateTimetable", "Générer l'emploi du temps")}
+                    </button>
+                  )}
                 </div>
               )}
+
+              <StudentTimetableModal
+                studentId={studentId}
+                studentName={`${student.first_name} ${student.last_name}`}
+                open={timetableOpen}
+                onClose={() => setTimetableOpen(false)}
+              />
 
               {!isEditing && (
                 <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">

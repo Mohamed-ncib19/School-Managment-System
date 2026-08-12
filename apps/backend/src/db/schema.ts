@@ -1,4 +1,4 @@
-import { pgTable, timestamp, text, integer, index, uniqueIndex, foreignKey, uuid, numeric, boolean, jsonb, check, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, timestamp, text, integer, index, uniqueIndex, foreignKey, uuid, numeric, boolean, jsonb, check, pgEnum, time } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const compensationModel = pgEnum("CompensationModel", ['percentage', 'fixed_salary', 'fixed_per_student', 'fixed_per_group', 'hybrid', 'custom'])
@@ -325,6 +325,110 @@ export const studentAssignments = pgTable("student_assignments", {
 			foreignColumns: [groups.id],
 			name: "student_assignments_group_id_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const classrooms = pgTable("classrooms", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	name: text().notNull(),
+	building: text(),
+	floor: text(),
+	room_number: text("room_number"),
+	capacity: integer(),
+	equipment: jsonb(),
+	is_active: boolean("is_active").default(true).notNull(),
+	color: text(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => [
+	index("classrooms_is_active_idx").using("btree", table.is_active.asc().nullsLast()),
+	index("classrooms_building_room_idx").using("btree", table.building.asc().nullsLast(), table.room_number.asc().nullsLast()),
+]);
+
+export const timeSlots = pgTable("time_slots", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	label: text().notNull(),
+	day_of_week: integer("day_of_week").notNull(),
+	start_time: time("start_time").notNull(),
+	end_time: time("end_time").notNull(),
+	sort_order: integer("sort_order").default(0).notNull(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	uniqueIndex("time_slots_day_start_end_key").using("btree", table.day_of_week.asc().nullsLast(), table.start_time.asc().nullsLast(), table.end_time.asc().nullsLast()),
+	check("time_slots_end_after_start_check", sql`end_time > start_time`),
+]);
+
+export const scheduleEntries = pgTable("schedule_entries", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	group_id: uuid("group_id").notNull(),
+	time_slot_id: uuid("time_slot_id").notNull(),
+	classroom_id: uuid("classroom_id"),
+	prof_id: uuid("prof_id").notNull(),
+	subject: text(),
+	notes: text(),
+	effective_from: timestamp("effective_from", { precision: 3, mode: 'date' }).notNull(),
+	effective_until: timestamp("effective_until", { precision: 3, mode: 'date' }),
+	is_active: boolean("is_active").default(true).notNull(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => [
+	index("schedule_entries_group_id_idx").using("btree", table.group_id.asc().nullsLast()),
+	index("schedule_entries_prof_id_idx").using("btree", table.prof_id.asc().nullsLast()),
+	index("schedule_entries_classroom_id_idx").using("btree", table.classroom_id.asc().nullsLast()),
+	index("schedule_entries_time_slot_id_idx").using("btree", table.time_slot_id.asc().nullsLast()),
+	index("schedule_entries_active_from_idx").using("btree", table.is_active.asc().nullsLast(), table.effective_from.asc().nullsLast()),
+	uniqueIndex("schedule_entries_group_slot_from_key").using("btree", table.group_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()),
+	uniqueIndex("schedule_entries_classroom_slot_from_key").using("btree", table.classroom_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()),
+	uniqueIndex("schedule_entries_prof_slot_from_key").using("btree", table.prof_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()),
+	check("schedule_entries_until_after_from_check", sql`effective_until IS NULL OR effective_until >= effective_from`),
+	foreignKey({
+			columns: [table.group_id],
+			foreignColumns: [groups.id],
+			name: "schedule_entries_group_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.time_slot_id],
+			foreignColumns: [timeSlots.id],
+			name: "schedule_entries_time_slot_id_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.classroom_id],
+			foreignColumns: [classrooms.id],
+			name: "schedule_entries_classroom_id_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.prof_id],
+			foreignColumns: [professors.id],
+			name: "schedule_entries_prof_id_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+]);
+
+export const studentScheduleExceptions = pgTable("student_schedule_exceptions", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	student_id: uuid("student_id").notNull(),
+	schedule_entry_id: uuid("schedule_entry_id").notNull(),
+	exception_type: text("exception_type").notNull(),
+	exception_date: timestamp("exception_date", { precision: 3, mode: 'date' }).notNull(),
+	notes: text(),
+	created_by: uuid("created_by"),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	uniqueIndex("student_schedule_exceptions_student_entry_date_key").using("btree", table.student_id.asc().nullsLast(), table.schedule_entry_id.asc().nullsLast(), table.exception_date.asc().nullsLast()),
+	foreignKey({
+			columns: [table.student_id],
+			foreignColumns: [students.id],
+			name: "student_schedule_exceptions_student_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.schedule_entry_id],
+			foreignColumns: [scheduleEntries.id],
+			name: "student_schedule_exceptions_schedule_entry_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [users.id],
+			name: "student_schedule_exceptions_created_by_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+	check("student_schedule_exceptions_type_check", sql`exception_type IN ('substitute','cancelled','makeup')`),
 ]);
 
 export const payrollDocuments = pgTable("payroll_documents", {

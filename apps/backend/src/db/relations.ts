@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { students, studentPayments, users, groups, fields, professors, levels, auditLogs, professorCompensations, paymentTransactions, payrollPayments, studentAssignments, payrollDocuments, attendanceSheets } from "./schema";
+import { students, studentPayments, users, groups, fields, professors, levels, auditLogs, professorCompensations, paymentTransactions, payrollPayments, studentAssignments, payrollDocuments, attendanceSheets, classrooms, timeSlots, scheduleEntries, studentScheduleExceptions } from "./schema";
 
 export const studentPaymentsRelations = relations(studentPayments, ({one, many}) => ({
 	student: one(students, {
@@ -145,5 +145,47 @@ export const attendanceSheetsRelations = relations(attendanceSheets, ({one}) => 
 	group: one(groups, {
 		fields: [attendanceSheets.group_id],
 		references: [groups.id]
+	}),
+}));
+export const classroomsRelations = relations(classrooms, ({many}) => ({
+	scheduleEntries: many(scheduleEntries),
+}));
+
+export const timeSlotsRelations = relations(timeSlots, ({many}) => ({
+	scheduleEntries: many(scheduleEntries),
+}));
+
+export const scheduleEntriesRelations = relations(scheduleEntries, ({one, many}) => ({
+	group: one(groups, {
+		fields: [scheduleEntries.group_id],
+		references: [groups.id]
+	}),
+	timeSlot: one(timeSlots, {
+		fields: [scheduleEntries.time_slot_id],
+		references: [timeSlots.id]
+	}),
+	classroom: one(classrooms, {
+		fields: [scheduleEntries.classroom_id],
+		references: [classrooms.id]
+	}),
+	professor: one(professors, {
+		fields: [scheduleEntries.prof_id],
+		references: [professors.id]
+	}),
+	studentExceptions: many(studentScheduleExceptions),
+}));
+
+export const studentScheduleExceptionsRelations = relations(studentScheduleExceptions, ({one}) => ({
+	student: one(students, {
+		fields: [studentScheduleExceptions.student_id],
+		references: [students.id]
+	}),
+	scheduleEntry: one(scheduleEntries, {
+		fields: [studentScheduleExceptions.schedule_entry_id],
+		references: [scheduleEntries.id]
+	}),
+	createdBy: one(users, {
+		fields: [studentScheduleExceptions.created_by],
+		references: [users.id]
 	}),
 }));
