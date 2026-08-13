@@ -1,0 +1,14 @@
+ALTER TABLE levels ADD COLUMN IF NOT EXISTS archived_at timestamp (3);
+ALTER TABLE levels ADD COLUMN IF NOT EXISTS is_system_placeholder boolean DEFAULT false NOT NULL;
+ALTER TABLE fields ADD COLUMN IF NOT EXISTS archived_at timestamp (3);
+ALTER TABLE fields ADD COLUMN IF NOT EXISTS archived_because_parent_id uuid;
+ALTER TABLE fields ADD COLUMN IF NOT EXISTS is_system_placeholder boolean DEFAULT false NOT NULL;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS archived_at timestamp (3);
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS archived_because_parent_id uuid;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS is_system_placeholder boolean DEFAULT false NOT NULL;
+ALTER TABLE professors ADD COLUMN IF NOT EXISTS archived_at timestamp (3);
+ALTER TABLE professors ADD COLUMN IF NOT EXISTS archived_because_parent_id uuid;
+ALTER TABLE professors ADD COLUMN IF NOT EXISTS is_system_placeholder boolean DEFAULT false NOT NULL;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_at timestamp (3);
+ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_because_parent_id uuid;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS is_system_placeholder boolean DEFAULT false NOT NULL;

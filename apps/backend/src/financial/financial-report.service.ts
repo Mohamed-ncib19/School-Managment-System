@@ -1,7 +1,18 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { DbService } from "../db/db.service";
-import { paymentTransactions, payrollPayments, studentAssignments, studentPayments, students } from "../db/schema";
+import {
+  fields,
+  groups,
+  levels,
+  paymentTransactions,
+  payrollPayments,
+  professors,
+  studentAssignments,
+  studentPayments,
+  students,
+  users,
+} from "../db/schema";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { AnalyticsService } from "./analytics.service";
@@ -118,41 +129,61 @@ export class FinancialReportService {
     }
   }
 
-  /** Every movement of money in the window, one row per transaction. */
+  /**
+   * Every movement of money in the window, one row per transaction.
+   *
+   * Read as a flat join rather than a nested relational query. A report is
+   * inherently the whole result set — capping it would silently hand somebody a
+   * short financial report, which is worse than a slow one — so the saving has
+   * to come from making each row cheap rather than from returning fewer.
+   *
+   * The nested form expanded each transaction into an object graph five levels
+   * deep (invoice → student, and invoice → group → professor → field → level),
+   * of which the table below reads eleven scalars. Selecting those scalars
+   * directly means one flat row per transaction instead of six nested objects,
+   * and no second full copy of the ledger in memory while it is mapped.
+   */
   private async collections(academic: AcademicFilter, range: DateRange) {
-    const rows = await this.db.client.query.paymentTransactions.findMany({
-      where: and(
-        transactionWhere(academic),
-        gte(paymentTransactions.paid_at, range.from),
-        lte(paymentTransactions.paid_at, range.to),
-      ),
-      orderBy: (t, { asc }) => [asc(t.paid_at)],
-      with: {
-        user: { columns: { full_name: true } },
-        studentPayment: {
-          with: {
-            student: true,
-            group: {
-              with: {
-                professor: { with: { field: { with: { level: true } } } },
-              },
-            },
-          },
-        },
-      },
-    });
+    const rows = await this.db.client
+      .select({
+        receipt_number: paymentTransactions.receipt_number,
+        paid_at: paymentTransactions.paid_at,
+        type: paymentTransactions.type,
+        period: paymentTransactions.period,
+        amount: paymentTransactions.amount,
+        professor_share: paymentTransactions.professor_share,
+        school_share: paymentTransactions.school_share,
+        first_name: students.first_name,
+        last_name: students.last_name,
+        // The invoice's own group — the enrollment the money was billed under.
+        group_name: groups.name,
+        professor_name: professors.full_name,
+        field_name: fields.name,
+        level_name: levels.name,
+        recorded_by: users.full_name,
+      })
+      .from(paymentTransactions)
+      .innerJoin(studentPayments, eq(studentPayments.id, paymentTransactions.payment_id))
+      .leftJoin(students, eq(students.id, studentPayments.student_id))
+      .leftJoin(groups, eq(groups.id, studentPayments.group_id))
+      .leftJoin(professors, eq(professors.id, groups.prof_id))
+      .leftJoin(fields, eq(fields.id, professors.field_id))
+      .leftJoin(levels, eq(levels.id, fields.level_id))
+      .leftJoin(users, eq(users.id, paymentTransactions.recorded_by))
+      .where(
+        and(
+          transactionWhere(academic),
+          gte(paymentTransactions.paid_at, range.from),
+          lte(paymentTransactions.paid_at, range.to),
+        ),
+      )
+      .orderBy(asc(paymentTransactions.paid_at));
 
     let total = ZERO;
     let professorTotal = ZERO;
     let schoolTotal = ZERO;
 
     const data = rows.map((row) => {
-      const student = row.studentPayment?.student;
-      // The invoice's own group — the enrollment the money was billed under.
-      const group = row.studentPayment?.group;
-      const professor = group?.professor;
-      const field = professor?.field;
-
       total = total.plus(money(row.amount));
       professorTotal = professorTotal.plus(money(row.professor_share));
       schoolTotal = schoolTotal.plus(money(row.school_share));
@@ -161,16 +192,16 @@ export class FinancialReportService {
         receipt_number: row.receipt_number,
         paid_at: row.paid_at.toISOString().slice(0, 10),
         type: TRANSACTION_TYPE_LABELS[row.type] ?? row.type,
-        student: student ? `${student.first_name} ${student.last_name}` : "—",
-        level: field?.level?.name ?? "—",
-        field: field?.name ?? "—",
-        professor: professor?.full_name ?? "—",
-        group: group?.name ?? "—",
+        student: row.first_name ? `${row.first_name} ${row.last_name}` : "—",
+        level: row.level_name ?? "—",
+        field: row.field_name ?? "—",
+        professor: row.professor_name ?? "—",
+        group: row.group_name ?? "—",
         period: row.period,
         amount: toAmount(money(row.amount)),
         professor_share: toAmount(money(row.professor_share)),
         school_share: toAmount(money(row.school_share)),
-        recorded_by: row.user?.full_name ?? "—",
+        recorded_by: row.recorded_by ?? "—",
       };
     });
 

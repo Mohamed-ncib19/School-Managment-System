@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Keep `next build` and `next dev` in separate output directories: they
+  // share the same working dir, and a production build writing into the live
+  // `.next` of a running dev server makes every referenced chunk 404.
+  distDir: process.env.NODE_ENV === "production" ? ".next-build" : ".next",
   images: { remotePatterns: [] },
   // Shrink the module graph per route: the heavy client libs are imported
   // wholesale today, which stretches both dev compiles and first-visit TTI.

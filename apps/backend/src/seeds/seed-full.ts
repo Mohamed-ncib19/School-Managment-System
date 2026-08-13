@@ -98,6 +98,26 @@ async function reset() {
   console.log("  Done.");
 }
 
+/**
+ * Inserts rows in chunks small enough for the wire protocol.
+ *
+ * PostgreSQL's extended query protocol allows at most 65535 bind parameters in
+ * one statement, and a multi-row INSERT spends one per column per row. A full
+ * seed produces tens of thousands of invoices, so handing them over in a single
+ * statement overflows that ceiling and the server rejects the whole batch with
+ * a protocol error (08P01) rather than anything that names the real cause.
+ *
+ * 500 rows keeps even the widest table here well inside the limit while still
+ * being one round trip per 500 rows rather than per row.
+ */
+const INSERT_CHUNK = 500;
+
+async function insertInChunks(table: any, rows: any[]): Promise<void> {
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    await db.insert(table).values(rows.slice(i, i + INSERT_CHUNK)).onConflictDoNothing();
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   console.log("Full seed: erasing hierarchy + injecting 4 levels × 4 fields × 4 profs × 3 groups × 10 students...");
@@ -249,22 +269,22 @@ async function main() {
 
   // ── Bulk insert ─────────────────────────────────────────────────────────
   console.log("  Inserting levels...");
-  await db.insert(levels).values(levelRows);
+  await insertInChunks(levels, levelRows);
 
   console.log("  Inserting fields...");
-  await db.insert(fields).values(fieldRows);
+  await insertInChunks(fields, fieldRows);
 
   console.log("  Inserting professors...");
-  await db.insert(professors).values(profRows);
+  await insertInChunks(professors, profRows);
 
   console.log("  Inserting groups...");
-  await db.insert(groups).values(groupRows);
+  await insertInChunks(groups, groupRows);
 
   console.log("  Inserting students...");
-  await db.insert(students).values(studentRows);
+  await insertInChunks(students, studentRows);
 
   console.log("  Inserting assignments...");
-  await db.insert(studentAssignments).values(assignmentRows);
+  await insertInChunks(studentAssignments, assignmentRows);
 
   // ── Cross-field students: 10% of students get a second group in the same level ──
   console.log("  Creating cross-field students...");
@@ -353,13 +373,13 @@ async function main() {
   }
 
   if (crossAssignmentRows.length > 0) {
-    await db.insert(studentAssignments).values(crossAssignmentRows).onConflictDoNothing();
-    await db.insert(studentPayments).values(crossPaymentRows).onConflictDoNothing();
+    await insertInChunks(studentAssignments, crossAssignmentRows);
+    await insertInChunks(studentPayments, crossPaymentRows);
     console.log(`  Created ${crossCount} cross-field student enrollments`);
   }
 
   console.log("  Inserting payments...");
-  await db.insert(studentPayments).values(paymentRows).onConflictDoNothing();
+  await insertInChunks(studentPayments, paymentRows);
 
   // ── Create payment_transactions for all paid/partial payments ──────────
   console.log("  Creating payment transactions...");

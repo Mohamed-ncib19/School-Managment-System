@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { X, Printer, AlertTriangle, Plus } from "lucide-react";
 import { useStudentSchedule, useMultiGroupCheck } from "@/hooks/use-scheduling";
+import { openStudentTimetable } from "@/lib/api/scheduling.api";
 import type { ScheduleEntry, StudentScheduleException } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -58,20 +59,19 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
 
   if (!open) return null;
 
+  /**
+   * Prints the server-rendered timetable rather than scraping the modal.
+   *
+   * Lifting the DOM out of the dialog produced whatever the screen happened to
+   * be showing — the modal's own layout, its buttons, its colours stripped —
+   * and could only ever print what had already loaded. The server document is
+   * built for A4, spans every group the student is enrolled in, and is the
+   * same output as the printer action on the student list.
+   */
   const handlePrint = () => {
-    const printContent = document.getElementById("student-timetable-print");
-    if (!printContent) return;
-    const w = window.open("", "_blank");
-    if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><title>Timetable - ${studentName}</title><style>
-      body { font-family: sans-serif; padding: 40px; }
-      h1 { font-size: 18px; margin-bottom: 4px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-      th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
-      th { background: #f5f5f5; }
-    </style></head><body>${printContent.innerHTML}</body></html>`);
-    w.document.close();
-    w.print();
+    openStudentTimetable(studentId).catch(() => {
+      /* The opened tab reports its own failure. */
+    });
   };
 
   return (

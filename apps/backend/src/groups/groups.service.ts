@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
 import { GroupScheduleService } from "../scheduling/group-schedule/group-schedule.service";
+import { SentinelService } from "../hierarchy/sentinel.service";
 
 @Injectable()
 export class GroupsService {
@@ -13,6 +14,7 @@ export class GroupsService {
     private readonly db: DbService,
     private readonly auditService: AuditService,
     private readonly groupSchedule: GroupScheduleService,
+    private readonly sentinels: SentinelService,
   ) {}
 
   /** Parent chain a group carries for display: professor -> field -> level. */
@@ -20,19 +22,21 @@ export class GroupsService {
     professor: { with: { field: { with: { level: true } } } },
   } as const;
 
+  /**
+   * The group list, with its active-student count.
+   *
+   * The roster itself is deliberately not fetched. It used to come back in
+   * full — every enrollment, with the student attached — purely so the rows
+   * could be filtered by status in Node and counted, while a second grouped
+   * query counted the very same thing in SQL. Nothing renders those names (the
+   * cards show the professor), so the whole roster was payload the client
+   * discarded: at 192 groups it is the difference between 887 KB and 237 KB,
+   * and it grows with enrolment rather than with the number of groups.
+   */
   async listGroups(profId?: string) {
     const groupRows = await this.db.client.query.groups.findMany({
       where: and(eq(groups.is_active, true), profId ? eq(groups.prof_id, profId) : undefined),
-      with: {
-        ...GroupsService.HIERARCHY_WITH,
-        // Lightweight roster preview for the group cards (student names only,
-        // active enrollments — mirrors the count below). Drizzle cannot filter
-        // the nested relation by student status, so fetch it (plus status) and
-        // filter here, stripping the status column back out of the payload.
-        assignments: {
-          with: { student: { columns: { id: true, first_name: true, last_name: true, status: true } } },
-        },
-      },
+      with: GroupsService.HIERARCHY_WITH,
       orderBy: [desc(groups.created_at)],
     });
     if (groupRows.length === 0) return groupRows;
@@ -47,14 +51,9 @@ export class GroupsService {
       .where(and(inArray(studentAssignments.group_id, groupRows.map((g) => g.id)), eq(students.status, "active")))
       .groupBy(studentAssignments.group_id);
     const byGroup = new Map(counts.map((c) => [c.group_id, c.count]));
-    return groupRows.map(({ assignments, ...group }) => ({
+
+    return groupRows.map((group) => ({
       ...group,
-      assignments: (assignments ?? [])
-        .filter((a) => a.student.status === "active")
-        .map((a) => ({
-          ...a,
-          student: { id: a.student.id, first_name: a.student.first_name, last_name: a.student.last_name },
-        })),
       _count: { students: byGroup.get(group.id) ?? 0 },
     }));
   }
@@ -84,6 +83,8 @@ export class GroupsService {
     schedule_notes?: string;
     color?: string;
     scheduleTiles?: { day_of_week: number; start_time: string; end_time: string; classroom_id?: string | null }[];
+    /** Set once the user has seen the professor/student clashes and chosen to proceed. */
+    allowConflicts?: boolean;
   }, userId?: string) {
     const [group] = await this.db.client
       .insert(groups)
@@ -95,6 +96,7 @@ export class GroupsService {
         color: dto.color,
       })
       .returning();
+    await this.sentinels.ensureStudentSentinel(group.id);
     await this.auditService.record({
       action: "group.created",
       entityType: "group",
@@ -111,7 +113,9 @@ export class GroupsService {
     });
 
     if (dto.scheduleTiles?.length) {
-      const { conflicts } = await this.groupSchedule.syncTiles(group.id, dto.scheduleTiles, dto.prof_id);
+      const { conflicts } = await this.groupSchedule.syncTiles(group.id, dto.scheduleTiles, dto.prof_id, {
+        allowConflicts: dto.allowConflicts,
+      });
       if (conflicts.length > 0) {
         return { ...group, _meta: { conflicts } };
       }
@@ -126,6 +130,8 @@ export class GroupsService {
     schedule_notes?: string;
     color?: string;
     scheduleTiles?: { day_of_week: number; start_time: string; end_time: string; classroom_id?: string | null }[];
+    /** Set once the user has seen the professor/student clashes and chosen to proceed. */
+    allowConflicts?: boolean;
   }, userId?: string) {
     const before = await this.getGroup(id);
     const data: Partial<typeof groups.$inferInsert> = {};
@@ -151,8 +157,13 @@ export class GroupsService {
       meta: { changed_fields: changed },
     });
 
-    if (dto.scheduleTiles?.length) {
-      const { conflicts } = await this.groupSchedule.syncTiles(id, dto.scheduleTiles, before.prof_id);
+    // `undefined` means the caller did not touch the schedule; an empty array
+    // means they cleared it. Treating the two the same made removing a group's
+    // last session impossible.
+    if (dto.scheduleTiles !== undefined) {
+      const { conflicts } = await this.groupSchedule.syncTiles(id, dto.scheduleTiles, before.prof_id, {
+        allowConflicts: dto.allowConflicts,
+      });
       if (conflicts.length > 0) {
         return { ...updated, _meta: { conflicts } };
       }

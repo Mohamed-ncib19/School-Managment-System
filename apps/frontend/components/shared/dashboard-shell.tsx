@@ -12,6 +12,9 @@ import { AnimatedPage } from "@/components/shared/animated-page";
 /** Most specific route first — the first match wins. */
 const TITLES: ReadonlyArray<[RegExp, string]> = [
   [/^\/hierarchy/, "Hiérarchie"],
+  [/^\/schedule\/entries/, "Séances d'Emploi du Temps"],
+  [/^\/schedule\/classrooms/, "Salles de Classe"],
+  [/^\/schedule\/time-slots/, "Plages Horaires"],
   [/^\/attendance-sheet/, "Feuille de Présence"],
   [/^\/students\/[^/]+\/payments/, "Historique des Paiements"],
   [/^\/payments/, "Paiements"],

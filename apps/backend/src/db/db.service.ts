@@ -19,10 +19,24 @@ import * as relations from "./relations";
  */
 @Injectable()
 export class DbService implements OnModuleInit, OnModuleDestroy {
+  /**
+   * Timeouts, because the failure they prevent is silent.
+   *
+   * With none of these, a single query that never returns holds one of the ten
+   * connections forever; ten of them and every subsequent request hangs on
+   * `pool.connect()` with no error, no log and nothing to point at. Bounding
+   * both ends turns that into an exception naming the query.
+   *
+   * `statement_timeout` is deliberately generous — the reports and the invoice
+   * generation pass are legitimately slow — while still being finite.
+   */
   private readonly pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     max: 10,
     idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 60_000,
+    query_timeout: 60_000,
   });
 
   readonly client: NodePgDatabase<typeof schema & typeof relations> = drizzle(this.pool, {

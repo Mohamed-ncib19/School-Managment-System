@@ -1,21 +1,19 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq, ilike, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
 import { classrooms } from "../../db/schema";
-import type { Classroom } from "../types";
 
 @Injectable()
 export class ClassroomRepository {
   constructor(private readonly db: DbService) {}
 
-  async list(building?: string, active?: boolean) {
+  async list(active?: boolean) {
     const conditions = [];
-    if (building) conditions.push(ilike(classrooms.building, `%${building}%`));
     if (active !== undefined) conditions.push(eq(classrooms.is_active, active));
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     return this.db.client.query.classrooms.findMany({
       where,
-      orderBy: [asc(classrooms.building), asc(classrooms.room_number)],
+      orderBy: [asc(classrooms.room_number)],
     });
   }
 
@@ -27,7 +25,6 @@ export class ClassroomRepository {
 
   async create(data: {
     name: string;
-    building?: string | null;
     floor?: string | null;
     room_number?: string | null;
     capacity?: number | null;
@@ -48,9 +45,8 @@ export class ClassroomRepository {
     return row;
   }
 
-  async findDuplicate(building: string, roomNumber: string, excludeId?: string) {
+  async findDuplicate(roomNumber: string, excludeId?: string) {
     const conditions = [
-      eq(classrooms.building, building),
       eq(classrooms.room_number, roomNumber),
     ];
     if (excludeId) {

@@ -52,6 +52,15 @@ export interface HierarchySummary {
  * Counts computed in SQL. Replaces downloading every student (384 KB) just to
  * tally them in the browser.
  */
+export interface DeleteImpact {
+  level: number;
+  field: number;
+  professor: number;
+  group: number;
+  student: number;
+  directChildren: Array<{ id: string; name: string; type: string }>;
+}
+
 export const hierarchyApi = {
   summary: () => ApiClient.get<HierarchySummary>("/hierarchy/summary"),
   fields: (levelId?: string) =>
@@ -62,4 +71,14 @@ export const hierarchyApi = {
     ApiClient.get<LevelSummary[]>("/hierarchy/levels"),
   groups: (profId?: string) =>
     ApiClient.get<GroupSummary[]>("/hierarchy/groups", { params: profId ? { profId } : {} }),
+  deleteImpact: (type: string, id: string) =>
+    ApiClient.get<DeleteImpact>(`/hierarchy/${type}/${id}/delete-impact`),
+  archiveCascade: (type: string, id: string) =>
+    ApiClient.post(`/hierarchy/${type}/${id}/archive-cascade`, {}),
+  deleteCascade: (type: string, id: string) =>
+    ApiClient.post(`/hierarchy/${type}/${id}/delete-cascade`, { confirm: true }),
+  detachDelete: (type: string, id: string, plan: any) =>
+    ApiClient.post(`/hierarchy/${type}/${id}/detach-delete`, { plan }),
+  unassigned: (parentType: string, parentId: string) =>
+    ApiClient.get<any[]>(`/hierarchy/unassigned`, { params: { parentType, parentId } }),
 };

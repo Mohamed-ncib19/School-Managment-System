@@ -1,13 +1,13 @@
 import { ApiClient } from "./client";
-import type { Group } from "@/types";
+import type { Group, TileDto } from "@/types";
 
 export const groupsApi = {
   list: (profId?: string) =>
     ApiClient.get<Group[]>("/groups", { params: profId ? { profId } : {} }),
   get: (id: string) => ApiClient.get<Group>(`/groups/${id}`),
-  create: (data: { prof_id: string; name: string; capacity?: number; schedule_notes?: string; color?: string }) =>
+  create: (data: { prof_id: string; name: string; capacity?: number; schedule_notes?: string; color?: string; scheduleTiles?: TileDto[] }) =>
     ApiClient.post<Group>("/groups", data),
-  update: (id: string, data: { name?: string; capacity?: number; schedule_notes?: string; color?: string }) =>
+  update: (id: string, data: { name?: string; capacity?: number; schedule_notes?: string; color?: string; scheduleTiles?: TileDto[] }) =>
     ApiClient.put<Group>(`/groups/${id}`, data),
   delete: (id: string) => ApiClient.del(`/groups/${id}`),
   deleted: (profId?: string) =>

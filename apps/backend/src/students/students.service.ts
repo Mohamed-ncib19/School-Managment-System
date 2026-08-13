@@ -1,11 +1,45 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
-import { and, asc, desc, eq, ilike, inArray, like, or, sql, SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, like, or, sql, SQL } from "drizzle-orm";
 import { DbService } from "../db/db.service";
 import { groups, paymentTransactions, studentAssignments, studentPayments, students } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { normalizeTunisianPhone } from "../common/phone.util";
 import { PaymentService } from "../financial/payment.service";
+import { studentWhere } from "../financial/financial.filters";
+
+/**
+ * Ceiling on the legacy unpaginated list.
+ *
+ * Generous enough that no existing screen notices, small enough that a
+ * forgotten caller cannot pull the whole table with its parent chain attached.
+ */
+const UNPAGINATED_LIST_CAP = 200;
+
+/** The orders the student list offers, expressed once. */
+export type StudentSort = "newest" | "nameAsc" | "nameDesc" | "color";
+
+/**
+ * Sorting belongs beside paging.
+ *
+ * Ordering the rows in the browser would only order the page the browser
+ * happens to hold, so "sort by name" would shuffle fifty rows and leave the
+ * other four hundred where they were.
+ */
+function studentOrderBy(sort: StudentSort | undefined): SQL[] {
+  switch (sort) {
+    case "nameAsc":
+      return [asc(students.last_name), asc(students.first_name)];
+    case "nameDesc":
+      return [desc(students.last_name), desc(students.first_name)];
+    // Coloured rows first, then alphabetically — `color IS NULL` sorts false
+    // before true, which puts the tinted rows at the top.
+    case "color":
+      return [sql`(${students.color} is null)`, asc(students.color), asc(students.last_name), asc(students.first_name)];
+    default:
+      return [desc(students.created_at)];
+  }
+}
 
 /** Parent chain each student row carries for display: group -> professor -> field -> level. */
 const GROUP_CHAIN_WITH = {
@@ -22,27 +56,40 @@ const GROUP_CHAIN_WITH = {
   },
 } as const;
 
-/** The same enrollments, restricted to the fields the student rows render. */
-const ASSIGNMENTS_LITE_WITH = {
-  assignments: {
-    with: {
-      group: {
-        columns: { id: true, name: true },
-        with: {
-          professor: {
-            columns: { id: true, full_name: true },
-            with: {
-              field: {
-                columns: { id: true, name: true },
-                with: {
-                  level: { columns: { id: true, name: true } },
-                },
-              },
-            },
+/**
+ * The parent chain a *listed* student carries — ids, names and the colours the
+ * cards tint themselves with, and nothing else.
+ *
+ * Deliberately narrower than the detail projection: a list row renders a
+ * breadcrumb and a coloured dot, so shipping the whole `groups`, `professors`,
+ * `fields` and `levels` rows for each of them is payload nobody reads.
+ */
+const LIST_CHAIN_COLUMNS = {
+  columns: { id: true, name: true, color: true },
+  with: {
+    professor: {
+      columns: { id: true, full_name: true, color: true },
+      with: {
+        field: {
+          columns: { id: true, name: true, color: true },
+          with: {
+            level: { columns: { id: true, name: true, color: true } },
           },
         },
       },
     },
+  },
+} as const;
+
+/** The student's primary (billing) group, list-sized. */
+const GROUP_CHAIN_LITE_WITH = { group: LIST_CHAIN_COLUMNS } as const;
+
+/** The same enrollments, restricted to the fields the student rows render. */
+const ASSIGNMENTS_LITE_WITH = {
+  assignments: {
+    // The assignment's own columns are unrestricted on purpose: the edit form
+    // seeds each enrollment slot from `fee`.
+    with: { group: LIST_CHAIN_COLUMNS },
     orderBy: [asc(studentAssignments.created_at)] as SQL[],
   },
 } as const;
@@ -119,18 +166,36 @@ export class StudentsService {
     });
   }
 
-  private async buildWhere(params: { groupId?: string; status?: string; search?: string }): Promise<ReturnType<typeof and>> {
-    const clauses: ReturnType<typeof eq>[] = [];
+  /**
+   * Translates the list filters into one `where`.
+   *
+   * The academic scope goes through the shared `studentWhere`, the same
+   * translation the financial screens use, so a student list narrowed to a
+   * level and a payments list narrowed to the same level cannot disagree about
+   * which students that level contains.
+   *
+   * Synchronous by design: scoping to a group used to select every member id
+   * into Node and feed them back as an `IN (...)` list, which is a round trip
+   * and an unbounded parameter list for something `EXISTS` answers in place.
+   */
+  private buildWhere(params: {
+    groupId?: string;
+    profId?: string;
+    fieldId?: string;
+    levelId?: string;
+    status?: string;
+    search?: string;
+  }): SQL | undefined {
+    const clauses: SQL[] = [];
 
-    if (params.groupId) {
-      const ids = (
-        await this.db.client
-          .select({ student_id: studentAssignments.student_id })
-          .from(studentAssignments)
-          .where(eq(studentAssignments.group_id, params.groupId))
-      ).map((r) => r.student_id);
-      clauses.push(inArray(students.id, ids));
-    }
+    const academic = studentWhere({
+      levelId: params.levelId,
+      fieldId: params.fieldId,
+      profId: params.profId,
+      groupId: params.groupId,
+    });
+    if (academic) clauses.push(academic);
+
     if (params.status) clauses.push(eq(students.status, params.status as any));
     if (params.search?.trim()) {
       const term = params.search.trim();
@@ -149,33 +214,61 @@ export class StudentsService {
   }
 
   /**
-   * Returns a bare array when no `page` is supplied, so existing callers keep
-   * working, and a paginated envelope when it is.
+   * The student list: filtered, sorted, counted and paged in the database.
+   *
+   * Every filter the UI offers — the academic chain, the status and the free
+   * text — is applied here rather than in the browser. That is what makes
+   * paging safe: a page-local filter would search only the rows that happened
+   * to be on screen and quietly report "no matches" for a student two pages
+   * down.
+   *
+   * A bare array is still returned when no `page` is supplied, so any caller
+   * outside this repo keeps working — but it is capped rather than unbounded,
+   * because that branch used to return the whole table with its full parent
+   * chain and was the largest response the API could produce.
    */
   async listStudents(params: {
     groupId?: string;
+    profId?: string;
+    fieldId?: string;
+    levelId?: string;
     page?: number;
     limit?: number;
     search?: string;
     status?: string;
+    sort?: StudentSort;
   } = {}) {
-    const { groupId, page, limit = 25, search, status } = params;
+    const { page, limit = 25 } = params;
+    const where = this.buildWhere(params);
+    const listWith = { ...GROUP_CHAIN_LITE_WITH, ...ASSIGNMENTS_LITE_WITH };
+    const orderBy = studentOrderBy(params.sort);
 
     if (!page) {
-      return this.db.client.query.students.findMany({
-        where: await this.buildWhere({ groupId, status, search }),
-        with: { ...GROUP_CHAIN_WITH, ...ASSIGNMENTS_LITE_WITH },
-        orderBy: [desc(students.created_at)],
+      const cap = Math.min(Math.max(1, limit ?? UNPAGINATED_LIST_CAP), UNPAGINATED_LIST_CAP);
+      // One extra row purely to detect truncation: reporting it is the
+      // difference between a bounded response and a silently short one.
+      const rows = await this.db.client.query.students.findMany({
+        where,
+        with: listWith,
+        orderBy,
+        limit: cap + 1,
       });
+      if (rows.length > cap) {
+        this.logger.warn(
+          `A student list request matched more than ${cap} rows and was truncated. ` +
+            `Pass "page" to page through the full set.`,
+        );
+        return rows.slice(0, cap);
+      }
+      return rows;
     }
 
     const take = Math.min(Math.max(1, limit), 200);
-    const where = await this.buildWhere({ groupId, status, search });
     const [data, [countRow]] = await Promise.all([
       this.db.client.query.students.findMany({
         where,
-        with: { ...GROUP_CHAIN_WITH, ...ASSIGNMENTS_WITH },
-        orderBy: [desc(students.created_at)],
+        with: listWith,
+        orderBy,
         offset: (Math.max(1, page) - 1) * take,
         limit: take,
       }),
@@ -225,7 +318,14 @@ export class StudentsService {
   }
 
   /**
-   * Includes the full parent chain, not just the group.
+   * One student with the full parent chain, not just the group.
+   *
+   * Deliberately does *not* carry the invoice history. Nothing that reads a
+   * student reads it — the detail modal shows enrolment and contact details,
+   * the breadcrumb shows a name, and the update path only diffs the columns it
+   * is about to write — while every one of them paid for a year or more of
+   * invoices to be loaded and serialised. The payment history has its own
+   * endpoint (`GET /students/:id/payments`) for the screen that wants it.
    */
   async getStudent(id: string) {
     const student = await this.db.client.query.students.findFirst({
@@ -233,7 +333,6 @@ export class StudentsService {
       with: {
         ...GROUP_CHAIN_WITH,
         ...ASSIGNMENTS_WITH,
-        studentPayments: true,
       },
     });
     if (!student) throw new NotFoundException(`Étudiant ${id} introuvable`);
@@ -279,13 +378,15 @@ export class StudentsService {
           monthly_fee: String(dto.monthly_fee),
         })
         .returning();
-      for (const { group_id, fee } of enrollments) {
-        await tx.insert(studentAssignments).values({
+      // One statement rather than one per enrollment: a student in four groups
+      // was four sequential round trips inside the transaction.
+      await tx.insert(studentAssignments).values(
+        enrollments.map(({ group_id, fee }) => ({
           student_id: created.id,
           group_id,
           fee: String(fee ?? dto.monthly_fee),
-        });
-      }
+        })),
+      );
       return created;
     });
 
@@ -376,13 +477,13 @@ export class StudentsService {
     if (enrollments) {
       await this.db.client.transaction(async (tx) => {
         await tx.delete(studentAssignments).where(eq(studentAssignments.student_id, id));
-        for (const { group_id, fee } of enrollments) {
-          await tx.insert(studentAssignments).values({
+        await tx.insert(studentAssignments).values(
+          enrollments.map(({ group_id, fee }) => ({
             student_id: id,
             group_id,
             fee: String(fee ?? dto.monthly_fee ?? before.monthly_fee),
-          });
-        }
+          })),
+        );
       });
     }
 
@@ -476,9 +577,15 @@ export class StudentsService {
       );
     }
 
-    await this.db.client.transaction(async (tx) => {
-      await tx.delete(studentPayments).where(eq(studentPayments.student_id, studentId));
+    // Counted rather than carried: the audit entry records how many unpaid
+    // invoices went with the student, which is one number — not a reason to
+    // have loaded every one of those rows to call `.length` on them.
+    const discarded = await this.db.client.transaction(async (tx) => {
+      const deleted = await tx
+        .delete(studentPayments)
+        .where(eq(studentPayments.student_id, studentId));
       await tx.delete(students).where(eq(students.id, studentId));
+      return deleted.rowCount ?? 0;
     });
 
     await this.auditService.record({
@@ -495,7 +602,7 @@ export class StudentsService {
         monthly_fee: student.monthly_fee,
         status: student.status,
       },
-      meta: { discarded_unpaid_payments: student.studentPayments.length },
+      meta: { discarded_unpaid_payments: discarded },
     });
   }
 

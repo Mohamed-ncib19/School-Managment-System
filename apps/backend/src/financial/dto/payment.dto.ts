@@ -207,10 +207,10 @@ export class PaymentQueryDto {
   @Max(500)
   limit?: number;
 
-  @ApiPropertyOptional({ enum: ["due_date", "period", "amount_due", "status"] })
+  @ApiPropertyOptional({ enum: ["due_date", "period", "amount_due", "status", "paid_at"] })
   @IsOptional()
-  @IsIn(["due_date", "period", "amount_due", "status"])
-  sortBy?: "due_date" | "period" | "amount_due" | "status";
+  @IsIn(["due_date", "period", "amount_due", "status", "paid_at"])
+  sortBy?: "due_date" | "period" | "amount_due" | "status" | "paid_at";
 
   @ApiPropertyOptional({ enum: ["asc", "desc"] })
   @IsOptional()

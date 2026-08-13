@@ -37,6 +37,7 @@ REM ============================================================
 REM  START (default)
 REM ============================================================
 :DO_START
+set "SCRIPT_DIR=%~dp0"
 shift 2>nul
 
 REM --- preflight checks ----------------------------------------------------
@@ -56,7 +57,7 @@ if %errorlevel%==0 (
 )
 
 REM --- launch ---------------------------------------------------------------
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0\scripts\launcher.ps1" %*
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\launcher.ps1" %*
 if errorlevel 1 (
   title SCHOOL MANAGEMENT SYSTEM - Startup failed
   echo.

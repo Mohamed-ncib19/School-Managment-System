@@ -401,9 +401,12 @@ export class RevenueCalculationService {
         .from(groups)
         .where(and(inArray(groups.prof_id, profIds), eq(groups.is_active, true)))
         .groupBy(groups.prof_id),
-      // One row per active enrollment under any of these professors.
+      // Active enrollments per professor. Counted in the database rather than
+      // by returning one row per enrollment and folding them in Node: the
+      // answer is one number per professor either way, and only one of the two
+      // shapes stays that size as the academy grows.
       this.db.client
-        .select({ prof_id: groups.prof_id })
+        .select({ prof_id: groups.prof_id, count: sql<number>`count(*)::int` })
         .from(studentAssignments)
         .innerJoin(students, eq(studentAssignments.student_id, students.id))
         .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
@@ -413,18 +416,15 @@ export class RevenueCalculationService {
             inArray(groups.prof_id, profIds),
             eq(groups.is_active, true),
           ),
-        ),
+        )
+        .groupBy(groups.prof_id),
       this.db.client.query.professorCompensations.findMany({
         where: inArray(professorCompensations.prof_id, profIds),
       }),
       this.settings.get(),
     ]);
 
-    const studentsByProf = new Map<string, number>();
-    for (const row of enrollments) {
-      if (!row.prof_id) continue;
-      studentsByProf.set(row.prof_id, (studentsByProf.get(row.prof_id) ?? 0) + 1);
-    }
+    const studentsByProf = new Map(enrollments.map((row) => [row.prof_id, row.count]));
 
     const sharesByProf = new Map(
       shares.map((s) => [s.prof_id, money(s.sum_professor_share)] as [string, Money]),

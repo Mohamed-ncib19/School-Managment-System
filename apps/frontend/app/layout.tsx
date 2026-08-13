@@ -15,13 +15,28 @@ const inter = Inter({
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
 /**
+ * `generateMetadata` is awaited before the HTML shell is sent, so anything it
+ * fetches sits directly in front of every page's first byte.
+ *
+ * These two values — the uploaded logo's version and the school name — change
+ * a handful of times in the product's life, so they are cached rather than
+ * re-fetched per render, and time-boxed so a slow or dead API degrades to the
+ * default branding instead of holding the page open.
+ */
+const METADATA_TTL_SECONDS = 300;
+const METADATA_TIMEOUT_MS = 2_000;
+
+/**
  * Version the favicon URL with the uploaded logo's last change. Browsers cache
  * favicons aggressively and mostly ignore revalidation, so a fresh /icon?v=N
  * URL is what actually forces them to pick up the new logo.
  */
 async function faviconVersion(): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/financial/settings/logo`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/financial/settings/logo`, {
+      next: { revalidate: METADATA_TTL_SECONDS },
+      signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     return res.headers.get("x-logo-version");
   } catch {
@@ -35,7 +50,10 @@ async function faviconVersion(): Promise<string | null> {
  */
 async function systemName(): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/system-settings`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/system-settings`, {
+      next: { revalidate: METADATA_TTL_SECONDS },
+      signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const body = await res.json();
     const name = body?.data?.system_name;

@@ -129,6 +129,23 @@ export class FinancialService {
         this.aggregateLedger(
           and(transactionWhere(academic), eq(paymentTransactions.period, currentPeriod)),
         ),
+        /**
+         * Lifetime revenue: an unbounded sum over the whole ledger, and the
+         * only figure here no index can help — the card means "since the
+         * academy opened", so every row genuinely has to be read.
+         *
+         * Measured at 26ms over 56k transactions, behind this method's
+         * one-minute cache, so it is left alone: the alternatives are to bound
+         * it to a date range (which would change what the card means) or to
+         * maintain a running total on the write path (which introduces a figure
+         * that can drift from the ledger it claims to summarise — the one thing
+         * the financial module is built to prevent).
+         *
+         * It scales linearly. At roughly a million transactions this becomes a
+         * visible fraction of a second per cache miss, and the answer then is a
+         * rollup table refreshed from the ledger, reconciled against it, not a
+         * quiet redefinition of the card.
+         */
         this.aggregateLedger(transactionWhere(academic)),
         this.payrollLiability(academic, currentPeriod),
         this.aggregatePayroll(

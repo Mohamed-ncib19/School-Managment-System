@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
+  ChevronLeft,
   ChevronRight,
   Plus,
   Pencil,
@@ -25,17 +27,21 @@ import { fieldsApi } from "@/lib/api/fields.api";
 import { professorsApi } from "@/lib/api/professors.api";
 import { groupsApi } from "@/lib/api/groups.api";
 import { studentsApi } from "@/lib/api/students.api";
+import { schedulingApi, openStudentTimetable } from "@/lib/api/scheduling.api";
 import { useGenerateInvoiceForStudent } from "@/hooks/use-financial";
+import { useStudentPage } from "@/hooks/use-queries";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { useViewMode } from "@/hooks/use-view-mode";
 import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
-import type { Level, Field, Professor, Group, Student, StudentStatus, TileDto } from "@/types";
+import type { Level, Field, Professor, Group, Student, StudentStatus, TileDto, ScheduleEntry } from "@/types";
 import { PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ViewToggle } from "@/components/shared/view-toggle";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import DeletedEntities from "@/components/hierarchy/deleted-entities";
+import HierarchyDeleteDialog from "@/components/hierarchy/hierarchy-delete-dialog";
 import StudentDetailModal from "@/components/shared/student-detail-modal";
 import { useTranslation } from "@/lib/i18n/context";
 import { formatDate } from "@/lib/utils/format";
@@ -50,6 +56,11 @@ import AssignmentSlotsPicker, {
   type AssignmentSlot,
 } from "@/components/hierarchy/assignment-slots-picker";
 import { WeeklyScheduleBuilder } from "@/components/scheduling/weekly-schedule-builder";
+
+const DAY_SHORT = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+
+/** Rows per page for the server-paged student list. */
+const PAGE_SIZE = 50;
 
 const ENTITY_ICONS: Record<HierarchyEntity, any> = {
   level: Layers,
@@ -175,24 +186,6 @@ function ChildChips({ items, limit = 5 }: { items: string[]; limit?: number }) {
   );
 }
 
-/**
- * Every chain (level > field > professor > group id) a student is enrolled in,
- * from the explicit assignment list or the legacy single-group relation.
- */
-function studentChains(student: any): Array<{ levelId: string; fieldId: string; professorId: string; groupId: string }> {
-  const placements: any[] = student?.assignments?.length
-    ? student.assignments
-    : student?.group
-      ? [{ group: student.group }]
-      : [];
-  return placements.map((a: any) => ({
-    levelId: a.group?.professor?.field?.level?.id ?? "",
-    fieldId: a.group?.professor?.field?.id ?? "",
-    professorId: a.group?.professor?.id ?? "",
-    groupId: a.group?.id ?? a.group_id ?? "",
-  }));
-}
-
 export default function HierarchyEntityPage({ entityType: entityTypeProp, parsedEntityIds }: HierarchyEntityPageProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -204,7 +197,36 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const generatePayment = useGenerateInvoiceForStudent();
   const entityType = entityTypeProp;
 
+  /**
+   * Timetable clashes get their own dialog rather than a toast: the user has to
+   * be able to read which class is in the way, and — when it is only a
+   * professor or student overlap — decide to go ahead anyway.
+   */
+  /** Opens the student's weekly timetable, whichever groups they belong to. */
+  const printTimetable = (studentId: string) => {
+    openStudentTimetable(studentId).catch((err) => {
+      if ((err as Error)?.message === "popup-blocked") {
+        toast.error(
+          t("common.popupBlockedTitle", "Fenêtre bloquée"),
+          t("common.popupBlocked", "Autorisez les fenêtres contextuelles pour imprimer."),
+        );
+        return;
+      }
+      const { title, detail } = describeError(err);
+      toast.error(title, detail);
+    });
+  };
+
   const showError = (err: unknown) => {
+    const body = (err as any)?.response?.data?.error ?? (err as any)?.response?.data;
+    const code = body?.code;
+    if (code === "CLASSROOM_UNAVAILABLE" || code === "SCHEDULE_CONFLICT") {
+      setScheduleClash({
+        blocking: code === "CLASSROOM_UNAVAILABLE",
+        conflicts: body?.conflicts ?? [],
+      });
+      return;
+    }
     const { title, detail } = describeError(err);
     toast.error(title, detail);
   };
@@ -212,7 +234,17 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingEntity, setEditingEntity] = useState<any>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: HierarchyEntity; id: string; name: string } | null>(null);
+  /**
+   * A save the server refused because of a timetable clash.
+   *
+   * `blocking` is a double-booked classroom, which cannot be overridden — only
+   * one class can be in a room. Anything else is a professor or student overlap,
+   * which the user may knowingly accept.
+   */
+  const [scheduleClash, setScheduleClash] = useState<
+    { blocking: boolean; conflicts: { type: string; entityName: string; timeSlotLabel: string }[] } | null
+  >(null);
   const [detailStudentId, setDetailStudentId] = useState<string | null>(null);
   const [deletedOpen, setDeletedOpen] = useState(false);
   /** Layers confirmed so far in the create cascade: [{type, id, name}]. */
@@ -241,6 +273,39 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [formCapacity, setFormCapacity] = useState("");
 
   const [formTiles, setFormTiles] = useState<TileDto[]>([]);
+  /**
+   * Whether the schedule builder has been touched this session.
+   *
+   * Needed to tell "the user cleared every session" from "the user never
+   * opened the schedule section" — both leave `formTiles` empty, but only the
+   * first should wipe the group's saved times.
+   */
+  const [tilesTouched, setTilesTouched] = useState(false);
+  /** Professor/student clashes the user has been shown and chosen to accept. */
+  const [acceptedConflicts, setAcceptedConflicts] = useState(false);
+
+  /**
+   * The sessions a group already has, mapped back into builder tiles.
+   *
+   * Without this the edit form opened empty and every save appended a second
+   * copy of the timetable — the group's real times were never in the form to
+   * begin with.
+   */
+  const editingGroupTiles = useQuery({
+    queryKey: ["scheduling", "entries", "group-edit", editingId],
+    enabled: entityType === "group" && !!editingId && createOpen,
+    queryFn: async (): Promise<TileDto[]> => {
+      const entries = await schedulingApi.entries.list({ groupId: editingId!, active: true });
+      return (entries ?? [])
+        .filter((entry: ScheduleEntry) => entry.time_slot)
+        .map((entry: ScheduleEntry) => ({
+          day_of_week: entry.time_slot.day_of_week,
+          start_time: entry.time_slot.start_time.slice(0, 5),
+          end_time: entry.time_slot.end_time.slice(0, 5),
+          classroom_id: entry.classroom_id ?? null,
+        }));
+    },
+  });
 
   const { data: timeSlots } = useTimeSlots();
 
@@ -249,6 +314,10 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [formColor, setFormColor] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "nameAsc" | "nameDesc" | "color">("newest");
+  const [page, setPage] = useState(1);
+  // Only the paged list sends the term to the server; the client-side lists
+  // read `search` directly, so debouncing costs them nothing.
+  const debouncedSearch = useDebouncedValue(search, 300);
   // Student list filters: level > field > professor > group cascade, matching
   // the assignment picker. A student matches when at least one of his chains
   // satisfies every selected filter.
@@ -462,20 +531,99 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
 
   const parentChain = editingId ? buildParentChain(editingParent) : buildParentChain(createParent.data);
 
-  // Fetch data based on entity type
-  const { data: entities, isLoading } = useQuery({
+  /**
+   * Students are the one list that grows without bound, so they are filtered,
+   * sorted, counted and paged in the database. The four structural layers
+   * above them are bounded by how the school is organised — a few dozen rows —
+   * and stay client-side, where filtering is instant and needs no round trip.
+   */
+  const isPagedEntity = entityType === "student";
+
+  const studentQuery = useMemo(
+    () => ({
+      groupId: parentId ?? filterGroup ?? undefined,
+      profId: filterProf || undefined,
+      fieldId: filterField || undefined,
+      levelId: filterLevel || undefined,
+      search: debouncedSearch || undefined,
+      sort: sortBy,
+      page,
+      limit: PAGE_SIZE,
+    }),
+    [parentId, filterGroup, filterProf, filterField, filterLevel, debouncedSearch, sortBy, page],
+  );
+
+  const studentPage = useStudentPage(studentQuery, { enabled: isPagedEntity });
+
+  const { data: structuralEntities, isLoading: structuralLoading } = useQuery({
     queryKey: [entityType === "professor" ? "professors" : entityType + "s", parentId],
+    enabled: !isPagedEntity,
     queryFn: async () => {
       switch (entityType) {
         case "level": return levelsApi.list();
         case "field": return parentId ? fieldsApi.list(parentId) : fieldsApi.list();
         case "professor": return professorsApi.list(parentId);
         case "group": return groupsApi.list(parentId);
-        case "student": return studentsApi.list(parentId);
         default: return [];
       }
     },
   });
+
+  const entities = isPagedEntity ? studentPage.data?.data : structuralEntities;
+  const isLoading = isPagedEntity ? studentPage.isLoading : structuralLoading;
+  const pageMeta = isPagedEntity ? studentPage.data?.meta : undefined;
+
+  // Fetch schedule entries for groups (to show schedule/classroom columns)
+  const { data: allScheduleEntries } = useQuery({
+    queryKey: ["scheduling", "entries", "hierarchy-groups"],
+    queryFn: () => schedulingApi.entries.list({ active: true }),
+    enabled: entityType === "group",
+  });
+
+  const entriesByGroup = useMemo(() => {
+    if (entityType !== "group") return new Map<string, ScheduleEntry[]>();
+    const map = new Map<string, ScheduleEntry[]>();
+    (allScheduleEntries ?? []).forEach((entry) => {
+      const list = map.get(entry.group_id) ?? [];
+      list.push(entry);
+      map.set(entry.group_id, list);
+    });
+    return map;
+  }, [allScheduleEntries, entityType]);
+
+  const getGroupScheduleLabel = (groupId: string): string => {
+    const entries = entriesByGroup.get(groupId);
+    if (!entries?.length) return "";
+    const uniqueSlots = new Map<string, string>();
+    entries.forEach((entry) => {
+      if (!entry.time_slot) return;
+      const key = `${entry.time_slot.day_of_week}-${entry.time_slot.start_time}-${entry.time_slot.end_time}`;
+      const label = `${DAY_SHORT[entry.time_slot.day_of_week]} ${entry.time_slot.start_time}→${entry.time_slot.end_time}`;
+      if (!uniqueSlots.has(key)) uniqueSlots.set(key, label);
+    });
+    return Array.from(uniqueSlots.values()).join(" / ");
+  };
+
+  const getGroupSessionsPerWeek = (groupId: string): number => {
+    const entries = entriesByGroup.get(groupId);
+    if (!entries?.length) return 0;
+    const uniqueSlots = new Set<string>();
+    entries.forEach((entry) => {
+      if (!entry.time_slot) return;
+      uniqueSlots.add(`${entry.time_slot.day_of_week}-${entry.time_slot.start_time}-${entry.time_slot.end_time}`);
+    });
+    return uniqueSlots.size;
+  };
+
+  const getGroupClassroomLabel = (groupId: string): string => {
+    const entries = entriesByGroup.get(groupId);
+    if (!entries?.length) return "";
+    const names = new Set<string>();
+    entries.forEach((entry) => {
+      if (entry.classroom?.name) names.add(entry.classroom.name);
+    });
+    return Array.from(names).join(", ");
+  };
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -490,6 +638,10 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     },
     onSuccess: (result: any) => {
       qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"] });
+      // A group save also rewrites its sessions, and those live under their own
+      // query keys — the edit form's tiles and the list's Schedule column would
+      // otherwise keep serving the pre-save cache and look like nothing saved.
+      if (entityType === "group") qc.invalidateQueries({ queryKey: ["scheduling"] });
       setCreateOpen(false);
       resetForm();
       if (entityType === "student" && result?.id) {
@@ -514,6 +666,10 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"] });
+      // A group save also rewrites its sessions, and those live under their own
+      // query keys — the edit form's tiles and the list's Schedule column would
+      // otherwise keep serving the pre-save cache and look like nothing saved.
+      if (entityType === "group") qc.invalidateQueries({ queryKey: ["scheduling"] });
       setCreateOpen(false);
       setEditingId(null);
       resetForm();
@@ -522,19 +678,26 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      switch (entityType) {
-        case "level": return levelsApi.delete(id);
-        case "field": return fieldsApi.remove(id);
-        case "professor": return professorsApi.deactivate(id);
-        case "group": return groupsApi.delete(id);
-        case "student": return studentsApi.delete(id);
+    mutationFn: async () => {
+      if (!deleteTarget) return;
+      switch (deleteTarget.type) {
+        case "level": return levelsApi.delete(deleteTarget.id);
+        case "field": return fieldsApi.remove(deleteTarget.id);
+        case "professor": return professorsApi.deactivate(deleteTarget.id);
+        case "group": return groupsApi.delete(deleteTarget.id);
+        case "student": return studentsApi.delete(deleteTarget.id);
         default: throw new Error("Unknown entity type");
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"] });
-      setDeleteId(null);
+      // Scoped rather than a bare invalidateQueries(): deleting one entity must
+      // not refetch every screen in the app. A delete cascades down the
+      // hierarchy (and moves children onto a sentinel), so every entity list
+      // plus the roll-up summary is invalidated — but nothing beyond that.
+      for (const key of ["levels", "fields", "professors", "groups", "students", "hierarchy-summary"]) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+      setDeleteTarget(null);
     },
     onError: showError,
   });
@@ -551,6 +714,8 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     setFormStatus("active");
     setFormCapacity("");
     setFormTiles([]);
+    setTilesTouched(false);
+    setAcceptedConflicts(false);
     setFormColor(null);
     setParentPath([]);
     setAssignmentSlots([emptyAssignmentSlot()]);
@@ -595,7 +760,13 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     } else if (entityType === "group") {
       setFormName(entity.name ?? "");
       setFormCapacity(entity.capacity?.toString() ?? "");
+      // Left empty on purpose: the group's real sessions arrive from
+      // `editingGroupTiles` and are handed to the builder as `initialTiles`,
+      // which also flips `initialTilesLoaded` so the draft is not clobbered
+      // mid-load. Seeding them here would race that query.
       setFormTiles([]);
+      setTilesTouched(false);
+      setAcceptedConflicts(false);
     } else {
       setFormName(entity.name ?? "");
       setFormDescription(entity.description ?? "");
@@ -683,7 +854,13 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     if (entityType === "group") {
       data.name = formName.trim();
       data.capacity = formCapacity ? parseInt(formCapacity) : undefined;
-      data.scheduleTiles = formTiles.length ? formTiles : undefined;
+      // Sent whenever the builder was touched, empty array included — that is
+      // how a schedule gets cleared. Omitted entirely when it was not, so an
+      // edit to the group's name leaves its sessions alone.
+      if (tilesTouched) {
+        data.scheduleTiles = formTiles;
+        if (acceptedConflicts) data.allowConflicts = true;
+      }
     }
 
     if (editingId) {
@@ -733,9 +910,18 @@ const childrenLabel =
       : entityType === "field" ? t("nav.professors", "Professors")
         : "";
 
-  /** Search + filters + sort applied to the current list, keeping the server order. */
+  /**
+   * Search + filters + sort for the client-side lists.
+   *
+   * The paged list is returned already filtered, ordered and sliced, so it is
+   * passed straight through: re-filtering here would apply the term to the
+   * fifty rows on screen and report "no matches" for a student three pages
+   * down who does match.
+   */
   const items = useMemo(() => {
     const list = entities ?? [];
+    if (isPagedEntity) return list;
+
     const q = search.trim().toLowerCase();
     let filtered = q
       ? list.filter((entity: any) => {
@@ -751,16 +937,9 @@ const childrenLabel =
           return haystack.includes(q);
         })
       : list;
-    if (entityType === "student" && filterHasActive) {
-      filtered = filtered.filter((entity: any) =>
-        studentChains(entity).some((c) =>
-          (!filterLevel || c.levelId === filterLevel) &&
-          (!filterField || c.fieldId === filterField) &&
-          (!filterProf || c.professorId === filterProf) &&
-          (!filterGroup || c.groupId === filterGroup),
-        ),
-      );
-    }
+    // The level/field/professor/group cascade is only offered on the student
+    // list, which is resolved server-side above — so there is nothing left to
+    // narrow here.
     return [...filtered].sort((a: any, b: any) => {
       switch (sortBy) {
         case "nameAsc": return getEntityName(a).localeCompare(getEntityName(b));
@@ -776,7 +955,16 @@ const childrenLabel =
         default: return 0;
       }
     });
-  }, [entities, search, sortBy, entityType, filterLevel, filterField, filterProf, filterGroup, filterHasActive]);
+  }, [entities, isPagedEntity, search, sortBy, entityType]);
+
+  /**
+   * Any change of scope invalidates the current page number: staying on page 4
+   * after narrowing to a filter with two pages shows an empty list, which reads
+   * as "no results" rather than "you are past the end".
+   */
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, sortBy, filterLevel, filterField, filterProf, filterGroup, parentId]);
 
   const getNextEntityHref = (entity: any): string | null => {
     const nextEntity = getNextEntity(entityType);
@@ -1110,7 +1298,7 @@ const childrenLabel =
                     </div>
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={(e) => { e.stopPropagation(); setDeleteId(entity.id); }}
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget({ type: entityType, id: entity.id, name: getEntityName(entity) }); }}
                         className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-danger hover:bg-red-50 transition-colors"
                         aria-label={`${t("hierarchy.delete", "Delete")} ${getEntityName(entity)}`}
                       >
@@ -1126,6 +1314,19 @@ const childrenLabel =
                   {showsChildrenChips && (
                     <div className="mt-2">
                       <ChildChips items={getChildrenNames(entity)} />
+                    </div>
+                  )}
+                  {entityType === "group" && (
+                    <div className="mt-2 space-y-1 text-xs text-text-secondary">
+                      {getGroupScheduleLabel(entity.id) && (
+                        <p className="truncate">{getGroupScheduleLabel(entity.id)}</p>
+                      )}
+                      {getGroupSessionsPerWeek(entity.id) > 0 && (
+                        <p>{getGroupSessionsPerWeek(entity.id)} {t("scheduling.scheduleEntry", "seances")}/sem</p>
+                      )}
+                      {getGroupClassroomLabel(entity.id) && (
+                        <p className="truncate">{getGroupClassroomLabel(entity.id)}</p>
+                      )}
                     </div>
                   )}
                   <div className="mt-4 flex gap-2">
@@ -1144,6 +1345,16 @@ const childrenLabel =
                       >
                         <Printer size={14} />
                       </Link>
+                    )}
+                    {entityType === "student" && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); printTimetable(entity.id); }}
+                        className="btn btn-secondary text-xs px-2"
+                        title={t("scheduling.printTimetable", "Imprimer l'emploi du temps")}
+                        aria-label={t("scheduling.printTimetable", "Imprimer l'emploi du temps")}
+                      >
+                        <Printer size={14} />
+                      </button>
                     )}
                     {nextHref ? (
                       <Link href={nextHref} onClick={(e) => e.stopPropagation()} className="btn btn-primary text-xs flex-1 text-center">
@@ -1173,6 +1384,15 @@ const childrenLabel =
                   )}
                   {showsChildrenChips && (
                     <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{childrenLabel}</th>
+                  )}
+                  {entityType === "group" && (
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.timeSlots", "Schedule")}</th>
+                  )}
+                  {entityType === "group" && (
+                    <th className="px-4 py-3 text-center text-xs font-semibold text-text-secondary uppercase">{t("scheduling.scheduleEntry", "Seances/Week")}</th>
+                  )}
+                  {entityType === "group" && (
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.classrooms", "Classroom")}</th>
                   )}
                   <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.actions")}</th>
                 </tr>
@@ -1220,6 +1440,15 @@ const childrenLabel =
                       {showsChildrenChips && (
                         <td className="px-4 py-3 text-text-secondary"><ChildChips items={getChildrenNames(entity)} limit={8} /></td>
                       )}
+                      {entityType === "group" && (
+                        <td className="px-4 py-3 text-xs text-text-secondary">{getGroupScheduleLabel(entity.id) || "—"}</td>
+                      )}
+                      {entityType === "group" && (
+                        <td className="px-4 py-3 text-xs text-text-secondary text-center">{getGroupSessionsPerWeek(entity.id) || "—"}</td>
+                      )}
+                      {entityType === "group" && (
+                        <td className="px-4 py-3 text-xs text-text-secondary">{getGroupClassroomLabel(entity.id) || "—"}</td>
+                      )}
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           {attendanceHref && (
@@ -1239,7 +1468,7 @@ const childrenLabel =
                             <Pencil size={14} />
                           </button>
                           <button
-                            onClick={(e) => { e.stopPropagation(); setDeleteId(entity.id); }}
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget({ type: entityType, id: entity.id, name: getEntityName(entity) }); }}
                             className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-danger hover:bg-red-50 transition-colors"
                           >
                             <Trash2 size={14} />
@@ -1259,6 +1488,16 @@ const childrenLabel =
                             </button>
                           )}
                           {entityType === "student" && !nextHref && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); printTimetable(entity.id); }}
+                              className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary hover:bg-primary-50 transition-colors"
+                              title={t("scheduling.printTimetable", "Imprimer l'emploi du temps")}
+                              aria-label={t("scheduling.printTimetable", "Imprimer l'emploi du temps")}
+                            >
+                              <Printer size={14} />
+                            </button>
+                          )}
+                          {entityType === "student" && !nextHref && (
                             <Link
                               href={`/students/${entity.id}/payments`}
                               onClick={(e) => e.stopPropagation()}
@@ -1274,6 +1513,39 @@ const childrenLabel =
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Paging — server-side, so the count spans the whole filtered set. */}
+        {pageMeta && pageMeta.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-xs text-text-secondary tabular-nums">
+              {t("common.pageOf", "Page {page} of {total}")
+                .replace("{page}", String(pageMeta.page))
+                .replace("{total}", String(pageMeta.totalPages))}
+              {" · "}
+              {pageMeta.total} {getEntityLabel(entityType).toLowerCase()}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="btn btn-secondary text-xs px-2.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={pageMeta.page <= 1}
+                aria-label={t("common.previous", "Previous")}
+              >
+                <ChevronLeft size={14} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary text-xs px-2.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => setPage((p) => p + 1)}
+                disabled={pageMeta.page >= pageMeta.totalPages}
+                aria-label={t("common.next", "Next")}
+              >
+                <ChevronRight size={14} aria-hidden="true" />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1533,9 +1805,23 @@ const childrenLabel =
                         <label className="block text-sm font-medium mb-1">{t("scheduling.schedule", "Schedule")}</label>
                         <WeeklyScheduleBuilder
                           groupId={editingId || undefined}
-                          profId={parentPath.find((p) => p.type === "professor")?.id || null}
-                          initialTiles={[]}
-                          onChange={setFormTiles}
+                          // On edit the professor comes from the group itself.
+                          // Reading it from `parentPath` — which is only filled
+                          // in while walking the create cascade — left it null,
+                          // and the builder silently disabled every conflict
+                          // check on exactly the screen that needed them.
+                          profId={
+                            editingEntity?.prof_id
+                            ?? parentPath.find((p) => p.type === "professor")?.id
+                            ?? (entityType === "group" ? parentId : undefined)
+                            ?? null
+                          }
+                          initialTiles={editingId ? (editingGroupTiles.data ?? []) : []}
+                          initialTilesLoaded={!editingId || editingGroupTiles.isSuccess}
+                          onChange={(tiles) => {
+                            setFormTiles(tiles);
+                            setTilesTouched(true);
+                          }}
                         />
                       </div>
                     </>
@@ -1562,13 +1848,93 @@ const childrenLabel =
         </div>
       )}
 
-      <ConfirmDeleteDialog
-        entityName={getEntityLabel(entityType)}
-        isOpen={!!deleteId}
-        onClose={() => setDeleteId(null)}
-        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
-        message={entityType === "student" ? undefined : t("deleted.confirm", "It will be archived and can be restored later.")}
-      />
+      {scheduleClash && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          role="alertdialog"
+          aria-modal="true"
+          onClick={() => setScheduleClash(null)}
+        >
+          <div className="bg-surface rounded-modal shadow-modal w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div
+                className={`h-10 w-10 rounded-btn flex items-center justify-center shrink-0 ${
+                  scheduleClash.blocking ? "bg-danger-soft text-danger" : "bg-gold-50 text-gold-500"
+                }`}
+              >
+                <AlertTriangle size={18} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-h4 font-bold text-text-primary">
+                  {scheduleClash.blocking
+                    ? t("scheduling.roomTakenTitle", "Cette salle est déjà occupée")
+                    : t("scheduling.clashTitle", "Ce créneau en chevauche un autre")}
+                </h3>
+                <p className="text-sm text-text-secondary mt-1">
+                  {scheduleClash.blocking
+                    ? t("scheduling.roomTakenBody", "Deux cours ne peuvent pas partager la même salle. Changez la salle ou l'horaire pour enregistrer.")
+                    : t("scheduling.clashBody", "Vous pouvez enregistrer malgré tout — le chevauchement sera consigné.")}
+                </p>
+              </div>
+            </div>
+
+            <ul className="space-y-1.5 mb-5 max-h-48 overflow-y-auto">
+              {scheduleClash.conflicts.map((conflict, i) => (
+                <li key={i} className="flex items-center gap-2 rounded-btn border border-border bg-background px-3 py-2 text-xs">
+                  <span className="font-medium text-text-primary truncate">{conflict.entityName}</span>
+                  <span className="text-text-tertiary">·</span>
+                  <span className="text-text-secondary truncate">{conflict.timeSlotLabel}</span>
+                </li>
+              ))}
+            </ul>
+
+            <div className="flex justify-end gap-3">
+              <button className="btn btn-secondary" onClick={() => setScheduleClash(null)}>
+                {scheduleClash.blocking ? t("common.close", "Fermer") : t("common.cancel", "Annuler")}
+              </button>
+              {!scheduleClash.blocking && (
+                <FormButton
+                  className="btn btn-primary"
+                  isLoading={createMutation.isPending || updateMutation.isPending}
+                  onClick={() => {
+                    // Re-submitting with the override set is what records the
+                    // decision: the clash is saved *and* audited, rather than
+                    // being silently permitted on every save.
+                    setAcceptedConflicts(true);
+                    setScheduleClash(null);
+                    const data: any = {
+                      name: formName.trim(),
+                      capacity: formCapacity ? parseInt(formCapacity) : undefined,
+                      color: formColor ?? undefined,
+                      scheduleTiles: formTiles,
+                      allowConflicts: true,
+                    };
+                    if (editingId) updateMutation.mutate({ id: editingId, data });
+                    else createMutation.mutate(data);
+                  }}
+                >
+                  {t("scheduling.saveAnyway", "Enregistrer quand même")}
+                </FormButton>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && deleteTarget.type !== "student" && (
+        <HierarchyDeleteDialog
+          entityType={deleteTarget.type}
+          entityId={deleteTarget.id}
+          entityName={deleteTarget.name}
+          isOpen={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"], refetchType: "all" });
+            qc.invalidateQueries({ queryKey: ["deleted-entities"], refetchType: "all" });
+            qc.invalidateQueries({ queryKey: ["hierarchy-summary"] });
+          }}
+        />
+      )}
 
       <StudentDetailModal
         studentId={detailStudentId ?? ""}

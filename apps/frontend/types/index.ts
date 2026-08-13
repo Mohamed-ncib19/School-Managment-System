@@ -81,6 +81,11 @@ export interface Group {
   created_at: string;
   professor?: Professor & { field?: Field };
   /** Lightweight preview of the group's active roster (student names only). */
+  /**
+   * Not returned by the group list — the cards show the professor, never the
+   * roster, so `GET /groups` no longer ships every enrollment. Present only on
+   * payloads that explicitly include it.
+   */
   assignments?: { student?: { id: string; first_name: string; last_name: string } }[];
   _count?: { fields?: number; professors?: number; groups?: number; students?: number };
 }
@@ -261,8 +266,6 @@ export interface StudentLedgerRow extends StudentPayment {
   receipt_payment_id: string | null;
   action_payment_id: string | null;
   action_payment: StudentPayment | null;
-  /** Every matching invoice, for the Manage modal's invoice switcher. */
-  payments: StudentPayment[];
 }
 
 export interface KpiCard {
@@ -582,7 +585,6 @@ export interface AuditLog {
 export interface Classroom {
   id: string;
   name: string;
-  building: string | null;
   floor: string | null;
   room_number: string | null;
   capacity: number | null;
@@ -635,6 +637,54 @@ export interface StudentScheduleException {
   exception_date: string;
   notes: string | null;
   created_at: string;
+}
+
+export type ScheduleEntryExceptionType = "cancelled" | "moved" | "substitute_prof" | "room_change";
+
+export interface ScheduleEntryException {
+  id: string;
+  schedule_entry_id: string;
+  occurrence_date: string;
+  exception_type: ScheduleEntryExceptionType;
+  new_date: string | null;
+  new_time_slot_id: string | null;
+  new_classroom_id: string | null;
+  new_prof_id: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  schedule_entry?: ScheduleEntry;
+  new_time_slot?: TimeSlot | null;
+  new_classroom?: Classroom | null;
+  new_professor?: { id: string; full_name: string; color: string | null } | null;
+}
+
+export type OccurrenceStatus =
+  | "normal"
+  | "cancelled"
+  | "moved"
+  | "substitute"
+  | "room_change"
+  | "student_cancelled"
+  | "student_substitute"
+  | "makeup";
+
+export interface Occurrence {
+  occurrenceId: string;
+  scheduleEntryId: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  status: OccurrenceStatus;
+  movedFrom?: { date: string; start_time: string } | null;
+  subject: string | null;
+  notes: string | null;
+  group: { id: string; name: string; color: string | null; field: { id: string; name: string; color: string | null } | null };
+  classroom: { id: string; name: string; color: string | null; room_number: string | null } | null;
+  professor: { id: string; full_name: string; color: string | null };
+  exception: ScheduleEntryException | null;
+  studentException: StudentScheduleException | null;
+  color: string | null;
 }
 
 export type ConflictType = "professor" | "classroom" | "student";

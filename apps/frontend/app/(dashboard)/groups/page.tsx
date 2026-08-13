@@ -4,12 +4,13 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, ChevronRight, Printer, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronRight, Printer, Search, AlertTriangle } from "lucide-react";
 import { groupsApi } from "@/lib/api/groups.api";
+import { schedulingApi } from "@/lib/api/scheduling.api";
 import { useProfessors, useFields, useLevels } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
 import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
-import type { Group, Professor, Field, TileDto } from "@/types";
+import type { Group, Professor, Field, TileDto, ScheduleEntry } from "@/types";
 import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
@@ -17,6 +18,8 @@ import DeletedEntities from "@/components/hierarchy/deleted-entities";
 import { ViewToggle } from "@/components/shared/view-toggle";
 import { WeeklyScheduleBuilder } from "@/components/scheduling/weekly-schedule-builder";
 import { useTranslation } from "@/lib/i18n/context";
+
+const DAY_SHORT = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
 
 export default function GroupsPage() {
   const { t } = useTranslation();
@@ -31,6 +34,22 @@ export default function GroupsPage() {
     queryFn: () => groupsApi.list(),
   });
 
+  const { data: allEntries } = useQuery({
+    queryKey: ["scheduling", "entries", "all-groups"],
+    queryFn: () => schedulingApi.entries.list({ active: true }),
+    enabled: !!groups && groups.length > 0,
+  });
+
+  const entriesByGroup = useMemo(() => {
+    const map = new Map<string, ScheduleEntry[]>();
+    (allEntries ?? []).forEach((entry) => {
+      const list = map.get(entry.group_id) ?? [];
+      list.push(entry);
+      map.set(entry.group_id, list);
+    });
+    return map;
+  }, [allEntries]);
+
   const { viewMode, setViewMode } = useViewMode("list");
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -41,6 +60,7 @@ export default function GroupsPage() {
   const [tiles, setTiles] = useState<TileDto[]>([]);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deletedOpen, setDeletedOpen] = useState(false);
+  const [formError, setFormError] = useState("");
   const { data: timeSlots } = useTimeSlots();
   const { data: classrooms } = useClassrooms();
 
@@ -83,16 +103,38 @@ export default function GroupsPage() {
     return (professors ?? []).filter((p) => p.id === profId);
   }, [profId, professors]);
 
-  const resetForm = () => { setName(""); setCapacity(""); setProfId(""); setTiles([]); setEditingGroup(null); };
+  const resetForm = () => { setName(""); setCapacity(""); setProfId(""); setTiles([]); setEditingGroup(null); setFormError(""); };
 
   const createMutation = useMutation({
     mutationFn: (data: { prof_id: string; name: string; capacity?: number; scheduleTiles?: TileDto[] }) => groupsApi.create(data),
-    onSuccess: () => { qc.invalidateQueries(); setCreateOpen(false); resetForm(); },
+    onSuccess: (response) => {
+      if ((response as any)?._meta?.conflicts?.length) {
+        setFormError(t("scheduling.conflictsDetected", "Saved, but schedule conflicts were detected."));
+      } else {
+        setCreateOpen(false);
+        resetForm();
+      }
+      qc.invalidateQueries();
+    },
+    onError: (err: any) => {
+      setFormError(err?.response?.data?.error?.message || t("common.saveError", "Failed to save group."));
+    },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: { name?: string; capacity?: number; scheduleTiles?: TileDto[] } }) => groupsApi.update(id, data),
-    onSuccess: () => { qc.invalidateQueries(); setCreateOpen(false); resetForm(); },
+    onSuccess: (response) => {
+      if ((response as any)?._meta?.conflicts?.length) {
+        setFormError(t("scheduling.conflictsDetected", "Saved, but schedule conflicts were detected."));
+      } else {
+        setCreateOpen(false);
+        resetForm();
+      }
+      qc.invalidateQueries();
+    },
+    onError: (err: any) => {
+      setFormError(err?.response?.data?.error?.message || t("common.saveError", "Failed to save group."));
+    },
   });
 
   const deleteMutation = useMutation({
@@ -100,12 +142,25 @@ export default function GroupsPage() {
     onSuccess: () => { qc.invalidateQueries(); setDeleteId(null); },
   });
 
+  const { data: editingEntries } = useQuery({
+    queryKey: ["schedule-entries", "group", editingGroup?.id],
+    queryFn: () => schedulingApi.entries.list({ groupId: editingGroup!.id, active: true }),
+    enabled: !!editingGroup?.id,
+  });
+
   const openEdit = (group: Group) => {
     setEditingGroup(group);
     setName(group.name);
     setCapacity(group.capacity?.toString() ?? "");
     setProfId(group.professor?.id ?? "");
-    setTiles([]);
+    const existingTiles: TileDto[] = (editingEntries ?? []).map((e) => ({
+      day_of_week: e.time_slot.day_of_week,
+      start_time: e.time_slot.start_time,
+      end_time: e.time_slot.end_time,
+      classroom_id: e.classroom_id,
+    }));
+    setTiles(existingTiles);
+    setFormError("");
     setCreateOpen(true);
   };
 
@@ -115,6 +170,46 @@ export default function GroupsPage() {
     const prof = group.professor;
     if (!prof) return undefined;
     return fields?.find((f) => f.id === prof.field_id);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError("");
+    if (!profId) {
+      setFormError(t("students.selectProfessor", "Select professor") + " *");
+      return;
+    }
+    if (!name.trim()) {
+      setFormError(t("fieldsHierarchy.name") + " *");
+      return;
+    }
+    if (editingGroup) {
+      updateMutation.mutate({ id: editingGroup.id, data: { name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, scheduleTiles: tiles.length ? tiles : undefined } });
+    } else {
+      createMutation.mutate({ prof_id: profId, name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, scheduleTiles: tiles.length ? tiles : undefined });
+    }
+  };
+
+  const getGroupScheduleLabel = (groupId: string): string => {
+    const entries = entriesByGroup.get(groupId);
+    if (!entries?.length) return "";
+    const uniqueSlots = new Map<string, string>();
+    entries.forEach((entry) => {
+      const key = `${entry.time_slot.day_of_week}-${entry.time_slot.start_time}-${entry.time_slot.end_time}`;
+      const label = `${DAY_SHORT[entry.time_slot.day_of_week]} ${entry.time_slot.start_time}→${entry.time_slot.end_time}`;
+      if (!uniqueSlots.has(key)) uniqueSlots.set(key, label);
+    });
+    return Array.from(uniqueSlots.values()).join(" / ");
+  };
+
+  const getGroupClassroomLabel = (groupId: string): string => {
+    const entries = entriesByGroup.get(groupId);
+    if (!entries?.length) return "";
+    const names = new Set<string>();
+    entries.forEach((entry) => {
+      if (entry.classroom?.name) names.add(entry.classroom.name);
+    });
+    return Array.from(names).join(", ");
   };
 
   return (
@@ -226,6 +321,12 @@ export default function GroupsPage() {
                           <span>{prof?.full_name ?? "—"}</span>
                         </div>
                         <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.capacity")}</span> {group.capacity ?? "—"}</p>
+                        <p className="text-text-secondary truncate">
+                          <span className="font-medium">{t("scheduling.timeSlots", "Schedule")}:</span> {getGroupScheduleLabel(group.id) || "—"}
+                        </p>
+                        <p className="text-text-secondary truncate">
+                          <span className="font-medium">{t("nav.classrooms", "Classroom")}:</span> {getGroupClassroomLabel(group.id) || "—"}
+                        </p>
                       </div>
                       <div className="mt-4 flex gap-2">
                         <button onClick={(e) => { e.stopPropagation(); openEdit(group); }} className="btn btn-secondary text-xs flex-1">{t("fieldsHierarchy.editGroup", "Edit")}</button>
@@ -255,6 +356,8 @@ export default function GroupsPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.name")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.capacity")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.scheduleNotes")}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.timeSlots", "Schedule")}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.classrooms", "Classroom")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.hierarchy", "Hierarchy")}</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.actions")}</th>
                     </tr>
@@ -263,6 +366,8 @@ export default function GroupsPage() {
                     {filteredGroups.map((group) => {
                       const prof = group.professor;
                       const field = prof?.field;
+                      const scheduleLabel = getGroupScheduleLabel(group.id);
+                      const classroomLabel = getGroupClassroomLabel(group.id);
                       return (
                         <tr key={group.id} className="hover:bg-background/50 transition-colors">
                           <td className="px-4 py-3 font-medium text-primary hover:underline cursor-pointer">
@@ -272,6 +377,8 @@ export default function GroupsPage() {
                           </td>
                           <td className="px-4 py-3 text-text-secondary">{group.capacity ?? t("fieldsHierarchy.dash")}</td>
                           <td className="px-4 py-3 text-text-secondary">{group.schedule_notes ?? t("fieldsHierarchy.dash")}</td>
+                          <td className="px-4 py-3 text-xs text-text-secondary">{scheduleLabel || t("fieldsHierarchy.dash")}</td>
+                          <td className="px-4 py-3 text-xs text-text-secondary">{classroomLabel || t("fieldsHierarchy.dash")}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 text-xs text-text-secondary flex-wrap">
                               <span className="font-medium text-text-primary">{field?.level?.name ?? "—"}</span>
@@ -319,13 +426,13 @@ export default function GroupsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setCreateOpen(false); resetForm(); }}>
           <div className="bg-surface rounded-modal shadow-hover p-6 w-full max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-h4 font-bold mb-4">{editingGroup ? t("fieldsHierarchy.editGroup", "Edit Group") : t("fieldsHierarchy.newGroup")}</h3>
-            <form onSubmit={(e) => { e.preventDefault(); if (name.trim() && profId) {
-              if (editingGroup) {
-                updateMutation.mutate({ id: editingGroup.id, data: { name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, scheduleTiles: tiles.length ? tiles : undefined } });
-              } else {
-                createMutation.mutate({ prof_id: profId, name: name.trim(), capacity: capacity ? parseInt(capacity) : undefined, scheduleTiles: tiles.length ? tiles : undefined });
-              }
-            }}} className="space-y-3">
+            {formError && (
+              <div className="mb-3 p-2 rounded-md bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+            <form onSubmit={handleSubmit} className="space-y-3">
               <div>
                 <label className="block text-sm font-medium mb-1">{t("students.selectProfessor", "Select professor")} *</label>
                 <select value={profId} onChange={(e) => setProfId(e.target.value)} className="input" required disabled={!!editingGroup}>
@@ -346,7 +453,13 @@ export default function GroupsPage() {
                 <WeeklyScheduleBuilder
                   groupId={editingGroup?.id}
                   profId={profId || null}
-                  initialTiles={[]}
+                  initialTiles={(editingEntries ?? []).map((e) => ({
+                    day_of_week: e.time_slot.day_of_week,
+                    start_time: e.time_slot.start_time,
+                    end_time: e.time_slot.end_time,
+                    classroom_id: e.classroom_id,
+                  }))}
+                  initialTilesLoaded={editingGroup ? !!editingEntries : false}
                   onChange={setTiles}
                 />
               </div>

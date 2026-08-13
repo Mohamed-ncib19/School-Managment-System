@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { schedulingApi } from "@/lib/api/scheduling.api";
+import { schedulingApi, type CreateEntryExceptionPayload, type SplitEntryPayload, type WorkingHourWindow } from "@/lib/api/scheduling.api";
 
 export const schedulingKeys = {
   all: ["scheduling"] as const,
-  classrooms: (building?: string, active?: boolean) =>
-    ["scheduling", "classrooms", building ?? "", active ?? ""] as const,
+  classrooms: (active?: boolean) =>
+    ["scheduling", "classrooms", active ?? ""] as const,
   classroom: (id: string) => ["scheduling", "classroom", id] as const,
   timeSlots: (dayOfWeek?: number) =>
     ["scheduling", "time-slots", dayOfWeek ?? ""] as const,
@@ -19,10 +19,10 @@ export const schedulingKeys = {
     ["scheduling", "multi-group", studentId] as const,
 };
 
-export function useClassrooms(building?: string, active?: boolean) {
+export function useClassrooms(active?: boolean) {
   return useQuery({
-    queryKey: schedulingKeys.classrooms(building, active),
-    queryFn: () => schedulingApi.classrooms.list(building, active),
+    queryKey: schedulingKeys.classrooms(active),
+    queryFn: () => schedulingApi.classrooms.list(active),
   });
 }
 
@@ -101,5 +101,87 @@ export function useCreateTimeSlot() {
 export function usePreviewConflicts() {
   return useMutation({
     mutationFn: (data: any) => schedulingApi.conflicts.preview(data),
+  });
+}
+
+export function useOccurrences(params: { from: string; to: string; groupId?: string; profId?: string; classroomId?: string; search?: string }) {
+  return useQuery({
+    queryKey: ["scheduling", "occurrences", params.from, params.to, params.groupId ?? "", params.profId ?? "", params.classroomId ?? "", params.search ?? ""],
+    queryFn: () => schedulingApi.occurrences.list(params),
+    enabled: !!params.from && !!params.to,
+  });
+}
+
+export function useOccurrenceCount(from: string, to: string) {
+  return useQuery({
+    queryKey: ["scheduling", "occurrences-count", from, to],
+    queryFn: () => schedulingApi.occurrences.count(from, to),
+    enabled: !!from && !!to,
+  });
+}
+
+export function useCreateEntryException() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ entryId, data }: { entryId: string; data: CreateEntryExceptionPayload }) =>
+      schedulingApi.entryExceptions.create(entryId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduling"] }),
+    onError: () => qc.invalidateQueries({ queryKey: ["scheduling"] }),
+  });
+}
+
+export function useRemoveEntryException() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => schedulingApi.entryExceptions.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduling"] }),
+  });
+}
+
+export function useSplitEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ entryId, data }: { entryId: string; data: SplitEntryPayload }) =>
+      schedulingApi.entries.split(entryId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduling"] }),
+    onError: () => qc.invalidateQueries({ queryKey: ["scheduling"] }),
+  });
+}
+
+export function useEndEntrySeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ entryId, fromDate }: { entryId: string; fromDate: string }) =>
+      schedulingApi.entries.end(entryId, fromDate),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduling"] }),
+  });
+}
+
+export function useWorkingHours() {
+  return useQuery({
+    queryKey: ["scheduling", "working-hours"],
+    queryFn: () => schedulingApi.workingHours.list(),
+  });
+}
+
+export function useWorkingHoursBounds() {
+  return useQuery({
+    queryKey: ["scheduling", "working-hours-bounds"],
+    queryFn: () => schedulingApi.workingHours.bounds(),
+  });
+}
+
+export function useWorkingHoursEmpty() {
+  return useQuery({
+    queryKey: ["scheduling", "working-hours-empty"],
+    queryFn: () => schedulingApi.workingHours.isEmpty(),
+  });
+}
+
+export function useUpsertWorkingHours() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (windows: WorkingHourWindow[]) => schedulingApi.workingHours.upsert(windows),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduling", "working-hours"] }),
   });
 }

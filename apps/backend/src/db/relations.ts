@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { students, studentPayments, users, groups, fields, professors, levels, auditLogs, professorCompensations, paymentTransactions, payrollPayments, studentAssignments, payrollDocuments, attendanceSheets, classrooms, timeSlots, scheduleEntries, studentScheduleExceptions } from "./schema";
+import { students, studentPayments, users, groups, fields, professors, levels, auditLogs, professorCompensations, paymentTransactions, payrollPayments, studentAssignments, payrollDocuments, attendanceSheets, classrooms, timeSlots, scheduleEntries, studentScheduleExceptions, scheduleEntryExceptions } from "./schema";
 
 export const studentPaymentsRelations = relations(studentPayments, ({one, many}) => ({
 	student: one(students, {
@@ -173,6 +173,7 @@ export const scheduleEntriesRelations = relations(scheduleEntries, ({one, many})
 		references: [professors.id]
 	}),
 	studentExceptions: many(studentScheduleExceptions),
+	exceptions: many(scheduleEntryExceptions),
 }));
 
 export const studentScheduleExceptionsRelations = relations(studentScheduleExceptions, ({one}) => ({
@@ -186,6 +187,29 @@ export const studentScheduleExceptionsRelations = relations(studentScheduleExcep
 	}),
 	createdBy: one(users, {
 		fields: [studentScheduleExceptions.created_by],
+		references: [users.id]
+	}),
+}));
+
+export const scheduleEntryExceptionsRelations = relations(scheduleEntryExceptions, ({one}) => ({
+	scheduleEntry: one(scheduleEntries, {
+		fields: [scheduleEntryExceptions.schedule_entry_id],
+		references: [scheduleEntries.id]
+	}),
+	newTimeSlot: one(timeSlots, {
+		fields: [scheduleEntryExceptions.new_time_slot_id],
+		references: [timeSlots.id]
+	}),
+	newClassroom: one(classrooms, {
+		fields: [scheduleEntryExceptions.new_classroom_id],
+		references: [classrooms.id]
+	}),
+	newProfessor: one(professors, {
+		fields: [scheduleEntryExceptions.new_prof_id],
+		references: [professors.id]
+	}),
+	createdBy: one(users, {
+		fields: [scheduleEntryExceptions.created_by],
 		references: [users.id]
 	}),
 }));

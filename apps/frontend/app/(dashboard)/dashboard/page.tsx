@@ -12,11 +12,13 @@ import {
   BookOpen,
   ClipboardList,
   UserCheck,
+  CalendarDays,
 } from "lucide-react";
 import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { PageLoader } from "@/components/shared/skeletons";
 import { useHierarchySummary, useRecentStudents } from "@/hooks/use-queries";
+import { useOccurrenceCount } from "@/hooks/use-scheduling";
 import {
   useFinancialDashboard,
   useFinancialPayments,
@@ -65,6 +67,15 @@ export default function DashboardPage() {
   const overdueCount = finance?.cards.overdue_payments.count ?? 0;
   const todayPaymentsCount = today?.cards.collected_in_range.count ?? 0;
   const recentPayments = recent?.data ?? [];
+
+  const monthRange = useMemo(() => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return { from: iso(from), to: iso(to) };
+  }, []);
+  const { data: sessionsThisMonth } = useOccurrenceCount(monthRange.from, monthRange.to);
 
   const displayRecentStudents = useMemo(
     () => (recentStudents ?? []).slice(0, 5),
@@ -115,11 +126,12 @@ export default function DashboardPage() {
       {isLoading ? (
         <PageLoader text={t("common.loading", "Loading…")} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
           <StatCard icon={<Users size={18} />} title={t("dashboard.totalStudents")} value={totalStudents} />
           <StatCard icon={<UserCheck size={18} />} title={t("dashboard.totalFields", "Total Professors")} value={totalProfessors} />
           <StatCard icon={<CircleDollarSign size={18} />} title={t("dashboard.monthlyRevenue")} value={formatCurrency(totalRevenue)} />
           <StatCard icon={<Clock size={18} />} title={"Today's Payments"} value={todayPaymentsCount} />
+          <StatCard icon={<CalendarDays size={18} />} title={t("dashboard.sessionsThisMonth", "Sessions this month")} value={sessionsThisMonth ?? "—"} />
         </div>
       )}
 

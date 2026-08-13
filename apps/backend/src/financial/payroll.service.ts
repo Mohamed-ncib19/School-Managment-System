@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import type { PayrollStatus } from "@iq/shared";
 import { and, desc, eq, ilike, inArray, isNotNull, sql, SQL } from "drizzle-orm";
 import { DbService } from "../db/db.service";
-import { paymentTransactions, payrollPayments, professorCompensations, professors } from "../db/schema";
+import { groups, paymentTransactions, payrollPayments, professorCompensations, professors, studentAssignments, students } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
@@ -137,10 +137,12 @@ export class PayrollService {
       where: eq(professors.id, profId),
       with: {
         field: { with: { level: true } },
-        groups: {
-          where: (g, { eq }) => eq(g.is_active, true),
-          with: { assignments: { with: { student: { columns: { id: true, status: true } } } } },
-        },
+        // The roster itself is not loaded: the page shows a per-group headcount,
+        // and fetching every enrollment with its student attached in order to
+        // count the active ones in Node makes this query grow with the
+        // professor's whole intake. The counts come from one grouped query
+        // below instead.
+        groups: { where: (g, { eq }) => eq(g.is_active, true) },
         professorCompensations: {
           columns: { id: true, model: true, percentage: true, fixed_amount: true, custom_formula: true, notes: true },
         },
@@ -151,21 +153,47 @@ export class PayrollService {
     const compensation = professor.professorCompensations[0] ?? null;
     const targetPeriod = period ?? periodOfDate(new Date());
 
-    const [entitlement, rule, lifetimeShares, lifetimePaid, periodPaid, payments, monthly] =
-      await Promise.all([
-        this.revenue.periodEntitlement(profId, targetPeriod),
-        this.revenue.ruleFor(profId),
-        this.sumProfShares(eq(paymentTransactions.prof_id, profId)),
-        this.sumPayouts(eq(payrollPayments.prof_id, profId)),
-        this.sumPayouts(and(eq(payrollPayments.prof_id, profId), eq(payrollPayments.period, targetPeriod))),
-        this.db.client.query.payrollPayments.findMany({
-          where: eq(payrollPayments.prof_id, profId),
-          orderBy: (p, { desc }) => [desc(p.paid_at)],
-          limit: 100,
-          with: { user: { columns: { id: true, full_name: true } } },
-        }),
-        this.monthlyBreakdown(profId),
-      ]);
+    // `periodRevenue` and `groupBreakdown` join the batch rather than being
+    // awaited further down while building the response: as two `await`s inside
+    // the returned object literal they ran strictly after everything here had
+    // already finished, adding two round trips in series for no reason.
+    const [
+      entitlement,
+      rule,
+      lifetimeShares,
+      lifetimePaid,
+      periodPaid,
+      payments,
+      monthly,
+      periodRevenueAmount,
+      groupBreakdown,
+      rosterCounts,
+    ] = await Promise.all([
+      this.revenue.periodEntitlement(profId, targetPeriod),
+      this.revenue.ruleFor(profId),
+      this.sumProfShares(eq(paymentTransactions.prof_id, profId)),
+      this.sumPayouts(eq(payrollPayments.prof_id, profId)),
+      this.sumPayouts(and(eq(payrollPayments.prof_id, profId), eq(payrollPayments.period, targetPeriod))),
+      this.db.client.query.payrollPayments.findMany({
+        where: eq(payrollPayments.prof_id, profId),
+        orderBy: (p, { desc }) => [desc(p.paid_at)],
+        limit: 100,
+        with: { user: { columns: { id: true, full_name: true } } },
+      }),
+      this.monthlyBreakdown(profId),
+      this.periodRevenue(profId, targetPeriod),
+      this.groupBreakdown(profId, targetPeriod),
+      // Active headcount per group, counted in the database.
+      this.db.client
+        .select({ group_id: studentAssignments.group_id, count: sql<number>`count(*)::int` })
+        .from(studentAssignments)
+        .innerJoin(students, eq(studentAssignments.student_id, students.id))
+        .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
+        .where(and(eq(groups.prof_id, profId), eq(groups.is_active, true), eq(students.status, "active")))
+        .groupBy(studentAssignments.group_id),
+    ]);
+
+    const studentsByGroup = new Map(rosterCounts.map((r) => [r.group_id, r.count]));
 
     const periodEarned = entitlement.total;
     const periodPaidAmount = round2(money(periodPaid.sum_amount));
@@ -198,14 +226,14 @@ export class PayrollService {
         name: group.name,
         capacity: group.capacity,
         schedule_notes: group.schedule_notes,
-        student_count: group.assignments.filter((a) => a.student?.status === "active").length,
+        student_count: studentsByGroup.get(group.id) ?? 0,
       })),
       student_count: entitlement.studentCount,
       group_count: entitlement.groupCount,
       period: {
         label: targetPeriod,
         // Gross revenue the professor generated, before the split.
-        revenue_generated: toAmount(round2(money(await this.periodRevenue(profId, targetPeriod)))),
+        revenue_generated: toAmount(round2(money(periodRevenueAmount))),
         earned_from_collections: toAmount(entitlement.fromCollections),
         earned_fixed: toAmount(entitlement.fixedComponent),
         total_earned: toAmount(periodEarned),
@@ -223,7 +251,7 @@ export class PayrollService {
         remaining_balance: toAmount(round2(lifetimeEarned.minus(lifetimePaidAmount))),
       },
       monthly_breakdown: monthly,
-      group_breakdown: await this.groupBreakdown(profId, targetPeriod),
+      group_breakdown: groupBreakdown,
       payroll_history: payments.map((p) => {
         const { user, ...rest } = p;
         return { ...rest, recorder: user, amount: toAmount(money(p.amount)) };

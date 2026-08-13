@@ -81,6 +81,27 @@ function useFinancialMutation<TArgs, TResult>(
 const REALTIME_INTERVAL = 30_000;
 const realtime = { refetchInterval: REALTIME_INTERVAL as number | false };
 
+/**
+ * Query options a caller may pass alongside the API filters.
+ *
+ * These screens take one object that mixes both, so the request-shaping keys
+ * have to be separated from the API ones before the rest is put on the wire —
+ * otherwise `refetchInterval` is sent to the backend as a query parameter and,
+ * worse, is *not* applied as a react-query option, so the caller silently gets
+ * the default poll rate instead of the one they asked for.
+ */
+const QUERY_OPTION_KEYS = ["refetchInterval", "staleTime", "enabled", "gcTime"] as const;
+
+function splitQueryOptions(input: Record<string, unknown>) {
+  const params: Record<string, unknown> = {};
+  const options: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if ((QUERY_OPTION_KEYS as readonly string[]).includes(key)) options[key] = value;
+    else params[key] = value;
+  }
+  return { params, options };
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard & analytics
 // ---------------------------------------------------------------------------
@@ -156,11 +177,15 @@ export function useBreakdown(dimension: string, filters: FinancialFilters = {}, 
 // ---------------------------------------------------------------------------
 
 export function useFinancialPayments(query: Record<string, unknown> = {}) {
+  const { params, options } = splitQueryOptions(query);
   return useQuery<PaymentPage>({
-    queryKey: financialKeys.payments(query),
-    queryFn: () => financialApi.payments(query),
+    queryKey: financialKeys.payments(params),
+    queryFn: () => financialApi.payments(params),
     placeholderData: (previous) => previous,
+    // Caller-supplied options win: a screen that only needs a minute-old figure
+    // must be able to say so rather than being pinned to the desk poll rate.
     ...realtime,
+    ...options,
   });
 }
 
@@ -238,11 +263,13 @@ export function useRefreshPaymentStatuses() {
 // ---------------------------------------------------------------------------
 
 export function usePayroll(query: Record<string, unknown> = {}) {
+  const { params, options } = splitQueryOptions(query);
   return useQuery<PayrollList>({
-    queryKey: financialKeys.payroll(query),
-    queryFn: () => financialApi.payroll(query),
+    queryKey: financialKeys.payroll(params),
+    queryFn: () => financialApi.payroll(params),
     placeholderData: (previous) => previous,
     ...realtime,
+    ...options,
   });
 }
 

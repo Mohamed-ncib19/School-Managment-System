@@ -83,6 +83,22 @@ export class AnalyticsService {
   async revenueSeries(query: FinancialQueryDto): Promise<{ granularity: Granularity; points: SeriesPoint[] }> {
     const { range, granularity } = await this.rangeOf(query);
 
+    /**
+     * Bucketed in Node, deliberately.
+     *
+     * `date_trunc` in SQL would let the database do the folding, but the two do
+     * not agree: `paid_at` is `timestamp without time zone`, node-postgres
+     * parses it in the host's local zone, and `bucketKey` then reads it with
+     * `getUTC*`. On any host that is not on UTC, a collection recorded just
+     * after midnight on the 1st falls in a different month for `date_trunc`
+     * than it does here — so moving the grouping into SQL would quietly restate
+     * the revenue of every month boundary. That is a change to what the figures
+     * mean, not to how fast they are produced, and it does not belong in a
+     * performance change.
+     *
+     * The scan is bounded by the date range and covered by the `paid_at` index,
+     * and reads only the four columns it sums.
+     */
     const rows = await this.db.client
       .select({
         paid_at: paymentTransactions.paid_at,
@@ -235,83 +251,49 @@ export class AnalyticsService {
       );
     }
 
-    // Everything else needs the academic chain, so the rows come back with their
-    // hierarchy attached and are folded in memory. The ledger is already scoped
-    // to a date range, which keeps this bounded. The chain is the invoice's
-    // own enrollment — the group a collection was billed under — not the
-    // student's primary group.
-    const rows = await this.db.client.query.paymentTransactions.findMany({
-      where,
-      with: {
-        studentPayment: {
-          with: {
-            student: { columns: { id: true, first_name: true, last_name: true } },
-            group: {
-              with: {
-                professor: {
-                  with: {
-                    field: {
-                      columns: { id: true, name: true },
-                      with: { level: { columns: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    // Everything else needs the academic chain. The chain is the invoice's own
+    // enrollment — the group a collection was billed under — not the student's
+    // primary group.
+    //
+    // Grouped in the database rather than by reading the ledger into Node: the
+    // shape this replaces loaded every transaction in the range, each expanded
+    // through a four-level nested join, only to add up three columns per row
+    // and keep the top twenty. The joins below are the same chain, walked once
+    // per group instead of once per transaction.
+    const dimensionKey: Record<Exclude<Dimension, "professor">, { id: SQL; name: SQL }> = {
+      level: { id: sql`l.id`, name: sql`l.name` },
+      field: { id: sql`f.id`, name: sql`f.name` },
+      group: { id: sql`g.id`, name: sql`g.name` },
+      student: { id: sql`st.id`, name: sql`(st.first_name || ' ' || st.last_name)` },
+    };
+    const key = dimensionKey[dimension as Exclude<Dimension, "professor">];
 
-    const buckets = new Map<
-      string,
-      { id: string | null; name: string; revenue: Money; school: Money; professor: Money; count: number }
-    >();
-
-    for (const row of rows) {
-      const student = row.studentPayment?.student;
-      const group = row.studentPayment?.group;
-      const professor = group?.professor;
-      const field = professor?.field;
-      const level = field?.level;
-
-      let id: string | null = null;
-      let name = "Unassigned";
-
-      switch (dimension) {
-        case "level":
-          id = level?.id ?? null;
-          name = level?.name ?? "Unassigned";
-          break;
-        case "field":
-          id = field?.id ?? null;
-          name = field?.name ?? "Unassigned";
-          break;
-        case "group":
-          id = group?.id ?? null;
-          name = group?.name ?? "Unassigned";
-          break;
-        case "student":
-          id = student?.id ?? null;
-          name = student ? `${student.first_name} ${student.last_name}` : "Unassigned";
-          break;
-      }
-
-      const key = id ?? `unassigned:${dimension}`;
-      const bucket = buckets.get(key) ?? {
-        id,
-        name,
-        revenue: ZERO,
-        school: ZERO,
-        professor: ZERO,
-        count: 0,
-      };
-      bucket.revenue = bucket.revenue.plus(money(row.amount));
-      bucket.school = bucket.school.plus(money(row.school_share));
-      bucket.professor = bucket.professor.plus(money(row.professor_share));
-      bucket.count += 1;
-      buckets.set(key, bucket);
-    }
+    const grouped = await this.db.rawQuery<{
+      id: string | null;
+      name: string | null;
+      sum_amount: string | null;
+      sum_school_share: string | null;
+      sum_professor_share: string | null;
+      count: number;
+    }>(sql`
+      select ${key.id} as id,
+             ${key.name} as name,
+             sum(${paymentTransactions.amount}) as sum_amount,
+             sum(${paymentTransactions.school_share}) as sum_school_share,
+             sum(${paymentTransactions.professor_share}) as sum_professor_share,
+             count(*)::int as count
+      from ${paymentTransactions}
+      join student_payments sp on sp.id = ${paymentTransactions.payment_id}
+      left join students st on st.id = sp.student_id
+      left join groups g on g.id = sp.group_id
+      left join professors p on p.id = g.prof_id
+      left join fields f on f.id = p.field_id
+      left join levels l on l.id = f.level_id
+      ${where ? sql`where ${where}` : sql``}
+      group by ${key.id}, ${key.name}
+      order by sum(${paymentTransactions.amount}) desc nulls last
+      limit ${limit}
+    `);
 
     const filterKey: Record<Dimension, string> = {
       level: "levelId",
@@ -321,14 +303,18 @@ export class AnalyticsService {
       student: "studentId",
     };
 
-    return this.rank(
-      [...buckets.values()].map((b) => ({
-        ...b,
-        drill: this.drillTarget(dimension),
-        filter: b.id ? { [filterKey[dimension]]: b.id } : null,
-      })),
-      limit,
-    );
+    // Already ordered and limited by the database, so `rank` is not re-applied
+    // — it would only re-sort a list of at most `limit` rows.
+    return grouped.map((row) => ({
+      id: row.id,
+      name: row.name ?? "Unassigned",
+      revenue: toAmount(round2(money(row.sum_amount))),
+      school_share: toAmount(round2(money(row.sum_school_share))),
+      professor_share: toAmount(round2(money(row.sum_professor_share))),
+      transactions: row.count,
+      drill_to: this.drillTarget(dimension),
+      drill_filter: row.id ? { [filterKey[dimension]]: row.id } : null,
+    }));
   }
 
   /**
@@ -549,24 +535,22 @@ export class AnalyticsService {
           },
         },
       }),
-      // One row per active enrollment under any of these professors; a student
-      // in two of their groups counts twice, because each enrollment is a
-      // roster seat with its own fee.
+      // Active enrollments per professor, counted in the database. A student in
+      // two of their groups counts twice, because each enrollment is a roster
+      // seat with its own fee — which `count(*)` preserves exactly as folding
+      // one row per enrollment in Node did.
       this.db.client
-        .select({ prof_id: groups.prof_id })
+        .select({ prof_id: groups.prof_id, count: sql<number>`count(*)::int` })
         .from(studentAssignments)
         .innerJoin(students, eq(studentAssignments.student_id, students.id))
         .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
         .where(
           and(eq(students.status, "active"), inArray(groups.prof_id, ids), eq(groups.is_active, true)),
-        ),
+        )
+        .groupBy(groups.prof_id),
     ]);
 
-    const studentsByProf = new Map<string, number>();
-    for (const row of enrollmentPairs) {
-      if (!row.prof_id) continue;
-      studentsByProf.set(row.prof_id, (studentsByProf.get(row.prof_id) ?? 0) + 1);
-    }
+    const studentsByProf = new Map(enrollmentPairs.map((row) => [row.prof_id, row.count]));
 
     const byId = new Map(profRows.map((p) => [p.id, p]));
 

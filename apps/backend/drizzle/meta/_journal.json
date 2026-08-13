@@ -8,6 +8,34 @@
       "when": 1786407277467,
       "tag": "0000_faulty_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786585333317,
+      "tag": "0001_tough_franklin_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786628301895,
+      "tag": "0002_scheduling_occurrences_phase",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786924800000,
+      "tag": "0003_performance_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786928400000,
+      "tag": "0004_schedule_unique_active_only",
+      "breakpoints": true
     }
   ]
 }

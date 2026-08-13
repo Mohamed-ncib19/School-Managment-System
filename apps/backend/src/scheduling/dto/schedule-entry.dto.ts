@@ -1,5 +1,4 @@
 import { IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from "class-validator";
-import { Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateScheduleEntryDto {

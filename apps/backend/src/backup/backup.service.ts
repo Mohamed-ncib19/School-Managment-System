@@ -1,8 +1,22 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
-import { execSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import * as fs from "fs";
 import * as path from "path";
 import { AuditService } from "../audit/audit.service";
+
+const execFileP = promisify(execFile);
+
+/**
+ * How long a dump or restore may run before it is killed.
+ *
+ * Without a ceiling a `pg_dump` blocked on a lock waits forever, and the only
+ * symptom is a request that never returns.
+ */
+const PG_TIMEOUT_MS = 30 * 60_000;
+
+/** Dumps can be large; give the child enough room to report its own errors. */
+const PG_MAX_BUFFER = 64 * 1024 * 1024;
 
 interface BackupRecord {
   id: string;
@@ -67,7 +81,7 @@ export class BackupService {
     };
   }
 
-  private findBinary(name: string): string | null {
+  private async findBinary(name: string): Promise<string | null> {
     const candidates = [
       path.join(process.cwd(), ".postgres", "runtime"),
       "C:\\Program Files\\PostgreSQL",
@@ -81,8 +95,8 @@ export class BackupService {
     }
 
     try {
-      const cmd = execSync(`where ${name} 2>nul`, { stdio: "pipe" });
-      const result = cmd.toString().trim();
+      const { stdout } = await execFileP("where", [name], { windowsHide: true });
+      const result = stdout.trim();
       if (result) return result.split("\n")[0].trim();
     } catch {
       // binary not found on PATH
@@ -99,7 +113,10 @@ export class BackupService {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory()) {
-          const found = this.findBinaryRecursive(entry.name, name);
+          // The child must be joined onto `dir`: recursing on the bare entry
+          // name resolves it against the process cwd instead, so the search
+          // never actually descended and the bundled binaries were never found.
+          const found = this.findBinaryRecursive(path.join(dir, entry.name), name);
           if (found) return found;
         }
       }
@@ -153,7 +170,7 @@ export class BackupService {
 
   async createBackup(version?: string): Promise<BackupResult> {
     const dbConfig = this.getDbConfig();
-    const pgDump = this.findBinary("pg_dump");
+    const pgDump = await this.findBinary("pg_dump");
     if (!pgDump) {
       throw new BadRequestException("pg_dump introuvable — les outils PostgreSQL ne sont pas installés");
     }
@@ -167,16 +184,27 @@ export class BackupService {
     this.logger.log(`Creating backup '${filename}' (version: ${safeVersion})`);
 
     const env = { ...process.env, PGPASSWORD: dbConfig.password };
-    const args = `-U ${dbConfig.user} -h ${dbConfig.host} -p ${dbConfig.port} -d ${dbConfig.database} -Fc -f "${target}"`;
+    // Passed as argv rather than a shell string: `execFile` never spawns a
+    // shell, so a database or host name containing a shell metacharacter is
+    // an argument rather than a command.
+    const args = [
+      "-U", dbConfig.user,
+      "-h", dbConfig.host,
+      "-p", String(dbConfig.port),
+      "-d", dbConfig.database,
+      "-Fc",
+      "-f", target,
+    ];
 
     try {
-      execSync(`"${pgDump}" ${args}`, {
-        stdio: "pipe",
+      await execFileP(pgDump, args, {
         env,
         windowsHide: true,
+        timeout: PG_TIMEOUT_MS,
+        maxBuffer: PG_MAX_BUFFER,
       });
     } catch (err: any) {
-      throw new BadRequestException(`Échec de pg_dump : ${err.message || err.stderr || err}`);
+      throw new BadRequestException(`Échec de pg_dump : ${err.stderr || err.message || err}`);
     }
 
     if (!fs.existsSync(target)) {
@@ -213,7 +241,7 @@ export class BackupService {
 
     const backupPath = path.join(this.backupDir, dump.name);
     const dbConfig = this.getDbConfig();
-    const pgRestore = this.findBinary("pg_restore");
+    const pgRestore = await this.findBinary("pg_restore");
     if (!pgRestore) {
       throw new BadRequestException("pg_restore introuvable — les outils PostgreSQL ne sont pas installés");
     }
@@ -224,16 +252,24 @@ export class BackupService {
     this.logger.log(`Safety backup created: ${safetyResult.backup.filename}`);
 
     const env = { ...process.env, PGPASSWORD: dbConfig.password };
-    const args = `-U ${dbConfig.user} -h ${dbConfig.host} -p ${dbConfig.port} -d ${dbConfig.database} --clean --if-exists --no-owner "${backupPath}"`;
+    const args = [
+      "-U", dbConfig.user,
+      "-h", dbConfig.host,
+      "-p", String(dbConfig.port),
+      "-d", dbConfig.database,
+      "--clean", "--if-exists", "--no-owner",
+      backupPath,
+    ];
 
     try {
-      execSync(`"${pgRestore}" ${args}`, {
-        stdio: "pipe",
+      await execFileP(pgRestore, args, {
         env,
         windowsHide: true,
+        timeout: PG_TIMEOUT_MS,
+        maxBuffer: PG_MAX_BUFFER,
       });
     } catch (err: any) {
-      throw new BadRequestException(`Échec de pg_restore : ${err.message || err.stderr || err}`);
+      throw new BadRequestException(`Échec de pg_restore : ${err.stderr || err.message || err}`);
     }
 
     return {

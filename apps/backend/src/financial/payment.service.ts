@@ -327,7 +327,10 @@ export class PaymentService {
         return or(...branches) as SQL;
       });
 
-      if (wordConditions.length > 0) clauses.push(and(...wordConditions));
+      if (wordConditions.length > 0) {
+        const cond = and(...wordConditions);
+        if (cond) clauses.push(cond);
+      }
     }
 
     return clauses.length > 0 ? and(...clauses) : undefined;
@@ -458,26 +461,96 @@ export class PaymentService {
       context,
       action_payment_id: actionInvoice?.id ?? null,
       action_payment: actionInvoice ? this.present(actionInvoice) : null,
-      // Every matching invoice, so the Manage modal can switch between them.
-      payments: invoices.map((invoice) => this.present(invoice)),
+      // The Manage modal switches between a student's invoices, but it is open
+      // for one student at a time — so it fetches them itself from
+      // `GET /payments/student/:id`. Embedding every invoice of every row here
+      // meant each of the fifty rows carried a year of fully-expanded invoices,
+      // each repeating the whole academic chain: the list response was
+      // megabytes of data to render a table of fifty names and balances.
     };
   }
 
   /**
-   * The cash-desk ledger: matching invoices grouped per student, sorted and
-   * paginated after grouping (a student with a hundred overdue invoices is
-   * one row, not a hundred).
+   * The cash-desk ledger: matching invoices grouped per student, one row each.
+   *
+   * Done in two phases, because the page is a page *of students* while the
+   * filter selects *invoices*.
+   *
+   *   1. Group the matching invoices by student in the database, deriving the
+   *      same figures the row is sorted by, and take one page of student ids.
+   *   2. Load the invoices belonging only to those students, and present them
+   *      exactly as before.
+   *
+   * The shape this replaces read every matching invoice — a full academy-year
+   * is tens of thousands — expanded each one through a six-way nested join,
+   * grouped and sorted them in Node, and then discarded all but fifty. The
+   * sort keys are the reason it had to: each is an aggregate over a student's
+   * invoices, so none of them could be applied before grouping. They are all
+   * expressible as aggregates, which is what makes the paging movable into
+   * SQL without changing which student lands on which page.
    */
   async listStudents(query: PaymentQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
     const where = this.buildWhere(query);
+    const scope = where ? sql`where ${where}` : sql``;
 
-    const [rows, totals] = await Promise.all([
-      this.db.client.query.studentPayments.findMany({
-        where,
-        with: PAYMENT_WITH_FULL,
-      }),
+    const sortBy = query.sortBy ?? "due_date";
+    const dir = query.sortDir === "asc" ? sql`asc` : sql`desc`;
+
+    // `STATUS_RANK` in SQL — a student's status is their worst invoice, so the
+    // grouped `min` of this is the row's status.
+    const statusRank = sql`min(case ${studentPayments.status}
+      when 'overdue' then 0
+      when 'due_soon' then 1
+      when 'not_paid' then 2
+      when 'partially_paid' then 3
+      when 'paid' then 4
+      else 5 end)`;
+
+    // The date a cashier acts on: the earliest still-open invoice, falling back
+    // to the latest invoice when nothing is open — the same choice
+    // `presentStudent` makes when it picks the row's action invoice.
+    const actionDueDate = sql`coalesce(
+      min(${studentPayments.due_date}) filter (where ${studentPayments.status} in ('overdue','due_soon','not_paid')),
+      max(${studentPayments.due_date})
+    )`;
+
+    const orderKey =
+      sortBy === "period"
+        ? sql`max(${studentPayments.period})`
+        : sortBy === "amount_due"
+          ? sql`sum(${studentPayments.amount_due})`
+          : sortBy === "status"
+            ? statusRank
+            : sortBy === "paid_at"
+              ? sql`max(tx.last_paid_at)`
+              : actionDueDate;
+
+    const [pageRows, totals] = await Promise.all([
+      // The lateral yields exactly one row per invoice, so it adds the last
+      // ledger timestamp without fanning out the sums beside it.
+      this.db.rawQuery<{ student_id: string; total_students: number }>(sql`
+        select ${studentPayments.student_id} as student_id,
+               count(*) over () :: int as total_students
+        from ${studentPayments}
+        left join lateral (
+          select max(pt.paid_at) as last_paid_at
+          from payment_transactions pt
+          where pt.payment_id = ${studentPayments.id}
+        ) tx on true
+        ${scope}
+        group by ${studentPayments.student_id}
+        -- The student id breaks ties. Every sort key here is shared by
+        -- hundreds of students — there are six statuses and a handful of due
+        -- dates across an academy — and an ORDER BY that leaves ties unordered
+        -- lets the database return them in any order it likes, which for a
+        -- paged read means a student can appear on two consecutive pages while
+        -- another appears on none. A unique final term makes the order total,
+        -- so paging is stable between requests.
+        order by ${orderKey} ${dir} nulls last, ${studentPayments.student_id} asc
+        limit ${limit} offset ${(page - 1) * limit}
+      `),
       this.db.client
         .select({
           sum_amount_due: sql<string | null>`sum(${studentPayments.amount_due})`,
@@ -488,6 +561,18 @@ export class PaymentService {
         .then((r) => r[0]),
     ]);
 
+    const studentIds = pageRows.map((r) => r.student_id);
+    const total = pageRows[0]?.total_students ?? 0;
+
+    // Only this page's invoices are expanded — the same scope as the filter,
+    // narrowed to the fifty students actually being rendered.
+    const rows = studentIds.length
+      ? ((await this.db.client.query.studentPayments.findMany({
+          where: and(where, inArray(studentPayments.student_id, studentIds)),
+          with: PAYMENT_WITH_FULL,
+        })) as PaymentRow[])
+      : [];
+
     const byStudent = new Map<string, PaymentRow[]>();
     for (const row of rows) {
       const bucket = byStudent.get(row.student_id) ?? [];
@@ -495,37 +580,15 @@ export class PaymentService {
       byStudent.set(row.student_id, bucket);
     }
 
-    const students = [...byStudent.values()].map((invoices) => this.presentStudent(invoices));
-
-    const sortBy = query.sortBy ?? "due_date";
-    const sortDir = query.sortDir ?? "desc";
-    const dir = sortDir === "asc" ? 1 : -1;
-    students.sort((a, b) => {
-      let cmp = 0;
-      switch (sortBy) {
-        case "period":
-          cmp = a.period.localeCompare(b.period);
-          break;
-        case "amount_due":
-          cmp = money(a.amount_due).comparedTo(money(b.amount_due));
-          break;
-        case "status":
-          cmp = STATUS_RANK[a.status] - STATUS_RANK[b.status];
-          break;
-        case "paid_at":
-          cmp = (a.last_paid_at?.getTime() ?? 0) - (b.last_paid_at?.getTime() ?? 0);
-          break;
-        default:
-          cmp = (a.due_date?.getTime() ?? 0) - (b.due_date?.getTime() ?? 0);
-      }
-      return cmp * dir;
-    });
-
-    const total = students.length;
-    const paged = students.slice((page - 1) * limit, page * limit);
+    // Re-ordered to match the page query: the map is keyed by id and has no
+    // order of its own, and the database already decided the ranking.
+    const data = studentIds
+      .map((id) => byStudent.get(id))
+      .filter((invoices): invoices is PaymentRow[] => Boolean(invoices?.length))
+      .map((invoices) => this.presentStudent(invoices));
 
     return {
-      data: paged,
+      data,
       meta: {
         total,
         page,
@@ -1234,14 +1297,16 @@ export class PaymentService {
 
     const scope = studentId ? eq(studentPayments.student_id, studentId) : undefined;
 
+    // Only the number of affected rows is wanted, so the updates do not ask for
+    // them back: `RETURNING` on a whole-academy refresh materialises tens of
+    // thousands of UUIDs purely to call `.length` on them.
     const [expiredSoon, dueSoon, legacyOverdue] = await Promise.all([
       this.db.client
         .update(studentPayments)
         .set({ status: "not_paid" })
         // `lte` rather than `lt`: the due_soon window starts strictly after
         // today, so anything due today or earlier is no longer due soon.
-        .where(and(scope, eq(studentPayments.status, "due_soon"), lte(studentPayments.due_date, today)))
-        .returning({ id: studentPayments.id }),
+        .where(and(scope, eq(studentPayments.status, "due_soon"), lte(studentPayments.due_date, today))),
       this.db.client
         .update(studentPayments)
         .set({ status: "due_soon" })
@@ -1252,19 +1317,21 @@ export class PaymentService {
             gt(studentPayments.due_date, today),
             lte(studentPayments.due_date, soon),
           ),
-        )
-        .returning({ id: studentPayments.id }),
+        ),
       this.db.client
         .update(studentPayments)
         .set({ status: "not_paid" })
-        .where(and(scope, eq(studentPayments.status, "overdue")))
-        .returning({ id: studentPayments.id }),
+        .where(and(scope, eq(studentPayments.status, "overdue"))),
     ]);
 
+    const expiredSoonCount = expiredSoon.rowCount ?? 0;
+    const dueSoonCount = dueSoon.rowCount ?? 0;
+    const legacyOverdueCount = legacyOverdue.rowCount ?? 0;
+
     return {
-      overdue: legacyOverdue.length,
-      dueSoon: dueSoon.length,
-      total: expiredSoon.length + dueSoon.length + legacyOverdue.length,
+      overdue: legacyOverdueCount,
+      dueSoon: dueSoonCount,
+      total: expiredSoonCount + dueSoonCount + legacyOverdueCount,
     };
   }
 }

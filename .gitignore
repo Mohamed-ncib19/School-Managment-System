@@ -2,6 +2,9 @@ node_modules
 dist
 build
 .next
+# next.config.js builds production into a separate distDir so a build cannot
+# overwrite the running dev server's .next — it is just as much an artifact.
+.next-build
 out
 .env
 .env.local

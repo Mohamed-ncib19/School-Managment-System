@@ -52,6 +52,9 @@ import { TransactionService } from "./transaction.service";
     PaymentService,
     FinancialService,
     RevenueCalculationService,
+    // The academy's name and branding head every printed document, including
+    // the timetables the scheduling module produces.
+    FinancialSettingsService,
   ],
 })
 export class FinancialModule {}

@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { ENTITY_COLOR_PATTERN, ENTITY_COLOR_MESSAGE } from "../../common/color.util";
@@ -53,7 +53,25 @@ export class CreateGroupDto {
 
   @ApiPropertyOptional({ type: [TileDto], description: "Structured weekly schedule tiles" })
   @IsOptional()
+  @IsArray()
+  // Without `@Type`/`@ValidateNested` the tiles arrived as plain objects that
+  // no rule ever looked at, so a malformed time or a bogus classroom id went
+  // straight through to the schedule.
+  @ValidateNested({ each: true })
+  @Type(() => TileDto)
   scheduleTiles?: TileDto[];
+
+  /**
+   * Save despite a professor/student overlap the user has been shown.
+   *
+   * Must be declared here or the global `whitelist: true` pipe strips it before
+   * the service can read it — the confirmation would be silently discarded and
+   * the save would fail again with the same clash.
+   */
+  @ApiPropertyOptional({ description: "Proceed despite non-blocking schedule conflicts" })
+  @IsOptional()
+  @IsBoolean()
+  allowConflicts?: boolean;
 
   @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
   @IsOptional()
@@ -87,7 +105,25 @@ export class UpdateGroupDto {
 
   @ApiPropertyOptional({ type: [TileDto], description: "Structured weekly schedule tiles" })
   @IsOptional()
+  @IsArray()
+  // Without `@Type`/`@ValidateNested` the tiles arrived as plain objects that
+  // no rule ever looked at, so a malformed time or a bogus classroom id went
+  // straight through to the schedule.
+  @ValidateNested({ each: true })
+  @Type(() => TileDto)
   scheduleTiles?: TileDto[];
+
+  /**
+   * Save despite a professor/student overlap the user has been shown.
+   *
+   * Must be declared here or the global `whitelist: true` pipe strips it before
+   * the service can read it — the confirmation would be silently discarded and
+   * the save would fail again with the same clash.
+   */
+  @ApiPropertyOptional({ description: "Proceed despite non-blocking schedule conflicts" })
+  @IsOptional()
+  @IsBoolean()
+  allowConflicts?: boolean;
 
   @ApiPropertyOptional({ example: "#4F46E5", description: "Accent color shown on cards and rows" })
   @IsOptional()

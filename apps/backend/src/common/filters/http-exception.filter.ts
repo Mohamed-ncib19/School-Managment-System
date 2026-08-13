@@ -89,6 +89,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     let message: string | string[] = "Internal server error";
     let code = "INTERNAL_ERROR";
+    /**
+     * Extra fields a thrower attached to describe *what* went wrong.
+     *
+     * Some refusals are only actionable with their details — a timetable clash
+     * has to name the class already in the room, or the user is told "no" and
+     * nothing else. A handler supplies those by throwing with an object
+     * carrying its own `code`; everything on it besides `message` and `code`
+     * rides along in the envelope.
+     */
+    let details: Record<string, unknown> | undefined;
 
     if (exception instanceof HttpException) {
       const body = exception.getResponse();
@@ -97,11 +107,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else if (body && typeof body === "object") {
         // ValidationPipe puts field errors in `message` as a string[]
         message = (body as any).message ?? exception.message;
+        const { message: _m, code: _c, statusCode: _s, error: _e, ...rest } = body as Record<string, unknown>;
+        if (Object.keys(rest).length > 0) details = rest;
       }
-      code = (exception.constructor?.name ?? "HTTP_ERROR")
-        .replace(/Exception$/, "")
-        .replace(/([a-z])([A-Z])/g, "$1_$2")
-        .toUpperCase();
+      // An explicit code from the thrower wins over the one derived from the
+      // exception class, which can only ever say "CONFLICT" or "BAD_REQUEST".
+      const explicitCode = body && typeof body === "object" ? (body as any).code : undefined;
+      code = typeof explicitCode === "string"
+        ? explicitCode
+        : (exception.constructor?.name ?? "HTTP_ERROR")
+            .replace(/Exception$/, "")
+            .replace(/([a-z])([A-Z])/g, "$1_$2")
+            .toUpperCase();
     } else {
       /**
        * Database constraint violations are the caller's fault, not a server
@@ -131,7 +148,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response.status(status).json({
       data: null,
       meta: undefined,
-      error: { code, message, statusCode: status, path: request.url },
+      error: { code, message, statusCode: status, path: request.url, ...details },
     });
   }
 }

@@ -3,7 +3,7 @@
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
 import { ApiClient } from "@/lib/api/client";
 import { hierarchyApi, type HierarchySummary } from "@/lib/api/hierarchy.api";
-import { studentsApi } from "@/lib/api/students.api";
+import { studentsApi, type StudentListQuery } from "@/lib/api/students.api";
 import type { Field, Professor, Level, Group, Student } from "@/types";
 
 /**
@@ -92,9 +92,24 @@ export function useStudentSearch(
   const term = search.trim();
   return useQuery({
     queryKey: ["students", "search", term],
+    // Only the distinct fields/professors/groups of the matches are read from
+    // this, so a bounded sample answers the question a full scan would.
     queryFn: async () => studentsApi.list(undefined, term),
     enabled: term.length > 0,
     staleTime: 30_000,
     ...options,
+  });
+}
+
+/** One page of students, with every filter resolved server-side. */
+export function useStudentPage(
+  query: StudentListQuery,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ["students", "page", query],
+    queryFn: async () => studentsApi.page(query),
+    placeholderData: (previous) => previous,
+    enabled: options?.enabled ?? true,
   });
 }

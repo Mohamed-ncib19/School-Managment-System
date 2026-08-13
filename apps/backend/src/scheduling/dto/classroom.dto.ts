@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from "class-validator";
 import { Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { ENTITY_COLOR_PATTERN, ENTITY_COLOR_MESSAGE } from "../../common/color.util";
@@ -9,12 +9,6 @@ export class CreateClassroomDto {
   @MinLength(1)
   @MaxLength(120)
   name!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  building?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -52,12 +46,6 @@ export class UpdateClassroomDto {
   @MinLength(1)
   @MaxLength(120)
   name?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  building?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

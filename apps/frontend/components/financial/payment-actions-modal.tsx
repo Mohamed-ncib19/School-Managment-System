@@ -8,6 +8,7 @@ import {
   useRecordTransaction,
   useRefundPayment,
   useReopenPayment,
+  useStudentPaymentHistory,
   useUpdatePaymentStatus,
 } from "@/hooks/use-financial";
 import { openReceipt } from "@/lib/api/financial.api";
@@ -22,8 +23,14 @@ const MANUAL_STATUSES = ["not_paid", "due_soon", "overdue", "paid", "partially_p
 
 interface PaymentActionsModalProps {
   payment: StudentPayment;
-  /** The student's other invoices, when the modal is opened from the ledger. */
-  payments?: StudentPayment[];
+  /**
+   * Load the student's other invoices so the modal can switch between them.
+   *
+   * Passed as an id rather than the rows themselves: the ledger shows fifty
+   * students at a time but opens this for one, so the invoices are worth
+   * fetching only once a row is actually chosen.
+   */
+  studentId?: string;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -36,7 +43,7 @@ interface PaymentActionsModalProps {
  * what has already happened. Splitting these across four modals would mean four
  * places that each show a different subset of the same history.
  */
-export function PaymentActionsModal({ payment, payments = [], isOpen, onClose }: PaymentActionsModalProps) {
+export function PaymentActionsModal({ payment, studentId, isOpen, onClose }: PaymentActionsModalProps) {
   const { t } = useTranslation();
   const [activeId, setActiveId] = useState(payment.id);
   const [mode, setMode] = useState<Mode>("pay");
@@ -47,8 +54,16 @@ export function PaymentActionsModal({ payment, payments = [], isOpen, onClose }:
   const [overrideStatus, setOverrideStatus] = useState<string>(payment.status);
   const [overrideReason, setOverrideReason] = useState("");
 
-  // One of the student's invoices, when the modal is opened from the ledger.
-  const invoices = useMemo(() => (payments.length > 1 ? payments : [payment]), [payments, payment]);
+  // Fetched only while the modal is open, and only when it was opened from the
+  // ledger (which is what supplies a student id).
+  const { data: history } = useStudentPaymentHistory(isOpen && studentId ? studentId : "");
+
+  // Falls back to the invoice the row was acting on until the history arrives,
+  // so the modal renders immediately rather than waiting on a round trip.
+  const invoices = useMemo(
+    () => (history && history.length > 1 ? history : [payment]),
+    [history, payment],
+  );
   const current = useMemo(
     () => invoices.find((invoice) => invoice.id === activeId) ?? invoices[0] ?? payment,
     [invoices, activeId, payment],

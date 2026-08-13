@@ -1,10 +1,9 @@
 import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
 import { ClassroomRepository } from "./classroom.repository";
 import { AuditService } from "../../audit/audit.service";
 import { CreateClassroomDto, UpdateClassroomDto } from "../dto/classroom.dto";
-import type { Classroom } from "../types";
 import { scheduleEntries } from "../../db/schema";
 
 @Injectable()
@@ -15,8 +14,8 @@ export class ClassroomService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(building?: string, active?: boolean) {
-    return this.repo.list(building, active);
+  async list(active?: boolean) {
+    return this.repo.list(active);
   }
 
   async get(id: string) {
@@ -26,17 +25,16 @@ export class ClassroomService {
   }
 
   async create(dto: CreateClassroomDto, userId?: string) {
-    if (dto.building && dto.room_number) {
-      const dup = await this.repo.findDuplicate(dto.building, dto.room_number);
+    if (dto.room_number) {
+      const dup = await this.repo.findDuplicate(dto.room_number);
       if (dup) {
         throw new ConflictException(
-          `Room "${dup.building}${dup.room_number ? " - " + dup.room_number : ""}" already exists`,
+          `Room "${dup.room_number ? " - " + dup.room_number : ""}" already exists`,
         );
       }
     }
     const room = await this.repo.create({
       name: dto.name,
-      building: dto.building,
       floor: dto.floor,
       room_number: dto.room_number,
       capacity: dto.capacity,
@@ -49,7 +47,7 @@ export class ClassroomService {
       entityId: room.id,
       entityLabel: room.name,
       actorId: userId,
-      newValues: { name: room.name, building: room.building, room_number: room.room_number, capacity: room.capacity },
+      newValues: { name: room.name, room_number: room.room_number, capacity: room.capacity },
     });
     return room;
   }
@@ -58,20 +56,18 @@ export class ClassroomService {
     const existing = await this.repo.get(id);
     if (!existing) throw new NotFoundException(`Classroom ${id} not found`);
 
-    const building = dto.building ?? existing.building;
     const roomNumber = dto.room_number ?? existing.room_number;
-    if (building && roomNumber) {
-      const dup = await this.repo.findDuplicate(building, roomNumber, id);
+    if (roomNumber) {
+      const dup = await this.repo.findDuplicate(roomNumber, id);
       if (dup) {
         throw new ConflictException(
-          `Room "${dup.building}${dup.room_number ? " - " + dup.room_number : ""}" already exists`,
+          `Room "${dup.room_number ? " - " + dup.room_number : ""}" already exists`,
         );
       }
     }
 
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
-    if (dto.building !== undefined) data.building = dto.building;
     if (dto.floor !== undefined) data.floor = dto.floor;
     if (dto.room_number !== undefined) data.room_number = dto.room_number;
     if (dto.capacity !== undefined) data.capacity = dto.capacity;
@@ -87,8 +83,8 @@ export class ClassroomService {
       entityId: id,
       entityLabel: updated.name,
       actorId: userId,
-      prevValues: { name: existing.name, building: existing.building, is_active: existing.is_active },
-      newValues: { name: updated.name, building: updated.building, is_active: updated.is_active },
+      prevValues: { name: existing.name, is_active: existing.is_active },
+      newValues: { name: updated.name, is_active: updated.is_active },
     });
     return updated;
   }
@@ -97,17 +93,11 @@ export class ClassroomService {
     const existing = await this.repo.get(id);
     if (!existing) throw new NotFoundException(`Classroom ${id} not found`);
 
-    const inUse = await this.db.client
-      .select({ count: sql<number>`count(*)::int` })
-      .from(scheduleEntries)
+    const today = new Date();
+    await this.db.client
+      .update(scheduleEntries)
+      .set({ is_active: false, effective_until: today })
       .where(and(eq(scheduleEntries.classroom_id, id), eq(scheduleEntries.is_active, true)));
-    const activeCount = (inUse[0]?.count ?? 0) as number;
-
-    if (activeCount > 0) {
-      throw new ConflictException(
-        `Classroom is used by ${activeCount} active schedule entry(ies) - reschedule them first`,
-      );
-    }
 
     const deleted = await this.repo.update(id, { is_active: false });
     await this.audit.record({

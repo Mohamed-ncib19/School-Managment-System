@@ -1,0 +1,121 @@
+[
+  {
+    "name": "students:list-page1",
+    "path": "/students?page=1&limit=50",
+    "ms": 20.4,
+    "bytes": 72440,
+    "status": 200
+  },
+  {
+    "name": "students:list-search",
+    "path": "/students?page=1&limit=50&search=ben",
+    "ms": 17.9,
+    "bytes": 71271,
+    "status": 200
+  },
+  {
+    "name": "students:list-unpaged",
+    "path": "/students",
+    "ms": 14.1,
+    "bytes": 35983,
+    "status": 200
+  },
+  {
+    "name": "payments:students-view",
+    "path": "/financial/payments?view=students&page=1&limit=50",
+    "ms": 273.1,
+    "bytes": 261350,
+    "status": 200
+  },
+  {
+    "name": "payments:list-view",
+    "path": "/financial/payments?page=1&limit=50",
+    "ms": 25.9,
+    "bytes": 143335,
+    "status": 200
+  },
+  {
+    "name": "payments:search",
+    "path": "/financial/payments?view=students&page=1&limit=50&search=ben",
+    "ms": 334.2,
+    "bytes": 261274,
+    "status": 200
+  },
+  {
+    "name": "groups:list",
+    "path": "/groups",
+    "ms": 24.5,
+    "bytes": 247551,
+    "status": 200
+  },
+  {
+    "name": "professors:list",
+    "path": "/professors",
+    "ms": 10.8,
+    "bytes": 60363,
+    "status": 200
+  },
+  {
+    "name": "hierarchy:summary",
+    "path": "/hierarchy/summary",
+    "ms": 10.6,
+    "bytes": 58341,
+    "status": 200
+  },
+  {
+    "name": "financial:dashboard",
+    "path": "/financial/dashboard",
+    "ms": 4.7,
+    "bytes": 747,
+    "status": 200
+  },
+  {
+    "name": "analytics:revenue",
+    "path": "/financial/analytics/revenue?granularity=monthly",
+    "ms": 109.1,
+    "bytes": 1461,
+    "status": 200
+  },
+  {
+    "name": "analytics:breakdown-level",
+    "path": "/financial/analytics/breakdown/level",
+    "ms": 45.3,
+    "bytes": 1023,
+    "status": 200
+  },
+  {
+    "name": "analytics:status-dist",
+    "path": "/financial/analytics/status-distribution",
+    "ms": 14.5,
+    "bytes": 354,
+    "status": 200
+  },
+  {
+    "name": "audit:list",
+    "path": "/audit-logs?page=1&limit=50",
+    "ms": 6.5,
+    "bytes": 32590,
+    "status": 200
+  },
+  {
+    "name": "audit:search",
+    "path": "/audit-logs?page=1&limit=50&search=paiement",
+    "ms": 23.1,
+    "bytes": 78,
+    "status": 200
+  },
+  {
+    "name": "audit:filter-options",
+    "path": "/audit-logs/options",
+    "ms": 3.1,
+    "bytes": 2186,
+    "status": 200
+  },
+  {
+    "name": "payroll:list",
+    "path": "/financial/payroll",
+    "ms": 18.5,
+    "bytes": 34352,
+    "status": 200
+  }
+]

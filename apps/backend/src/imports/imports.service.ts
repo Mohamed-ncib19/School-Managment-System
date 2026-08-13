@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as ExcelJS from "exceljs";
 import { DbService, Tx } from "../db/db.service";
 import { fields, groups, levels, professors, studentAssignments, students } from "../db/schema";
@@ -35,6 +35,15 @@ const HEADER_KEYS: Record<string, keyof ParsedRow> = {
 };
 
 const STUDENT_STATUSES: StudentStatus[] = ["active", "paused", "withdrawn"];
+
+/**
+ * Rows per INSERT.
+ *
+ * PostgreSQL allows at most 65535 bind parameters per statement and a
+ * multi-row insert spends one per column per row, so a large roster has to be
+ * handed over in batches rather than as one statement.
+ */
+const IMPORT_CHUNK = 500;
 
 /** Per-import lookup of rows already resolved, keyed by parent id + name. */
 interface ImportCaches {
@@ -95,42 +104,7 @@ export class ImportsService {
     if (rows.length === 0) return result;
 
     await this.db.client.transaction(async (tx) => {
-      const caches = this.newCaches();
-
-      for (const row of rows) {
-        const groupId = await this.resolveGroup(tx, row, actorUserId, caches, result);
-
-        const [duplicate] = await tx
-          .select({ id: students.id })
-          .from(students)
-          .where(and(eq(students.group_id, groupId), eq(students.first_name, row.firstName), eq(students.last_name, row.lastName)))
-          .limit(1);
-        if (duplicate) {
-          result.skippedDuplicates++;
-          continue;
-        }
-
-        const [createdStudent] = await tx
-          .insert(students)
-          .values({
-            group_id: groupId,
-            first_name: this.sanitize(row.firstName),
-            last_name: this.sanitize(row.lastName),
-            phone: normalizeTunisianPhone(row.phone) ?? this.sanitize(row.phone),
-            parent_phone: row.parentPhone ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone)) : null,
-            email: row.email ? this.sanitize(row.email) : null,
-            enrollment_date: row.enrollmentDate,
-            monthly_fee: String(row.monthlyFee),
-            status: row.status,
-          })
-          .returning({ id: students.id });
-        await tx.insert(studentAssignments).values({
-          student_id: createdStudent.id,
-          group_id: groupId,
-          fee: String(row.monthlyFee),
-        });
-        result.imported++;
-      }
+      await this.insertRows(tx, rows, actorUserId, result);
     });
 
     await this.audit.createLog(actorUserId, "import.students", "students", actorUserId, {
@@ -214,43 +188,7 @@ export class ImportsService {
     // One transaction for the whole import: a mid-file failure must not leave
     // a half-built hierarchy behind.
     await this.db.client.transaction(async (tx) => {
-      const caches = this.newCaches();
-
-      for (const row of rows) {
-        const groupId = await this.resolveGroup(tx, row, actorUserId, caches, result);
-
-        // Append semantics: re-importing the same roster must not duplicate students.
-        const [duplicate] = await tx
-          .select({ id: students.id })
-          .from(students)
-          .where(and(eq(students.group_id, groupId), eq(students.first_name, row.firstName), eq(students.last_name, row.lastName)))
-          .limit(1);
-        if (duplicate) {
-          result.skippedDuplicates++;
-          continue;
-        }
-
-        const [createdStudent] = await tx
-          .insert(students)
-          .values({
-            group_id: groupId,
-            first_name: this.sanitize(row.firstName),
-            last_name: this.sanitize(row.lastName),
-            phone: normalizeTunisianPhone(row.phone) ?? this.sanitize(row.phone),
-            parent_phone: row.parentPhone ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone)) : null,
-            email: row.email ? this.sanitize(row.email) : null,
-            enrollment_date: row.enrollmentDate,
-            monthly_fee: String(row.monthlyFee),
-            status: row.status,
-          })
-          .returning({ id: students.id });
-        await tx.insert(studentAssignments).values({
-          student_id: createdStudent.id,
-          group_id: groupId,
-          fee: String(row.monthlyFee),
-        });
-        result.imported++;
-      }
+      await this.insertRows(tx, rows, actorUserId, result);
     });
 
     await this.audit.createLog(actorUserId, "import.students", "students", actorUserId, {
@@ -265,6 +203,94 @@ export class ImportsService {
     );
 
     return result;
+  }
+
+  /**
+   * Inserts every parsed row, in as few statements as the data allows.
+   *
+   * Row by row this was at least four sequential round trips each — resolve the
+   * group, look for a duplicate, insert the student, insert the enrolment —
+   * inside a single transaction holding its locks and one of the ten pool
+   * connections for the whole file. A two thousand row roster was the better
+   * part of ten thousand queries, and the rest of the application waited.
+   *
+   * The transaction still wraps everything: a half-imported roster is worse
+   * than a rejected one, and per-row error attribution (which row was a
+   * duplicate) is preserved because the duplicate check is resolved for all
+   * rows at once rather than abandoned.
+   */
+  private async insertRows(
+    tx: Tx,
+    rows: ParsedRow[],
+    actorUserId: string,
+    result: ImportResult,
+  ): Promise<void> {
+    const caches = this.newCaches();
+
+    // Groups are resolved first and in order: this is the one step that can
+    // create hierarchy, and the caches make a repeated group free.
+    const resolved: { row: ParsedRow; groupId: string }[] = [];
+    for (const row of rows) {
+      resolved.push({ row, groupId: await this.resolveGroup(tx, row, actorUserId, caches, result) });
+    }
+    if (resolved.length === 0) return;
+
+    // Append semantics: re-importing the same roster must not duplicate
+    // students. Asked once for every group in the file rather than once per row.
+    const groupIds = [...new Set(resolved.map((r) => r.groupId))];
+    const existing = await tx
+      .select({ group_id: students.group_id, first_name: students.first_name, last_name: students.last_name })
+      .from(students)
+      .where(inArray(students.group_id, groupIds));
+
+    const seen = new Set(existing.map((s) => `${s.group_id}::${s.first_name}::${s.last_name}`));
+
+    const toInsert: { row: ParsedRow; groupId: string }[] = [];
+    for (const entry of resolved) {
+      const key = `${entry.groupId}::${entry.row.firstName}::${entry.row.lastName}`;
+      // Also guards against the same student appearing twice in one file.
+      if (seen.has(key)) {
+        result.skippedDuplicates++;
+        continue;
+      }
+      seen.add(key);
+      toInsert.push(entry);
+    }
+    if (toInsert.length === 0) return;
+
+    for (let i = 0; i < toInsert.length; i += IMPORT_CHUNK) {
+      const chunk = toInsert.slice(i, i + IMPORT_CHUNK);
+      const created = await tx
+        .insert(students)
+        .values(
+          chunk.map(({ row, groupId }) => ({
+            group_id: groupId,
+            first_name: this.sanitize(row.firstName),
+            last_name: this.sanitize(row.lastName),
+            phone: normalizeTunisianPhone(row.phone) ?? this.sanitize(row.phone),
+            parent_phone: row.parentPhone
+              ? (normalizeTunisianPhone(row.parentPhone) ?? this.sanitize(row.parentPhone))
+              : null,
+            email: row.email ? this.sanitize(row.email) : null,
+            enrollment_date: row.enrollmentDate,
+            monthly_fee: String(row.monthlyFee),
+            status: row.status,
+          })),
+        )
+        .returning({ id: students.id });
+
+      // `returning` preserves insert order, so each new id lines up with the
+      // row it came from and the enrolments go in as one statement too.
+      await tx.insert(studentAssignments).values(
+        created.map((student, index) => ({
+          student_id: student.id,
+          group_id: chunk[index].groupId,
+          fee: String(chunk[index].row.monthlyFee),
+        })),
+      );
+
+      result.imported += created.length;
+    }
   }
 
   private newCaches(): ImportCaches {

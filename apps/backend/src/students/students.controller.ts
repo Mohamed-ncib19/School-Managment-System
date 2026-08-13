@@ -24,17 +24,30 @@ export class StudentsController {
   @Get()
   async findAll(
     @Query("groupId") groupId?: string,
+    @Query("profId") profId?: string,
+    @Query("fieldId") fieldId?: string,
+    @Query("levelId") levelId?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
     @Query("search") search?: string,
     @Query("status") status?: string,
+    @Query("sort") sort?: string,
   ) {
+    const allowedSorts = ["newest", "nameAsc", "nameDesc", "color"] as const;
     return this.studentsService.listStudents({
       groupId,
+      profId,
+      fieldId,
+      levelId,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       search,
       status,
+      // Never interpolate a client string into an ORDER BY: only the four
+      // orders the UI offers are accepted, anything else falls back.
+      sort: (allowedSorts as readonly string[]).includes(sort ?? "")
+        ? (sort as (typeof allowedSorts)[number])
+        : undefined,
     });
   }
 

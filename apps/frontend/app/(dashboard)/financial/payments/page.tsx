@@ -592,7 +592,11 @@ function StudentPaymentsInner() {
       {selected && (
         <PaymentActionsModal
           payment={selected.action_payment ?? selected}
-          payments={selected.payments}
+          // The student's other invoices are fetched by the modal itself: only
+          // the row being acted on needs them, and shipping them for all fifty
+          // rows made the list response orders of magnitude larger than the
+          // table it draws.
+          studentId={selected.student_id}
           isOpen={!!selected}
           onClose={() => setSelected(null)}
         />

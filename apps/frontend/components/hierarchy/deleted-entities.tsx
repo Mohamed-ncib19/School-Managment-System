@@ -51,6 +51,7 @@ export default function DeletedEntities({ entityType, parentId, isOpen, onClose 
   const { data: items, isLoading } = useQuery({
     queryKey: deletedListKey(entityType, parentId),
     enabled: isOpen,
+    staleTime: 0,
     queryFn: async () => {
       switch (entityType) {
         case "level": return levelsApi.deleted();

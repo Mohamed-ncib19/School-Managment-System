@@ -24,6 +24,11 @@ import {
   FileText,
   Receipt,
   SlidersHorizontal,
+  CalendarDays,
+  CalendarRange,
+  Clock,
+  AlarmClock,
+  DoorOpen,
 } from "lucide-react";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { useTranslation } from "@/lib/i18n/context";
@@ -66,6 +71,14 @@ const ADMIN_NAV_ITEMS = [
   { href: "/import", label: "nav.import", icon: Upload },
   { href: "/audit", label: "nav.audit", icon: UserCog },
   { href: "/settings", label: "nav.settings", icon: Settings },
+];
+
+const SCHEDULE_NAV_ITEMS = [
+  { href: "/schedule/calendar", label: "nav.scheduleCalendar", icon: CalendarRange },
+  { href: "/schedule/entries", label: "nav.scheduleEntries", icon: CalendarDays },
+  { href: "/schedule/classrooms", label: "nav.classrooms", icon: DoorOpen },
+  { href: "/schedule/time-slots", label: "nav.timeSlots", icon: Clock },
+  { href: "/schedule/working-hours", label: "nav.workingHours", icon: AlarmClock },
 ];
 
 const ENTITY_ICONS: Record<HierarchyEntity, any> = {
@@ -132,6 +145,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
   const { data: system } = useSystemSettings();
   const [hierarchyOpen, setHierarchyOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const features = system?.features;
   const systemName = system?.system_name?.trim() || t("app.name");
@@ -170,6 +184,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
   // Auto-expand hierarchy section when on a hierarchy page
   const isOnHierarchyPage = pathname.startsWith("/hierarchy");
   const isOnFinancialPage = pathname.startsWith("/financial");
+  const isOnSchedulePage = pathname.startsWith("/schedule");
   useEffect(() => {
     if (isOnHierarchyPage) {
       setHierarchyOpen(true);
@@ -177,7 +192,10 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
     if (isOnFinancialPage) {
       setFinancialOpen(true);
     }
-  }, [isOnHierarchyPage, isOnFinancialPage]);
+    if (isOnSchedulePage) {
+      setScheduleOpen(true);
+    }
+  }, [isOnHierarchyPage, isOnFinancialPage, isOnSchedulePage]);
 
   const handleLogout = async () => {
     logout();
@@ -396,7 +414,64 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 aria-label={t("nav.fields")}
                 title={t("nav.fields")}
               >
-                <Network size={18} className="shrink-0" />
+                <Network size={18} />
+              </button>
+            </div>
+          )}
+
+          {/* Schedule Management section */}
+          {!collapsed ? (
+            <div>
+              <button
+                onClick={() => setScheduleOpen(!scheduleOpen)}
+                className={`flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm font-medium transition-colors duration-150 w-full ${
+                  isOnSchedulePage
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
+                }`}
+              >
+                <CalendarDays size={18} className="shrink-0" />
+                <span className="flex-1 text-left">{t("nav.scheduleManagement")}</span>
+                <ChevronDown size={14} className={`transition-transform duration-150 ${scheduleOpen ? "rotate-180" : ""}`} />
+              </button>
+              {scheduleOpen && (
+                <div className="ml-6 mt-1 space-y-1 border-l border-border pl-3">
+                  {SCHEDULE_NAV_ITEMS.map((item) => {
+                    const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                    const Icon = item.icon;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={onCloseMobile}
+                        className={`flex items-center gap-2 rounded-btn px-3 py-2 text-xs font-medium transition-colors duration-150 ${
+                          isActive
+                            ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary font-semibold"
+                            : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
+                        }`}
+                      >
+                        <Icon size={14} className="shrink-0" />
+                        <span>{t(item.label)}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Collapsed schedule */
+            <div className="flex flex-col items-center">
+              <button
+                onClick={() => router.push(SCHEDULE_NAV_ITEMS[0]?.href ?? "/schedule/entries")}
+                className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
+                  isOnSchedulePage
+                    ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary"
+                    : "text-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:text-text-primary"
+                }`}
+                aria-label={t("nav.scheduleManagement")}
+                title={t("nav.scheduleManagement")}
+              >
+                <CalendarDays size={18} />
               </button>
             </div>
           )}

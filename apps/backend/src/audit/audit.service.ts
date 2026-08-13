@@ -58,9 +58,19 @@ const REDACTED_KEYS = new Set([
   "secret",
 ]);
 
+/** How long the audit filter dropdowns may lag a brand-new action type. */
+const FILTER_OPTIONS_TTL_MS = 60_000;
+
+interface FilterOptions {
+  actions: string[];
+  entityTypes: string[];
+  actors: { id: string; full_name: string; email: string }[];
+}
+
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
+  private filterOptionsCache: { value: FilterOptions; expiresAt: number } | null = null;
 
   constructor(private readonly db: DbService) {}
 
@@ -271,8 +281,29 @@ export class AuditService {
     };
   }
 
-  /** Distinct actions and actors, so the UI can offer real filter options. */
+  /**
+   * Distinct actions and actors, so the UI can offer real filter options.
+   *
+   * Cached, because the question is expensive in a way its answer does not
+   * justify: two `SELECT DISTINCT` passes over the whole audit trail plus every
+   * user, to produce a few dozen strings that change only when a new kind of
+   * action is performed for the first time. `audit_logs` also grows on every
+   * mutating request, so this is the one read here whose cost climbs with use
+   * rather than with the size of the school.
+   *
+   * A minute of staleness costs a brand-new action type a moment before it
+   * appears in the dropdown; the rows themselves are never filtered by this.
+   */
   async listFilterOptions() {
+    const hit = this.filterOptionsCache;
+    if (hit && hit.expiresAt > Date.now()) return hit.value;
+
+    const value = await this.computeFilterOptions();
+    this.filterOptionsCache = { value, expiresAt: Date.now() + FILTER_OPTIONS_TTL_MS };
+    return value;
+  }
+
+  private async computeFilterOptions() {
     const [actions, entityTypes, actors] = await Promise.all([
       this.db.client.selectDistinct({ action: auditLogs.action }).from(auditLogs).orderBy(asc(auditLogs.action)),
       this.db.client

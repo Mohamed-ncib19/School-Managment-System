@@ -60,9 +60,13 @@ export const professors = pgTable("professors", {
 	is_active: boolean("is_active").default(true).notNull(),
 	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	color: text(),
+	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
+	archived_because_parent_id: uuid("archived_because_parent_id"),
+	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("professors_field_id_idx").using("btree", table.field_id.asc().nullsLast()),
 	index("professors_is_active_idx").using("btree", table.is_active.asc().nullsLast()),
+	index("professors_full_name_trgm_idx").using("gin", sql`${table.full_name} gin_trgm_ops`),
 	foreignKey({
 			columns: [table.field_id],
 			foreignColumns: [fields.id],
@@ -72,6 +76,11 @@ export const professors = pgTable("professors", {
 			columns: [table.user_id],
 			foreignColumns: [users.id],
 			name: "professors_user_id_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+	foreignKey({
+			columns: [table.archived_because_parent_id],
+			foreignColumns: [fields.id],
+			name: "professors_archived_because_parent_id_fkey"
 		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
@@ -84,6 +93,9 @@ export const fields = pgTable("fields", {
 	level_id: uuid("level_id").notNull(),
 	color: text(),
 	is_active: boolean("is_active").default(true).notNull(),
+	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
+	archived_because_parent_id: uuid("archived_because_parent_id"),
+	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("fields_created_by_idx").using("btree", table.created_by.asc().nullsLast()),
 	index("fields_is_active_idx").using("btree", table.is_active.asc().nullsLast()),
@@ -98,6 +110,11 @@ export const fields = pgTable("fields", {
 			foreignColumns: [levels.id],
 			name: "fields_level_id_fkey"
 		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.archived_because_parent_id],
+			foreignColumns: [levels.id],
+			name: "fields_archived_because_parent_id_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
 export const groups = pgTable("groups", {
@@ -109,13 +126,22 @@ export const groups = pgTable("groups", {
 	is_active: boolean("is_active").default(true).notNull(),
 	prof_id: uuid("prof_id").notNull(),
 	color: text(),
+	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
+	archived_because_parent_id: uuid("archived_because_parent_id"),
+	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("groups_prof_id_idx").using("btree", table.prof_id.asc().nullsLast()),
+	index("groups_name_trgm_idx").using("gin", sql`${table.name} gin_trgm_ops`),
 	foreignKey({
 			columns: [table.prof_id],
 			foreignColumns: [professors.id],
 			name: "groups_prof_id_fkey"
 		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.archived_because_parent_id],
+			foreignColumns: [professors.id],
+			name: "groups_archived_because_parent_id_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
 export const students = pgTable("students", {
@@ -131,15 +157,39 @@ export const students = pgTable("students", {
 	status: studentStatus().default('active').notNull(),
 	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	color: text(),
+	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
+	archived_because_parent_id: uuid("archived_because_parent_id"),
+	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("students_group_id_idx").using("btree", table.group_id.asc().nullsLast()),
 	index("students_last_name_first_name_idx").using("btree", table.last_name.asc().nullsLast(), table.first_name.asc().nullsLast()),
 	index("students_status_idx").using("btree", table.status.asc().nullsLast()),
+	// Sort keys for the list endpoints. Ascending on purpose: both are read
+	// newest-first, and a plain ascending btree is what matches `ORDER BY col
+	// DESC` (which implies NULLS FIRST) when scanned backwards.
+	index("students_created_at_idx").using("btree", table.created_at.asc().nullsLast()),
+	index("students_enrollment_date_idx").using("btree", table.enrollment_date.asc().nullsLast()),
+	// Trigram indexes for the `ILIKE '%term%'` search; a leading wildcard can
+	// never use a btree. See drizzle/0003_performance_indexes.sql.
+	index("students_first_name_trgm_idx").using("gin", sql`${table.first_name} gin_trgm_ops`),
+	index("students_last_name_trgm_idx").using("gin", sql`${table.last_name} gin_trgm_ops`),
+	index("students_phone_trgm_idx").using("gin", sql`${table.phone} gin_trgm_ops`),
+	index("students_parent_phone_trgm_idx").using("gin", sql`${table.parent_phone} gin_trgm_ops`),
+	index("students_email_trgm_idx").using("gin", sql`${table.email} gin_trgm_ops`),
+	// The payments search compares the accent-folded name, not the column, so
+	// the expression itself has to be indexed for the search to use an index.
+	index("students_first_name_unaccent_trgm_idx").using("gin", sql`(translate(lower(${table.first_name}), 'àâäçéèêëîïôöùûüÿ', 'aaaceeeeiioouuuy')) gin_trgm_ops`),
+	index("students_last_name_unaccent_trgm_idx").using("gin", sql`(translate(lower(${table.last_name}), 'àâäçéèêëîïôöùûüÿ', 'aaaceeeeiioouuuy')) gin_trgm_ops`),
 	foreignKey({
 			columns: [table.group_id],
 			foreignColumns: [groups.id],
 			name: "students_group_id_fkey"
 		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.archived_because_parent_id],
+			foreignColumns: [groups.id],
+			name: "students_archived_because_parent_id_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
 export const users = pgTable("users", {
@@ -155,6 +205,8 @@ export const users = pgTable("users", {
 	reset_token_expires: timestamp("reset_token_expires", { precision: 3, mode: 'date' }),
 }, (table) => [
 	uniqueIndex("users_email_key").using("btree", table.email.asc().nullsLast()),
+	// The audit search resolves actor names through a separate scan of `users`.
+	index("users_full_name_trgm_idx").using("gin", sql`${table.full_name} gin_trgm_ops`),
 ]);
 
 export const levels = pgTable("levels", {
@@ -163,6 +215,8 @@ export const levels = pgTable("levels", {
 	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	is_active: boolean("is_active").default(true).notNull(),
 	color: text(),
+	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
+	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 });
 
 export const auditLogs = pgTable("audit_logs", {
@@ -186,6 +240,13 @@ export const auditLogs = pgTable("audit_logs", {
 	index("audit_logs_actor_user_id_idx").using("btree", table.actor_user_id.asc().nullsLast()),
 	index("audit_logs_created_at_idx").using("btree", table.created_at.asc().nullsLast()),
 	index("audit_logs_entity_type_entity_id_idx").using("btree", table.entity_type.asc().nullsLast(), table.entity_id.asc().nullsLast()),
+	// Deliberately only the three columns the UI offers as free-text filters:
+	// this table is written on every mutating request, and each GIN index is
+	// paid for on that write path. `entity_type` has a handful of distinct
+	// values (cheaper to scan) and `ip_address` is not a search field.
+	index("audit_logs_action_trgm_idx").using("gin", sql`${table.action} gin_trgm_ops`),
+	index("audit_logs_entity_label_trgm_idx").using("gin", sql`${table.entity_label} gin_trgm_ops`),
+	index("audit_logs_actor_label_trgm_idx").using("gin", sql`${table.actor_label} gin_trgm_ops`),
 	foreignKey({
 			columns: [table.actor_user_id],
 			foreignColumns: [users.id],
@@ -341,7 +402,8 @@ export const classrooms = pgTable("classrooms", {
 	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => [
 	index("classrooms_is_active_idx").using("btree", table.is_active.asc().nullsLast()),
-	index("classrooms_building_room_idx").using("btree", table.building.asc().nullsLast(), table.room_number.asc().nullsLast()),
+	index("classrooms_room_idx").using("btree", table.room_number.asc().nullsLast()),
+	uniqueIndex("classrooms_building_room_key").using("btree", table.building.asc().nullsLast(), table.room_number.asc().nullsLast()).where(sql`${table.room_number} IS NOT NULL`),
 ]);
 
 export const timeSlots = pgTable("time_slots", {
@@ -376,9 +438,13 @@ export const scheduleEntries = pgTable("schedule_entries", {
 	index("schedule_entries_classroom_id_idx").using("btree", table.classroom_id.asc().nullsLast()),
 	index("schedule_entries_time_slot_id_idx").using("btree", table.time_slot_id.asc().nullsLast()),
 	index("schedule_entries_active_from_idx").using("btree", table.is_active.asc().nullsLast(), table.effective_from.asc().nullsLast()),
-	uniqueIndex("schedule_entries_group_slot_from_key").using("btree", table.group_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()),
-	uniqueIndex("schedule_entries_classroom_slot_from_key").using("btree", table.classroom_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()),
-	uniqueIndex("schedule_entries_prof_slot_from_key").using("btree", table.prof_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()),
+	// Partial on `is_active`: these stop a live double-booking, but an archived
+	// rule describes a session that no longer happens and must not keep holding
+	// its slot — otherwise moving or re-adding a session on the same day fails
+	// against the row that was just retired.
+	uniqueIndex("schedule_entries_group_slot_from_key").using("btree", table.group_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()).where(sql`${table.is_active}`),
+	uniqueIndex("schedule_entries_classroom_slot_from_key").using("btree", table.classroom_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()).where(sql`${table.is_active}`),
+	uniqueIndex("schedule_entries_prof_slot_from_key").using("btree", table.prof_id.asc().nullsLast(), table.time_slot_id.asc().nullsLast(), table.effective_from.asc().nullsLast()).where(sql`${table.is_active}`),
 	check("schedule_entries_until_after_from_check", sql`effective_until IS NULL OR effective_until >= effective_from`),
 	foreignKey({
 			columns: [table.group_id],
@@ -429,6 +495,66 @@ export const studentScheduleExceptions = pgTable("student_schedule_exceptions", 
 			name: "student_schedule_exceptions_created_by_fkey"
 		}).onUpdate("cascade").onDelete("set null"),
 	check("student_schedule_exceptions_type_check", sql`exception_type IN ('substitute','cancelled','makeup')`),
+]);
+
+export const scheduleEntryExceptions = pgTable("schedule_entry_exceptions", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	schedule_entry_id: uuid("schedule_entry_id").notNull(),
+	occurrence_date: timestamp("occurrence_date", { precision: 3, mode: 'date' }).notNull(),
+	exception_type: text("exception_type").notNull(),
+	new_date: timestamp("new_date", { precision: 3, mode: 'date' }),
+	new_time_slot_id: uuid("new_time_slot_id"),
+	new_classroom_id: uuid("new_classroom_id"),
+	new_prof_id: uuid("new_prof_id"),
+	notes: text(),
+	created_by: uuid("created_by"),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	uniqueIndex("schedule_entry_exceptions_entry_date_key").using("btree", table.schedule_entry_id.asc().nullsLast(), table.occurrence_date.asc().nullsLast()),
+	index("schedule_entry_exceptions_date_idx").using("btree", table.occurrence_date.asc().nullsLast()),
+	index("schedule_entry_exceptions_type_idx").using("btree", table.exception_type.asc().nullsLast()),
+	foreignKey({
+			columns: [table.schedule_entry_id],
+			foreignColumns: [scheduleEntries.id],
+			name: "schedule_entry_exceptions_schedule_entry_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.new_time_slot_id],
+			foreignColumns: [timeSlots.id],
+			name: "schedule_entry_exceptions_new_time_slot_id_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.new_classroom_id],
+			foreignColumns: [classrooms.id],
+			name: "schedule_entry_exceptions_new_classroom_id_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.new_prof_id],
+			foreignColumns: [professors.id],
+			name: "schedule_entry_exceptions_new_prof_id_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [users.id],
+			name: "schedule_entry_exceptions_created_by_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+	check("schedule_entry_exceptions_type_check", sql`exception_type IN ('cancelled','moved','substitute_prof','room_change')`),
+]);
+
+export const workingHours = pgTable("working_hours", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	day_of_week: integer("day_of_week"),
+	label: text(),
+	start_time: time("start_time").notNull(),
+	end_time: time("end_time").notNull(),
+	is_active: boolean("is_active").default(true).notNull(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => [
+	index("working_hours_day_idx").using("btree", table.day_of_week.asc().nullsLast()),
+	index("working_hours_active_idx").using("btree", table.is_active.asc().nullsLast()),
+	check("working_hours_end_after_start_check", sql`end_time > start_time`),
+	check("working_hours_day_range_check", sql`(day_of_week IS NULL) OR ((day_of_week >= 0) AND (day_of_week <= 6))`),
 ]);
 
 export const payrollDocuments = pgTable("payroll_documents", {

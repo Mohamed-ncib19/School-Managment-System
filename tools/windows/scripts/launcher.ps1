@@ -287,6 +287,33 @@ if ($appLoginOk) {
 }
 
 <#
+  pg_trgm backs every "contains" search in the app (students, professors, the
+  audit trail). Creating an extension needs superuser, which the application
+  role deliberately is not, so drizzle-kit cannot do it - and without the
+  extension the GIN search indexes fail to build.
+
+  Runs on every start, not just on a fresh machine: existing installations
+  predate the extension and need it too. IF NOT EXISTS makes the repeat free.
+#>
+if ($psql) {
+  $superPass = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
+  if (-not $superPass) { $superPass = "iq_academy_local" }
+  $env:PGPASSWORD = $superPass
+
+  $hasTrgm = & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -tAc "SELECT 1 FROM pg_extension WHERE extname='pg_trgm'" 2>$null
+  if ($hasTrgm -ne "1") {
+    & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      Write-Ok "Enabled pg_trgm" "text search indexes"
+    } else {
+      Write-Warn2 "Could not enable pg_trgm - text searches will fall back to full scans"
+    }
+  }
+
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+}
+
+<#
   Guard against pointing at the wrong server. An empty database on a machine
   that already has backups usually means something else has taken port
   $dbPort (a Docker container, a second PostgreSQL install) and the real data
@@ -352,6 +379,49 @@ if ($schemaHash -and (Test-Path $schemaState)) {
 }
 
 if ($pushNeeded) {
+  # ==========================================================================
+  #  Pre-push repair: ownership + orphan cleanup.
+  #  On cloned installs the tables may still be owned by the superuser, so
+  #  drizzle-kit push (which connects as the app user) cannot ALTER them.
+  #  Also clean up orphaned schedule_entries that would block FK additions.
+  # ==========================================================================
+  if ($psql -and $appLoginOk) {
+    $env:PGPASSWORD = $dbPass
+    $nonOwnerTables = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+      "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tableowner<>'$dbUser'" 2>$null
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+
+    if ($LASTEXITCODE -eq 0 -and [int]$nonOwnerTables -gt 0) {
+      $superPass = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
+      if ($superPass) {
+        Write-Info "Repairing table ownership for drizzle-kit push..."
+        $env:PGPASSWORD = $superPass
+        & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -c "ALTER TABLE schedule_entries OWNER TO `"$dbUser`"; ALTER TABLE student_schedule_exceptions OWNER TO `"$dbUser`"; ALTER TABLE time_slots OWNER TO `"$dbUser`"; ALTER TABLE classrooms OWNER TO `"$dbUser`";" 2>$null | Out-Null
+        $ownerFixExit = $LASTEXITCODE
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+
+        if ($ownerFixExit -eq 0) {
+          Write-Ok "Table ownership repaired"
+        } else {
+          Write-Warn2 "Could not repair table ownership - drizzle-kit push may fail"
+        }
+      }
+    }
+
+    $env:PGPASSWORD = $dbPass
+    $orphanCount = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+      "SELECT count(*) FROM schedule_entries WHERE group_id NOT IN (SELECT id FROM groups)" 2>$null
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+
+    if ($LASTEXITCODE -eq 0 -and [int]$orphanCount -gt 0) {
+      Write-Info "Cleaning up $orphanCount orphaned schedule entry/entries..."
+      $env:PGPASSWORD = $dbPass
+      & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -c "DELETE FROM schedule_entries WHERE group_id NOT IN (SELECT id FROM groups);" 2>$null | Out-Null
+      Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+      Write-Ok "Orphaned schedule entries removed"
+    }
+  }
+
   Push-Location $BackendDir
   $pushOutput = pnpm exec drizzle-kit push --force 2>&1
   $pushExit = $LASTEXITCODE
