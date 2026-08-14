@@ -7,7 +7,7 @@ import { openStudentTimetable } from "@/lib/api/scheduling.api";
 import type { ScheduleEntry, StudentScheduleException } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
 
-const DAY_NAMES = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+const DAY_NAMES = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 interface StudentTimetableModalProps {
   studentId: string;
@@ -79,11 +79,11 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
       <div className="bg-surface rounded-modal shadow-hover p-6 w-full max-w-5xl mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-h4 font-bold">{t("scheduling.studentTimetable", "Student Timetable")}</h3>
+            <h3 className="text-h4 font-bold">{t("scheduling.studentTimetable")}</h3>
             <p className="text-sm text-text-secondary">{studentName}</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={handlePrint} className="btn btn-secondary text-xs"><Printer size={14} /> {t("common.print", "Print")}</button>
+            <button onClick={handlePrint} className="btn btn-secondary text-xs"><Printer size={14} /> {t("common.print")}</button>
             <button onClick={onClose} className="h-8 w-8 inline-flex items-center justify-center rounded-btn text-text-secondary hover:text-primary"><X size={18} /></button>
           </div>
         </div>
@@ -92,10 +92,10 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
           <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200 mb-4">
             <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm text-red-700 font-medium">{t("scheduling.overlapsFound", "Overlapping sessions detected")}</p>
+              <p className="text-sm text-red-700 font-medium">{t("scheduling.overlapsFound")}</p>
               {overlaps.map((o, i) => (
                 <p key={i} className="text-xs text-red-600 mt-1">
-                  {DAY_NAMES[o.day]}: {o.entries[0].group.name} ({o.entries[0].time_slot.start_time}–{o.entries[0].time_slot.end_time}) overlaps with {o.entries[1].group.name} ({o.entries[1].time_slot.start_time}–{o.entries[1].time_slot.end_time})
+                  {DAY_NAMES[o.day]}: {o.entries[0].group.name} ({o.entries[0].time_slot.start_time}–{o.entries[0].time_slot.end_time}) {t("scheduling.overlapsWith")} {o.entries[1].group.name} ({o.entries[1].time_slot.start_time}–{o.entries[1].time_slot.end_time})
                 </p>
               ))}
             </div>
@@ -113,7 +113,7 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
                 <div key={day} className={`rounded-lg border p-2 min-h-[120px] ${hasOverlap ? "border-red-300 bg-red-50/30" : "border-border"}`}>
                   <p className="text-xs font-semibold mb-2 text-text-secondary">{DAY_NAMES[day]}</p>
                   {dayEntries.length === 0 ? (
-                    <p className="text-xs text-text-secondary/50 italic">{t("scheduling.noSessions", "No sessions")}</p>
+                    <p className="text-xs text-text-secondary/50 italic">{t("scheduling.noSessions")}</p>
                   ) : (
                     <div className="space-y-1">
                       {dayEntries.map((entry) => {
@@ -128,7 +128,7 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
                             {entry.classroom && <p className="truncate text-text-secondary/70">{entry.classroom.name}</p>}
                             {onAddException && !cancelled && (
                               <button onClick={() => onAddException(entry.id)} className="text-primary hover:underline mt-0.5">
-                                <Plus size={10} className="inline" /> {t("scheduling.addException", "Add exception")}
+                                <Plus size={10} className="inline" /> {t("scheduling.addException")}
                               </button>
                             )}
                           </div>
@@ -143,10 +143,10 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
         )}
 
         <div id="student-timetable-print" style={{ display: "none" }}>
-          <h1>Timetable - {studentName}</h1>
-          <p>Generated on {new Date().toLocaleDateString()}</p>
+          <h1>{t("scheduling.printTitle").replace("{name}", studentName)}</h1>
+          <p>{t("scheduling.generatedOn")} {new Date().toLocaleDateString("fr-FR")}</p>
           <table>
-            <thead><tr><th>Day</th><th>Time</th><th>Group</th><th>Professor</th><th>Classroom</th><th>Subject</th></tr></thead>
+            <thead><tr><th>{t("scheduling.timetableDay")}</th><th>{t("scheduling.timetableTime")}</th><th>{t("scheduling.timetableGroup")}</th><th>{t("scheduling.timetableProfessor")}</th><th>{t("scheduling.timetableClassroom")}</th><th>{t("scheduling.timetableSubject")}</th></tr></thead>
             <tbody>
               {entries?.map((entry) => (
                 <tr key={entry.id}>

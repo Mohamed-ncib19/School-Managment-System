@@ -19,7 +19,7 @@ import { ViewToggle } from "@/components/shared/view-toggle";
 import { WeeklyScheduleBuilder } from "@/components/scheduling/weekly-schedule-builder";
 import { useTranslation } from "@/lib/i18n/context";
 
-const DAY_SHORT = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+const DAY_SHORT = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 export default function GroupsPage() {
   const { t } = useTranslation();
@@ -323,7 +323,7 @@ export default function GroupsPage() {
                         </div>
                         <p className="text-text-secondary"><span className="font-medium">{t("fieldsHierarchy.capacity")}</span> {group.capacity ?? "—"}</p>
                         <p className="text-text-secondary truncate">
-                          <span className="font-medium">{t("scheduling.timeSlots", "Schedule")}:</span> {getGroupScheduleLabel(group.id) || "—"}
+                          <span className="font-medium">{t("scheduling.schedule")}:</span> {getGroupScheduleLabel(group.id) || "—"}
                         </p>
                         <p className="text-text-secondary truncate">
                           <span className="font-medium">{t("nav.classrooms", "Classroom")}:</span> {getGroupClassroomLabel(group.id) || "—"}
@@ -357,7 +357,7 @@ export default function GroupsPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.name")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.capacity")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.scheduleNotes")}</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.timeSlots", "Schedule")}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.schedule")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.classrooms", "Classroom")}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.hierarchy", "Hierarchy")}</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.actions")}</th>

@@ -2,6 +2,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 
 interface Props {
   children: ReactNode;
@@ -13,6 +14,12 @@ interface Props {
 
 interface State {
   error: Error | null;
+}
+
+/** Hooks need a function component, so the translated label lives here. */
+function DashboardLabel() {
+  const { t } = useTranslation();
+  return <>{t("common.goToDashboard")}</>;
 }
 
 /**
@@ -64,7 +71,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <RefreshCw size={14} /> Recharger la section
           </button>
           <button type="button" onClick={() => (window.location.href = "/dashboard")} className="btn btn-primary text-xs">
-            <Home size={14} /> Go to dashboard
+            <Home size={14} /> <DashboardLabel />
           </button>
         </div>
       </div>

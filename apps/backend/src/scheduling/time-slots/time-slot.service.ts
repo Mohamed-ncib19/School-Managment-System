@@ -52,7 +52,7 @@ export class TimeSlotService {
     });
     if (existing) return existing;
 
-    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+    const dayNames = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
     const label = `${dayNames[dayOfWeek] ?? "Day"} ${start}–${end}`;
     const [slot] = await this.db.client
       .insert(timeSlots)

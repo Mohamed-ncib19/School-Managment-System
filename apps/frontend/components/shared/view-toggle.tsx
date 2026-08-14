@@ -2,6 +2,7 @@
 
 import { LayoutList, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils/format";
+import { useTranslation } from "@/lib/i18n/context";
 
 export type ViewMode = "list" | "cards";
 
@@ -11,15 +12,15 @@ interface ViewToggleProps {
   className?: string;
 }
 
-const VIEW_OPTIONS: { mode: ViewMode; icon: React.ReactNode; label: string }[] = [
-  { mode: "list", icon: <LayoutList size={16} />, label: "List" },
-  { mode: "cards", icon: <LayoutGrid size={16} />, label: "Cards" },
-];
-
 export function ViewToggle({ value, onChange, className }: ViewToggleProps) {
+  const { t } = useTranslation();
+  const options = [
+    { mode: "list" as ViewMode, icon: <LayoutList size={16} />, label: t("viewToggle.list") },
+    { mode: "cards" as ViewMode, icon: <LayoutGrid size={16} />, label: t("viewToggle.cards") },
+  ];
   return (
     <div className={cn("flex items-center gap-1 rounded-btn border border-border bg-surface p-1", className)}>
-      {VIEW_OPTIONS.map((option) => (
+      {options.map((option) => (
         <button
           key={option.mode}
           onClick={() => onChange(option.mode)}

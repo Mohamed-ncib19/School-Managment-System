@@ -197,7 +197,7 @@ export default function StudentPaymentsPage() {
       </td>
       {/* Cash is the default method: the school records everything in cash, so
           an invoice without a recorded collection still reads as cash. */}
-      <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? "Cash"}</td>
+      <td className="px-4 py-3 capitalize text-text-secondary">{p.payment_method ?? t("payments.cash")}</td>
       <td className="px-4 py-3 text-right">
         <div className="flex items-center justify-end gap-2">
           {p.status === "paid" && student && (
@@ -253,7 +253,7 @@ export default function StudentPaymentsPage() {
                       >
                         <span className="font-medium text-text-primary">{a.group?.name}</span>
                         {chain && <span className="text-text-secondary">{chain}</span>}
-                        <span className="text-text-secondary">{formatCurrency(Number(a.fee))}/mo</span>
+                        <span className="text-text-secondary">{formatCurrency(Number(a.fee))}{t("payments.perMonth")}</span>
                       </span>
                     );
                   })}

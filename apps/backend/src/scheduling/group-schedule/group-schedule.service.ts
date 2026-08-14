@@ -295,7 +295,7 @@ export class GroupScheduleService {
       return;
     }
 
-    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+    const dayNames = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
     const parts = entries.map((e) => {
       const ts = e.timeSlot;
       return `${dayNames[ts.day_of_week] ?? ts.day_of_week} ${ts.start_time}–${ts.end_time}`;

@@ -87,7 +87,7 @@ export default function DashboardPage() {
       (revenue?.points ?? []).slice(-6).map((point) => {
         const [year, month] = point.bucket.split("-");
         return {
-          month: new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", { month: "short" }),
+          month: new Date(Number(year), Number(month) - 1).toLocaleDateString("fr-FR", { month: "short" }),
           revenue: Number(point.revenue),
         };
       }),
@@ -130,7 +130,7 @@ export default function DashboardPage() {
           <StatCard icon={<Users size={18} />} title={t("dashboard.totalStudents")} value={totalStudents} />
           <StatCard icon={<UserCheck size={18} />} title={t("dashboard.totalFields", "Total Professors")} value={totalProfessors} />
           <StatCard icon={<CircleDollarSign size={18} />} title={t("dashboard.monthlyRevenue")} value={formatCurrency(totalRevenue)} />
-          <StatCard icon={<Clock size={18} />} title={"Today's Payments"} value={todayPaymentsCount} />
+          <StatCard icon={<Clock size={18} />} title={t("dashboard.todayPayments")} value={todayPaymentsCount} />
           <StatCard icon={<CalendarDays size={18} />} title={t("dashboard.sessionsThisMonth", "Sessions this month")} value={sessionsThisMonth ?? "—"} />
         </div>
       )}

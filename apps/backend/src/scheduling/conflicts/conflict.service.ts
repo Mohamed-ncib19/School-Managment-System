@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, gt, gte, inArray, lt, lte, or, sql, SQL } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, lte, ne, or, sql, SQL } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
 import { classrooms, professors, scheduleEntries, scheduleEntryExceptions, studentAssignments, students, timeSlots } from "../../db/schema";
 import { Conflict, ConflictType } from "../types";
@@ -355,6 +355,7 @@ export class ConflictService {
     entityClause: SQL,
     ts: TimeSlotRef,
     proposed: ProposedRule,
+    excludeGroupId?: string,
   ): Promise<Conflict[]> {
     const rangeClauses: SQL[] = [
       eq(scheduleEntries.is_active, true),
@@ -368,6 +369,11 @@ export class ConflictService {
       ) as SQL,
     ];
     if (proposed.excludeEntryId) rangeClauses.push(sql`${scheduleEntries.id} != ${proposed.excludeEntryId}`);
+    // A group re-submitting its own weekly tiles must not clash with itself:
+    // `exclude_group_id` is honoured here just as it is in the student check,
+    // otherwise editing a group's schedule reports its own sessions as taken
+    // rooms and busy professors.
+    if (excludeGroupId) rangeClauses.push(ne(scheduleEntries.group_id, excludeGroupId));
 
     const clashes = await this.db.client
       .select({ id: scheduleEntries.id })
@@ -482,7 +488,7 @@ export class ConflictService {
    * hesitating left a permanent row behind — and every keystroke on a preview
    * wrote to the database.
    */
-  async checkProfessor(profId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string): Promise<Conflict[]> {
+  async checkProfessor(profId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string, excludeGroupId?: string): Promise<Conflict[]> {
     const ts = await this.timeSlotOf(slot);
     if (!ts) return [];
     return this.clashesFor("professor", profId, eq(scheduleEntries.prof_id, profId), ts, {
@@ -492,10 +498,10 @@ export class ConflictService {
       effective_from: date,
       effective_until: date,
       excludeEntryId,
-    });
+    }, excludeGroupId);
   }
 
-  async checkClassroom(classroomId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string): Promise<Conflict[]> {
+  async checkClassroom(classroomId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string, excludeGroupId?: string): Promise<Conflict[]> {
     const ts = await this.timeSlotOf(slot);
     if (!ts) return [];
     return this.clashesFor("classroom", classroomId, eq(scheduleEntries.classroom_id, classroomId), ts, {
@@ -506,7 +512,7 @@ export class ConflictService {
       effective_from: date,
       effective_until: date,
       excludeEntryId,
-    });
+    }, excludeGroupId);
   }
 
   async checkStudents(groupId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string): Promise<Conflict[]> {

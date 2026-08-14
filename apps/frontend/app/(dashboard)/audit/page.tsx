@@ -458,7 +458,10 @@ export default function AuditLogPage() {
           {meta && meta.totalPages > 1 && (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-text-secondary">
-                Showing {((page - 1) * limit) + 1}&ndash;{Math.min(page * limit, meta.total)} of {meta.total.toLocaleString()}
+                {t("audit.showing")
+                  .replace("{start}", String(((page - 1) * limit) + 1))
+                  .replace("{end}", String(Math.min(page * limit, meta.total)))
+                  .replace("{total}", meta.total.toLocaleString())}
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -468,7 +471,7 @@ export default function AuditLogPage() {
                 >
                   <ChevronLeft size={14} /> {t("audit.previous")}
                 </button>
-                <span className="text-xs text-text-secondary">Page {page} of {meta.totalPages}</span>
+                <span className="text-xs text-text-secondary">{t("audit.pageOf").replace("{page}", String(page)).replace("{totalPages}", String(meta.totalPages))}</span>
                 <button
                   onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))}
                   disabled={page >= meta.totalPages || isFetching}

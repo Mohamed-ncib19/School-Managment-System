@@ -317,6 +317,7 @@ function ChangeSummary({
   prev: Record<string, unknown> | null;
   next: Record<string, unknown> | null;
 }) {
+  const { t } = useTranslation();
   if (!prev && !next) return <span>—</span>;
 
   const keys = Array.from(new Set([...Object.keys(prev ?? {}), ...Object.keys(next ?? {})]));
@@ -336,7 +337,7 @@ function ChangeSummary({
           {next?.[key] !== undefined && <span className="text-success-strong">{String(next[key])}</span>}
         </li>
       ))}
-      {changed.length > 4 && <li className="text-text-secondary">+{changed.length - 4} more</li>}
+      {changed.length > 4 && <li className="text-text-secondary">{t("financial.moreChanges").replace("{count}", String(changed.length - 4))}</li>}
     </ul>
   );
 }

@@ -16,7 +16,6 @@ import {
   type WorkingHoursResult,
 } from "@/lib/utils/scheduling";
 
-const DAY_NAMES = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const DAY_SHORT = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 interface WeeklyScheduleBuilderProps {
@@ -348,7 +347,7 @@ export function WeeklyScheduleBuilder({ groupId, profId, initialTiles = [], init
                     : "bg-background border border-border text-text-secondary hover:text-text-primary"
               }`}
             >
-              {DAY_SHORT[d] ?? `Day ${d}`}
+              {DAY_SHORT[d] ?? `Jour ${d}`}
               {count > 0 && (
                 <span
                   className={`ml-1.5 inline-flex items-center justify-center min-w-[16px] h-4 rounded-full px-1 text-[10px] font-semibold tabular-nums ${

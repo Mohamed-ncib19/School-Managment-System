@@ -635,8 +635,8 @@ export class ScheduleEntryService {
     if (!slot) return [];
 
     const [professorClashes, classroomClashes, studentClashes] = await Promise.all([
-      dto.prof_id ? this.conflict.checkProfessor(dto.prof_id, slot, date, excludeEntryId) : Promise.resolve([]),
-      dto.classroom_id ? this.conflict.checkClassroom(dto.classroom_id, slot, date, excludeEntryId) : Promise.resolve([]),
+      dto.prof_id ? this.conflict.checkProfessor(dto.prof_id, slot, date, excludeEntryId, dto.exclude_group_id) : Promise.resolve([]),
+      dto.classroom_id ? this.conflict.checkClassroom(dto.classroom_id, slot, date, excludeEntryId, dto.exclude_group_id) : Promise.resolve([]),
       dto.exclude_group_id ? this.conflict.checkStudents(dto.exclude_group_id, slot, date, excludeEntryId) : Promise.resolve([]),
     ]);
     return [...professorClashes, ...classroomClashes, ...studentClashes];
@@ -668,7 +668,7 @@ export class ScheduleEntryService {
 
     // Never saved: describe it in place. The empty id is only ever compared
     // against `excludeEntryId`, which no unsaved window can match.
-    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+    const dayNames = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
     return {
       id: "",
       label: `${dayNames[dto.day_of_week] ?? "Day"} ${dto.start_time}–${dto.end_time}`,

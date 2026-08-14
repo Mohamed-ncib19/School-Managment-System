@@ -363,7 +363,7 @@ export default function FinancialSettingsPage() {
             >
               {MONTHS.map((month) => (
                 <option key={month} value={month}>
-                  {new Date(2000, month - 1, 1).toLocaleDateString("en-US", { month: "long" })}
+                  {new Date(2000, month - 1, 1).toLocaleDateString("fr-FR", { month: "long" })}
                 </option>
               ))}
             </select>

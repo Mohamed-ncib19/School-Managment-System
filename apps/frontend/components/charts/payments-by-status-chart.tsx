@@ -1,6 +1,7 @@
 "use client";
 
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
+import { useTranslation } from "@/lib/i18n/context";
 
 const STATUS_COLORS: Record<string, string> = {
   paid: "var(--chart-paid)",
@@ -11,13 +12,13 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "var(--chart-cancelled)",
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  paid: "Paid",
-  due_soon: "Due Soon",
-  partially_paid: "Partially Paid",
-  not_paid: "Not Paid",
-  overdue: "Overdue",
-  cancelled: "Cancelled",
+const STATUS_LABEL_KEYS: Record<string, string> = {
+  paid: "statusBadge.paid",
+  due_soon: "statusBadge.dueSoon",
+  partially_paid: "statusBadge.partial",
+  not_paid: "statusBadge.pending",
+  overdue: "statusBadge.overdue",
+  cancelled: "statusBadge.cancelled",
 };
 
 interface PaymentsByStatusChartProps {
@@ -25,10 +26,11 @@ interface PaymentsByStatusChartProps {
 }
 
 export function PaymentsByStatusChart({ data }: PaymentsByStatusChartProps) {
+  const { t } = useTranslation();
   if (!data.length || data.every((d) => d.count === 0)) {
     return (
       <div className="flex items-center justify-center h-64 text-sm text-text-secondary">
-        No payment data available
+        {t("charts.noPaymentData")}
       </div>
     );
   }
@@ -36,7 +38,7 @@ export function PaymentsByStatusChart({ data }: PaymentsByStatusChartProps) {
   const chartData = data
     .filter((d) => d.count > 0)
     .map((d) => ({
-      name: STATUS_LABELS[d.status] ?? d.status,
+      name: t(STATUS_LABEL_KEYS[d.status] ?? "") || d.status,
       value: d.count,
       status: d.status,
     }));
@@ -58,7 +60,7 @@ export function PaymentsByStatusChart({ data }: PaymentsByStatusChartProps) {
           ))}
         </Pie>
         <Tooltip
-          formatter={(value: number) => [value, "Payments"]}
+          formatter={(value: number) => [value, t("charts.paymentsTooltip")]}
           contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
         />
         <Legend

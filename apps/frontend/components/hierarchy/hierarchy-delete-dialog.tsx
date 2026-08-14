@@ -105,19 +105,19 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
   const archiveMutation = useMutation({
     mutationFn: () => hierarchyApi.archiveCascade(entityType, entityId),
     onSuccess: () => { toast.success(t("deleted.restored", "Archived")); onDone(); onClose(); },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || "Failed to archive"),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || t("hierarchy.archiveFailed")),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => hierarchyApi.deleteCascade(entityType, entityId),
     onSuccess: () => { toast.success(t("deleted.hardDeleted", "Permanently deleted")); onDone(); onClose(); },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || "Failed to delete"),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || t("hierarchy.deleteFailed")),
   });
 
   const detachMutation = useMutation({
     mutationFn: () => hierarchyApi.detachDelete(entityType, entityId, { mode: "reassign_individual", assignments: Object.entries(selectedChildren).map(([childId, targetId]) => ({ childId, targetParentId: targetId })) }),
     onSuccess: () => { toast.success(t("deleted.restored", "Detached and archived")); onDone(); onClose(); },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || "Failed to detach"),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || t("hierarchy.detachFailed")),
   });
 
   useEffect(() => {
@@ -297,7 +297,7 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
                 >
                   {isPending ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" aria-hidden="true" /> {t("common.working", "Working...")}
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" /> {t("common.working")}
                     </>
                   ) : (
                     confirmLabel

@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
+import { useTranslation } from "@/lib/i18n/context";
 
 const COLORS = [
   "var(--chart-1)",
@@ -25,10 +26,11 @@ interface StudentsByFieldChartProps {
 }
 
 export function StudentsByFieldChart({ data }: StudentsByFieldChartProps) {
+  const { t } = useTranslation();
   if (!data.length) {
     return (
       <div className="flex items-center justify-center h-64 text-sm text-text-secondary">
-        No field data available
+        {t("charts.noFieldData")}
       </div>
     );
   }
@@ -40,7 +42,7 @@ export function StudentsByFieldChart({ data }: StudentsByFieldChartProps) {
         <XAxis dataKey="field" tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} allowDecimals={false} />
         <Tooltip
-          formatter={(value: number) => [value, "Students"]}
+          formatter={(value: number) => [value, t("charts.studentsTooltip")]}
           contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
         />
         <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={48}>

@@ -11,6 +11,7 @@ import {
   Cell,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils/format";
+import { useTranslation } from "@/lib/i18n/context";
 
 const COLORS = [
   "var(--chart-1)",
@@ -26,10 +27,11 @@ interface RevenueChartProps {
 }
 
 export function RevenueChart({ data }: RevenueChartProps) {
+  const { t } = useTranslation();
   if (!data.length) {
     return (
       <div className="flex items-center justify-center h-64 text-sm text-text-secondary">
-        No revenue data available
+        {t("charts.noRevenueData")}
       </div>
     );
   }
@@ -41,7 +43,7 @@ export function RevenueChart({ data }: RevenueChartProps) {
         <XAxis dataKey="month" tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v}`} />
         <Tooltip
-          formatter={(value: number) => [formatCurrency(value), "Revenue"]}
+          formatter={(value: number) => [formatCurrency(value), t("charts.revenueTooltip")]}
           contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
         />
         <Bar dataKey="revenue" radius={[6, 6, 0, 0]} maxBarSize={40}>

@@ -681,7 +681,7 @@ export default function SettingsPage() {
                   {logoUrl ? (
                     <div className="flex flex-col items-center gap-4">
                       <div className="h-28 w-28 overflow-hidden rounded-card border border-border bg-background shadow-sm">
-                        <img src={logoUrl} alt={settings?.academy_name ?? "Academy"} className="h-full w-full object-contain" />
+                        <img src={logoUrl} alt={settings?.academy_name ?? t("settings.logoAlt")} className="h-full w-full object-contain" />
                       </div>
                       <div className="space-y-1">
                         <p className="text-sm font-semibold text-text-primary">{t("settings.logoUploaded", "Logo uploaded")}</p>
@@ -706,7 +706,7 @@ export default function SettingsPage() {
                       PNG / JPG / WebP
                     </span>
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-soft px-2.5 py-1 text-[11px] font-medium text-text-secondary">
-                      Max 2 MB
+                      {t("settings.maxLogoSize")}
                     </span>
                   </div>
 
@@ -1450,7 +1450,7 @@ export default function SettingsPage() {
                 type="text"
                 value={restoreConfirm}
                 onChange={(e) => setRestoreConfirm(e.target.value)}
-                placeholder="RESTORE"
+                placeholder={t("settings.restoreKeyword")}
                 className="input w-full mb-4"
               />
               <div className="flex gap-3 justify-end">
@@ -1462,13 +1462,13 @@ export default function SettingsPage() {
                 </button>
                 <button
                   onClick={() => {
-                    if (restoreConfirm === "RESTORE" && selectedRestoreId) {
+                    if (restoreConfirm === t("settings.restoreKeyword") && selectedRestoreId) {
                       restoreBackupMutation.mutate(selectedRestoreId);
                       setSelectedRestoreId(null);
                       setRestoreConfirm("");
                     }
                   }}
-                  disabled={restoreConfirm !== "RESTORE" || restoreBackupMutation.isPending}
+                  disabled={restoreConfirm !== t("settings.restoreKeyword") || restoreBackupMutation.isPending}
                   className="btn btn-danger text-xs"
                 >
                   {restoreBackupMutation.isPending ? t("settings.restoring", "Restoring...") : t("settings.restore", "Restore")}

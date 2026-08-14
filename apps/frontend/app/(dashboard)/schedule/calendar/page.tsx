@@ -182,8 +182,9 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 export default function ScheduleCalendarPage() {
+  const { t } = useTranslation();
   return (
-    <Suspense fallback={<PageLoader text="Loading…" />}>
+    <Suspense fallback={<PageLoader text={t("common.loading")} />}>
       <CalendarInner />
     </Suspense>
   );

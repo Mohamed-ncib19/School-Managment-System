@@ -8,7 +8,7 @@ import { PageLoader } from "@/components/shared/skeletons";
 import { FormButton } from "@/components/forms/form-helpers";
 import { useTranslation } from "@/lib/i18n/context";
 
-const DAY_NAMES = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+const DAY_NAMES = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 interface DayWindows {
   [day: number]: Array<{ start_time: string; end_time: string }>;
@@ -76,7 +76,7 @@ export default function WorkingHoursPage() {
       for (const w of list) {
         if (!w.start_time || !w.end_time) continue;
         if (w.start_time >= w.end_time) {
-          setError(t("workingHours.invalidWindow", `Day ${DAY_NAMES[day]}: end time must be after start time`));
+          setError(t("workingHours.invalidWindow").replace("{day}", DAY_NAMES[day]));
           return;
         }
         flat.push({ day_of_week: day, start_time: w.start_time, end_time: w.end_time });
@@ -92,9 +92,9 @@ export default function WorkingHoursPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-h4 font-bold text-text-primary">{t("nav.workingHours", "Working hours")}</h2>
+          <h2 className="text-h4 font-bold text-text-primary">{t("nav.workingHours")}</h2>
           <p className="text-xs text-text-secondary mt-1">
-            {t("workingHours.subtitle", "The school's operating windows — the calendar shades them and new sessions outside them warn you.")}
+            {t("workingHours.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -113,7 +113,7 @@ export default function WorkingHoursPage() {
 
       {isEmpty && !draft && rows?.length === 0 && (
         <div className="rounded-btn border border-gold/40 bg-gold-50 dark:bg-gold/10 px-4 py-3 text-sm">
-          {t("workingHours.emptyHint", "No working hours configured yet — add at least one window per day to get started, or leave all days empty to disable the feature.")}
+          {t("workingHours.emptyHint")}
         </div>
       )}
 
@@ -129,7 +129,7 @@ export default function WorkingHoursPage() {
               </div>
               <div className="flex-1 space-y-2">
                 {windows[day].length === 0 && (
-                  <p className="text-xs text-text-secondary">{t("workingHours.noWindow", "No sessions on this day")}</p>
+                  <p className="text-xs text-text-secondary">{t("workingHours.noWindow")}</p>
                 )}
                 {windows[day].map((w, i) => (
                   <div key={i} className="flex items-center gap-2">

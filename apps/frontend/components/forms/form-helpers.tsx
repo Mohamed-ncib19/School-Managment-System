@@ -5,6 +5,7 @@ import { useForm, type DefaultValues, type FieldValues } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 
 export function useFormWithZod<T extends FieldValues>(
   schema: z.ZodSchema<T>,
@@ -28,6 +29,7 @@ export function FormButton({
   className,
   ...props
 }: { isLoading?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { t } = useTranslation();
   return (
     <button
       {...props}
@@ -37,7 +39,7 @@ export function FormButton({
     >
       {isLoading ? (
         <>
-          <Loader2 size={16} className="animate-spin" aria-hidden="true" /> Saving...
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" /> {t("common.saving")}
         </>
       ) : (
         children

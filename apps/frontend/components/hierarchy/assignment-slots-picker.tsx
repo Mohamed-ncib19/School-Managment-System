@@ -237,7 +237,7 @@ export default function AssignmentSlotsPicker({ slots, onChange, maxSlots = 4 }:
           <p className="text-xs text-text-secondary">
             <span className="font-medium text-text-primary">{t("students.assignmentTotal", "Total")}:</span>{" "}
             {formatCurrency(total)}
-            <span className="text-text-secondary">/mo</span>
+            <span className="text-text-secondary">{t("payments.perMonth")}</span>
           </p>
         )}
       </div>

@@ -57,7 +57,7 @@ import AssignmentSlotsPicker, {
 } from "@/components/hierarchy/assignment-slots-picker";
 import { WeeklyScheduleBuilder } from "@/components/scheduling/weekly-schedule-builder";
 
-const DAY_SHORT = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+const DAY_SHORT = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 /** Rows per page for the server-paged student list. */
 const PAGE_SIZE = 50;
@@ -1401,7 +1401,7 @@ const childrenLabel =
                     <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{childrenLabel}</th>
                   )}
                   {entityType === "group" && (
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.timeSlots", "Schedule")}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.schedule")}</th>
                   )}
                   {entityType === "group" && (
                     <th className="px-4 py-3 text-center text-xs font-semibold text-text-secondary uppercase">{t("scheduling.scheduleEntry", "Seances/Week")}</th>
@@ -1978,10 +1978,7 @@ const childrenLabel =
           setDeleteError(null);
         }}
         onConfirm={() => deleteMutation.mutate()}
-        message={t(
-          "studentDetail.deleteConfirm",
-          "Cet étudiant et ses factures impayées seront définitivement supprimés. Cette action est irréversible. Un étudiant ayant des paiements enregistrés ne peut pas être supprimé — passez-le en « retiré ».",
-        )}
+        message={t("studentDetail.deleteConfirm")}
       />
 
       <StudentDetailModal
