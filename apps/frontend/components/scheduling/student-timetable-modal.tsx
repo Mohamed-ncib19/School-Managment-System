@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { X, Printer, AlertTriangle, Plus } from "lucide-react";
-import { useStudentSchedule, useMultiGroupCheck } from "@/hooks/use-scheduling";
+import { useStudentSchedule } from "@/hooks/use-scheduling";
 import { openStudentTimetable } from "@/lib/api/scheduling.api";
 import type { ScheduleEntry, StudentScheduleException } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
@@ -22,7 +22,6 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const toDate = useMemo(() => new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], []);
   const { data: entries, isLoading } = useStudentSchedule(studentId, today, toDate);
-  const { data: eligibility } = useMultiGroupCheck(studentId);
 
   const entriesByDay = useMemo(() => {
     const map = new Map<number, ScheduleEntry[]>();
@@ -105,8 +104,8 @@ export function StudentTimetableModal({ studentId, studentName, open, onClose, o
         {isLoading ? (
           <div className="text-center py-8 text-text-secondary">{t("common.loading", "Loading…")}</div>
         ) : (
-          <div className="grid grid-cols-6 gap-2">
-            {[0, 1, 2, 3, 4, 5].map((day) => {
+          <div className="grid grid-cols-7 gap-2">
+            {[0, 1, 2, 3, 4, 5, 6].map((day) => {
               const dayEntries = entriesByDay.get(day) ?? [];
               const hasOverlap = overlaps.some((o) => o.day === day);
               return (

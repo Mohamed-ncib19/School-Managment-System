@@ -1061,6 +1061,7 @@
       "academy": "académie",
       "students": "Étudiants inclus",
       "remainingBalance": "Reste",
+      "pendingStudents": "Étudiants non encore payés",
       "restHint": "Reste = acquis non encore versé : les étudiants ont payé, la part du professeur est gagnée, mais le versement n'a pas encore eu lieu. Ce n'est pas le montant des étudiants non encore réglés — leur part n'est pas encore acquise."
     },
     "txn": {
@@ -1168,8 +1169,6 @@
     "managePayment": "Gérer le paiement",
     "manualStatus": "Statut manuel",
     "model": "Modèle",
-    "monthlyBreakdown": "Détail mensuel",
-    "monthlyBreakdownSub": "Revenus générés, acquis et versés",
     "moreChanges": "+{count} autres",
     "netCollected": "Net encaissé",
     "netProfit": "Net",

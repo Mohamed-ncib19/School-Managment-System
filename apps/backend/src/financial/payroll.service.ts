@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import type { PayrollStatus } from "@iq/shared";
 import { and, desc, eq, ilike, inArray, isNotNull, sql, SQL } from "drizzle-orm";
 import { DbService } from "../db/db.service";
-import { groups, paymentTransactions, payrollPayments, professorCompensations, professors, studentAssignments, students } from "../db/schema";
+import { groups, paymentTransactions, payrollPayments, professorCompensations, professors, studentAssignments, studentPayments, students } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { RevenueCalculationService } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
@@ -118,14 +118,15 @@ export class PayrollService {
   /**
    * Derived, never persisted.
    *
-   * A professor owed nothing who has been paid nothing reads as `paid` rather
-   * than `unpaid`: there is nothing outstanding, and showing a whole column of
-   * "unpaid" for a quiet month would bury the ones that actually need paying.
+   * The default status is `unpaid` until an actual payment exists: a professor
+   * who has not been handed anything yet — including one who earned nothing
+   * this period and so has no solde — stays on the default badge, and only a
+   * payment moves the row to `partial` or `paid`.
    */
   private statusOf(earned: Money, paid: Money): PayrollStatus {
+    if (paid.lessThanOrEqualTo(0)) return "unpaid";
     if (paid.greaterThanOrEqualTo(earned)) return "paid";
-    if (paid.greaterThan(0)) return "partial";
-    return "unpaid";
+    return "partial";
   }
 
   /**
@@ -168,6 +169,7 @@ export class PayrollService {
       periodRevenueAmount,
       groupBreakdown,
       rosterCounts,
+      pendingStudents,
     ] = await Promise.all([
       this.revenue.periodEntitlement(profId, targetPeriod),
       this.revenue.ruleFor(profId),
@@ -191,6 +193,7 @@ export class PayrollService {
         .innerJoin(groups, eq(studentAssignments.group_id, groups.id))
         .where(and(eq(groups.prof_id, profId), eq(groups.is_active, true), eq(students.status, "active")))
         .groupBy(studentAssignments.group_id),
+      this.pendingStudents(profId, targetPeriod),
     ]);
 
     const studentsByGroup = new Map(rosterCounts.map((r) => [r.group_id, r.count]));
@@ -252,6 +255,7 @@ export class PayrollService {
       },
       monthly_breakdown: monthly,
       group_breakdown: groupBreakdown,
+      pending_students: pendingStudents,
       payroll_history: payments.map((p) => {
         const { user, ...rest } = p;
         return { ...rest, recorder: user, amount: toAmount(money(p.amount)) };
@@ -301,6 +305,50 @@ export class PayrollService {
         paid: toAmount(round2(money(paidByPeriod.get(row.period) ?? ZERO))),
       }))
       .reverse();
+  }
+
+  /**
+   * The students of the period who have not settled yet — itemised, so the
+   * professor's page can show exactly whose invoices make up the outstanding
+   * amount. The split only applies to money actually collected, so these are
+   * projected earnings, never a ledger figure.
+   */
+  private async pendingStudents(profId: string, period: string) {
+    const invoices = await this.db.client
+      .select({
+        student_id: students.id,
+        first_name: students.first_name,
+        last_name: students.last_name,
+        group_name: groups.name,
+        amount_due: studentPayments.amount_due,
+        paid_amount: studentPayments.paid_amount,
+        status: studentPayments.status,
+      })
+      .from(studentPayments)
+      .innerJoin(groups, eq(studentPayments.group_id, groups.id))
+      .innerJoin(students, eq(studentPayments.student_id, students.id))
+      .where(and(eq(studentPayments.period, period), eq(groups.prof_id, profId)));
+
+    return invoices
+      .filter(
+        (i) =>
+          i.status !== "paid" &&
+          round2(money(i.amount_due).minus(money(i.paid_amount))).greaterThan(0),
+      )
+      .map((i) => ({
+        student_id: i.student_id,
+        full_name: `${i.first_name} ${i.last_name}`.trim(),
+        group_name: i.group_name,
+        amount_due: toAmount(money(i.amount_due)),
+        paid_amount: toAmount(money(i.paid_amount)),
+        remaining: toAmount(round2(money(i.amount_due).minus(money(i.paid_amount)))),
+        status: i.status,
+      }))
+      .sort(
+        (a, b) =>
+          a.group_name.localeCompare(b.group_name, "fr") ||
+          a.full_name.localeCompare(b.full_name, "fr"),
+      );
   }
 
   /** Per-group breakdown for the professor detail page. */

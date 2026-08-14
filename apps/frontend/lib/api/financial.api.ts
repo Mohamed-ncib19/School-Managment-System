@@ -119,8 +119,10 @@ export const financialApi = {
   generateMonthly: (months = 0) =>
     ApiClient.post(`${BASE}/payments/generate`, undefined, { params: { months } }),
 
-  generateForStudent: (studentId: string, months = 0) =>
-    ApiClient.post(`${BASE}/payments/generate/${studentId}`, undefined, { params: { months } }),
+  generateForStudent: (studentId: string, months = 0, groupId?: string) =>
+    ApiClient.post(`${BASE}/payments/generate/${studentId}`, undefined, {
+      params: { months, ...(groupId ? { group_id: groupId } : {}) },
+    }),
 
   refreshStatuses: (studentId?: string) =>
     ApiClient.post(`${BASE}/payments/refresh-statuses`, undefined, {

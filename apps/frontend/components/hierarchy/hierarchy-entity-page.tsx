@@ -667,7 +667,26 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
         default: throw new Error("Unknown entity type");
       }
     },
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
+      // A new group assignment on a student ("nouvelle affectation") generates
+      // this month's invoice for that group only (never backdated from the
+      // enrolment date) and opens their payment page with the group
+      // preselected, so the new invoice is the first thing seen.
+      let newGroupId: string | null = null;
+      if (entityType === "student" && Array.isArray(variables?.data?.assignments)) {
+        const previousGroupIds = new Set<string>();
+        const prev = editingEntity as any;
+        for (const a of prev?.assignments ?? []) {
+          if (a?.group?.id) previousGroupIds.add(a.group.id);
+          else if (a?.group_id) previousGroupIds.add(a.group_id);
+        }
+        if (prev?.group?.id) previousGroupIds.add(prev.group.id);
+        else if (prev?.group_id) previousGroupIds.add(prev.group_id);
+        newGroupId =
+          variables.data.assignments
+            .map((a: any) => a.group_id)
+            .find((groupId: string) => !previousGroupIds.has(groupId)) ?? null;
+      }
       qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"] });
       // A group save also rewrites its sessions, and those live under their own
       // query keys — the edit form's tiles and the list's Schedule column would
@@ -676,6 +695,11 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
       setCreateOpen(false);
       setEditingId(null);
       resetForm();
+      if (newGroupId) {
+        generatePayment.mutate({ studentId: variables.id, months: 0, groupId: newGroupId }, {
+          onSettled: () => router.push(`/students/${variables.id}/payments?groupId=${newGroupId}`),
+        });
+      }
     },
     onError: showError,
   });

@@ -249,8 +249,9 @@ export function useGenerateMonthlyInvoices() {
 
 /** Bills one student from enrolment through today plus `months` months ahead. */
 export function useGenerateInvoiceForStudent() {
-  return useFinancialMutation(({ studentId, months = 0 }: { studentId: string; months?: number }) =>
-    financialApi.generateForStudent(studentId, months),
+  return useFinancialMutation(
+    ({ studentId, months = 0, groupId }: { studentId: string; months?: number; groupId?: string }) =>
+      financialApi.generateForStudent(studentId, months, groupId),
   );
 }
 

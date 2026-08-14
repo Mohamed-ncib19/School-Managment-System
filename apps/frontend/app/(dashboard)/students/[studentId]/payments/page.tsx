@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, User, CircleDollarSign, Printer, Plus, TrendingUp, Clock, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { studentsApi } from "@/lib/api/students.api";
 import {
@@ -15,7 +15,7 @@ import { openReceipt } from "@/lib/api/financial.api";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PaymentActionsModal } from "@/components/financial/payment-actions-modal";
-import { formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
+import { formatCurrency, formatDate, formatPeriod, cn } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 import type { StudentPayment } from "@/types";
 
@@ -23,12 +23,15 @@ export default function StudentPaymentsPage() {
   const { t } = useTranslation();
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const studentId = params.studentId as string;
   const [selectedPayment, setSelectedPayment] = useState<StudentPayment | null>(null);
   const [months, setMonths] = useState("0");
   const [levelId, setLevelId] = useState("");
   const [fieldId, setFieldId] = useState("");
-  const [groupId, setGroupId] = useState("");
+  // Preselected from the URL when arriving from a new assignment, so the
+  // invoice of the freshly added group is the first thing on screen.
+  const [groupId, setGroupId] = useState(searchParams.get("groupId") ?? "");
   const hasAutoUpdated = useRef(false);
 
   const generatePayment = useGenerateInvoiceForStudent();
@@ -286,13 +289,60 @@ export default function StudentPaymentsPage() {
         </div>
       </div>
 
+      {multiGroup && student?.assignments && student.assignments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setGroupId("")}
+            className={cn(
+              "inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+              !groupId
+                ? "border-primary bg-primary-50 text-primary"
+                : "border-border bg-surface text-text-secondary hover:border-primary/40 hover:text-primary",
+            )}
+          >
+            {t("students.allGroups", "All groups")}
+          </button>
+          {student.assignments.map((a) => {
+            const chain = [
+              a.group?.professor?.field?.level?.name,
+              a.group?.professor?.field?.name,
+              a.group?.professor?.full_name,
+              a.group?.name,
+            ]
+              .filter(Boolean)
+              .join(" › ");
+            const active = groupId === a.group?.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => setGroupId(active ? "" : (a.group?.id ?? ""))}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  active
+                    ? "border-primary bg-primary-50 text-primary"
+                    : "border-border bg-surface text-text-secondary hover:border-primary/40 hover:text-primary",
+                )}
+              >
+                <span
+                  className="h-2 w-2 rounded-full shrink-0"
+                  style={{ backgroundColor: a.group?.color ?? "#888" }}
+                />
+                {chain}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-24 bg-neutral-soft rounded-card animate-pulse" />
           ))}
         </div>
-      ) : payments && payments.length > 0 ? (
+      ) : (
         <div className="card p-3 flex items-center gap-3 flex-wrap">
           <select
             aria-label={t("nav.levels", "Levels")}
@@ -334,7 +384,7 @@ export default function StudentPaymentsPage() {
             </button>
           )}
         </div>
-      ) : null}
+      )}
 
       {isLoading ? (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">

@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, DollarSign, Trash2, Pencil, ChevronRight, CalendarDays } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { studentsApi } from "@/lib/api/students.api";
+import { useGenerateInvoiceForStudent } from "@/hooks/use-financial";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import { ErrorState, describeError } from "@/components/shared/error-state";
@@ -18,7 +20,6 @@ import AssignmentSlotsPicker, {
   emptyAssignmentSlot,
   type AssignmentSlot,
 } from "@/components/hierarchy/assignment-slots-picker";
-import { useMultiGroupCheck } from "@/hooks/use-scheduling";
 import { StudentTimetableModal } from "@/components/scheduling/student-timetable-modal";
 
 interface StudentDetailModalProps {
@@ -31,6 +32,8 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
   const { t } = useTranslation();
   const qc = useQueryClient();
   const toast = useToast();
+  const router = useRouter();
+  const generatePayment = useGenerateInvoiceForStudent();
 
   // The field / professor / level / group lists used to be fetched here and
   // never read - four extra requests (including the full group list) on every
@@ -56,7 +59,6 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
   });
   const [assignmentSlots, setAssignmentSlots] = useState<AssignmentSlot[]>([emptyAssignmentSlot()]);
   const [timetableOpen, setTimetableOpen] = useState(false);
-  const { data: eligibility } = useMultiGroupCheck(studentId);
 
   useEffect(() => {
     if (student) {
@@ -130,7 +132,7 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
    */
   const updateMutation = useMutation({
     mutationFn: (data: any) => studentsApi.update(studentId, data),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       qc.invalidateQueries({ queryKey: ["student", studentId] });
       qc.invalidateQueries({ queryKey: ["students"] });
       qc.invalidateQueries({ queryKey: ["hierarchy-summary"] });
@@ -139,6 +141,20 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
         t("studentDetail.saveChanges", "Changes saved"),
         t("common.saved", "Saved"),
       );
+      // A new group assignment ("nouvelle affectation") generates this month's
+      // invoice for that group only (never backdated from the enrolment date)
+      // and opens the student's payment page with the group preselected.
+      const previousGroupIds = new Set(
+        (student?.assignments ?? []).map((a: any) => a.group?.id).filter(Boolean),
+      );
+      const newGroupId = (variables?.assignments ?? [])
+        .map((a: any) => a.group_id)
+        .find((groupId: string) => !previousGroupIds.has(groupId));
+      if (newGroupId) {
+        generatePayment.mutate({ studentId, months: 0, groupId: newGroupId }, {
+          onSettled: () => router.push(`/students/${studentId}/payments?groupId=${newGroupId}`),
+        });
+      }
     },
     onError: (err) => {
       const { detail } = describeError(err);
@@ -354,15 +370,13 @@ export default function StudentDetailModal({ studentId, isOpen, onClose }: Stude
                       </div>
                     ))}
                   </div>
-                  {eligibility?.eligible && (
-                    <button
-                      onClick={() => setTimetableOpen(true)}
-                      className="btn btn-secondary text-xs mt-3 flex items-center gap-2"
-                    >
-                      <CalendarDays size={14} />
-                      {t("scheduling.generateTimetable", "Générer l'emploi du temps")}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => setTimetableOpen(true)}
+                    className="btn btn-secondary text-xs mt-3 flex items-center gap-2"
+                  >
+                    <CalendarDays size={14} />
+                    {t("scheduling.generateTimetable", "Générer l'emploi du temps")}
+                  </button>
                 </div>
               )}
 

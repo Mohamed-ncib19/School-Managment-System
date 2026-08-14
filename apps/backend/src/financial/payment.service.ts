@@ -1188,8 +1188,13 @@ export class PaymentService {
    * Creates whatever one student still owes, from enrolment through this month,
    * plus `monthsAhead` further months — so a parent paying the term upfront can
    * have every upcoming invoice generated in one click.
+   *
+   * With `groupId`, only that enrollment is billed and only from the current
+   * period: the group was just added (a new affectation), so backdating to the
+   * student's original enrolment date would invent months of fees for a group
+   * they never attended.
    */
-  async generateForStudent(studentId: string, monthsAhead = 0) {
+  async generateForStudent(studentId: string, monthsAhead = 0, groupId?: string) {
     const student = await this.db.client.query.students.findFirst({
       where: eq(students.id, studentId),
       columns: { id: true, group_id: true, enrollment_date: true, monthly_fee: true, status: true },
@@ -1198,7 +1203,9 @@ export class PaymentService {
     if (!student || student.status !== "active") return [];
 
     const now = new Date();
-    const periods = billingPeriods(student.enrollment_date, now);
+    const periods = groupId
+      ? [{ year: now.getUTCFullYear(), month: now.getUTCMonth(), period: periodOf(now.getUTCFullYear(), now.getUTCMonth()) }]
+      : billingPeriods(student.enrollment_date, now);
 
     const ahead = Math.min(Math.max(Math.floor(monthsAhead) || 0, 0), 12);
     if (ahead > 0) {
@@ -1226,9 +1233,11 @@ export class PaymentService {
     });
     const alreadyBilled = new Set(billed.map((p) => `${p.group_id}:${p.period}`));
 
-    const enrollments = student.assignments.length > 0
-      ? student.assignments
-      : [{ group_id: student.group_id, fee: student.monthly_fee }];
+    const enrollments = groupId
+      ? student.assignments.filter((a) => a.group_id === groupId)
+      : student.assignments.length > 0
+        ? student.assignments
+        : [{ group_id: student.group_id, fee: student.monthly_fee }];
 
     const records = periods.flatMap((p) =>
       enrollments

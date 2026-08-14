@@ -5,15 +5,14 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronRight, FileText, Printer, Settings2, Wallet } from "lucide-react";
 import { useProfessorFinancials, useProfessorDocuments } from "@/hooks/use-financial";
-import { ChartCard } from "@/components/financial/chart-card";
-import { GroupedBarChart } from "@/components/financial/charts";
 import { RecordPayrollModal, type RecordedPayout } from "@/components/financial/record-payroll-modal";
 import { CompensationModal } from "@/components/financial/compensation-modal";
 import { ErrorState } from "@/components/financial/error-state";
 import { SettlementDocumentsModal } from "@/components/financial/settlement-documents-modal";
+import { StatusBadge } from "@/components/shared/status-badge";
 import { SummaryTile } from "@/components/financial/summary-tile";
 import { openReceipt } from "@/lib/api/financial.api";
-import { payrollStatusClasses, SERIES } from "@/lib/charts/theme";
+import { payrollStatusClasses } from "@/lib/charts/theme";
 import { cn, formatCurrency, formatDate, formatPeriod } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -72,17 +71,6 @@ export default function ProfessorFinancialPage() {
   }
 
   const { professor, compensation, period: current, payroll_history, group_breakdown } = data;
-
-  const breakdownSeries = [
-    { key: "revenue", label: t("financial.revenueGenerated", "Revenue generated"), color: SERIES.revenue },
-    { key: "earned", label: t("financial.payroll.earned", "Earned"), color: SERIES.professor },
-    { key: "paid", label: t("financial.payroll.paid", "Paid"), color: SERIES.payroll },
-  ];
-
-  const monthly = data.monthly_breakdown.map((row) => ({ ...row, bucket: row.period }));
-  const monthlySignature = monthly
-    .map((row) => `${row.period}|${row.revenue}|${row.earned}|${row.paid}`)
-    .join(",");
 
   const periodEarned = Number(current.total_earned);
   const collectionsPct =
@@ -215,6 +203,57 @@ export default function ProfessorFinancialPage() {
         />
       </div>
 
+      {data.pending_students.length > 0 && (
+        <div className="card">
+          <div className="flex items-center gap-2 mb-3">
+            <h4 className="text-xs font-semibold text-text-secondary uppercase">
+              {t("financial.payroll.pendingStudents", "Étudiants non encore payés")}
+            </h4>
+            <span className="inline-flex items-center rounded-full bg-neutral-soft px-2 py-0.5 text-[10px] font-medium text-text-secondary">
+              {data.pending_students.length}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                    {t("nav.students", "Étudiants")}
+                  </th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                    {t("nav.groups", "Groupe")}
+                  </th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase">
+                    {t("payments.amountDue", "Montant dû")}
+                  </th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase">
+                    {t("financial.payroll.remainingBalance", "Reste")}
+                  </th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                    {t("payments.status", "Statut")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {data.pending_students.map((student) => (
+                  <tr key={student.student_id} className="hover:bg-background/50">
+                    <td className="px-3 py-2.5 font-medium">{student.full_name}</td>
+                    <td className="px-3 py-2.5 text-text-secondary">{student.group_name}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(student.amount_due)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+                      {formatCurrency(student.remaining)}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <StatusBadge status={student.status} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {displayedBreakdown && (
         <div className="card">
           <h4 className="text-xs font-semibold text-text-secondary uppercase mb-3">
@@ -318,113 +357,102 @@ export default function ProfessorFinancialPage() {
         </div>
 
         <div className="lg:col-span-2">
-          <ChartCard
-            title={t("financial.monthlyBreakdown", "Monthly breakdown")}
-            subtitle={t("financial.monthlyBreakdownSub", "Revenue generated, earned and paid")}
-            series={breakdownSeries}
-            tableRows={monthly}
-            loading={false}
-            isEmpty={monthly.length === 0}
-          >
-            <GroupedBarChart key={monthlySignature} data={monthly} series={breakdownSeries} />
-          </ChartCard>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="flex items-center gap-2 mb-3">
-          <h4 className="text-xs font-semibold text-text-secondary uppercase">
-            {t("financial.payrollHistory", "Historique de paie")}
-          </h4>
-          {payroll_history.length > 0 && (
-            <span className="inline-flex items-center rounded-full bg-neutral-soft px-2 py-0.5 text-[10px] font-medium text-text-secondary">
-              {payroll_history.length}
-            </span>
-          )}
-        </div>
-        {payroll_history.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <p className="text-sm text-text-secondary">
-              {t("financial.noPayroll", "Aucun versement à ce professeur pour l'instant.")}
-            </p>
-            {Number(current.remaining_balance) > 0 && (
-              <button type="button" onClick={() => setPayOpen(true)} className="btn btn-primary text-xs">
-                <Wallet size={14} aria-hidden="true" />
-                {t("financial.recordPayroll", "Enregistrer un versement")}
-              </button>
+          <div className="card">
+            <div className="flex items-center gap-2 mb-3">
+              <h4 className="text-xs font-semibold text-text-secondary uppercase">
+                {t("financial.payrollHistory", "Historique de paie")}
+              </h4>
+              {payroll_history.length > 0 && (
+                <span className="inline-flex items-center rounded-full bg-neutral-soft px-2 py-0.5 text-[10px] font-medium text-text-secondary">
+                  {payroll_history.length}
+                </span>
+              )}
+            </div>
+            {payroll_history.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-8 text-center">
+                <p className="text-sm text-text-secondary">
+                  {t("financial.noPayroll", "Aucun versement à ce professeur pour l'instant.")}
+                </p>
+                {Number(current.remaining_balance) > 0 && (
+                  <button type="button" onClick={() => setPayOpen(true)} className="btn btn-primary text-xs">
+                    <Wallet size={14} aria-hidden="true" />
+                    {t("financial.recordPayroll", "Enregistrer un versement")}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                        {t("payments.dueDate", "Date")}
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                        {t("financial.receiptNumber", "Reçu")}
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
+                        {t("payments.notes", "Notes")}
+                      </th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase">
+                        {t("payments.amount", "Montant")}
+                      </th>
+                      <th className="px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {payroll_history.map((payout) => {
+                      const payoutDocs = (documents ?? []).filter((doc) => doc.payout_id === payout.id);
+                      return (
+                        <tr key={payout.id} className="hover:bg-background/50">
+                          <td className="px-3 py-2">
+                            <span className="text-text-primary">{formatDate(payout.paid_at)}</span>
+                            {payout.period && (
+                              <span className="block text-xs text-text-secondary mt-0.5">{formatPeriod(payout.period)}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-text-secondary font-mono text-xs">
+                            {payout.receipt_number ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-text-secondary">{payout.notes ?? "—"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(payout.amount)}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openReceipt("payroll", payout.id).catch(() => {})}
+                                aria-label={t("financial.printReceipt", "Imprimer le reçu")}
+                                title={t("financial.printReceipt", "Imprimer le reçu")}
+                                className="btn btn-secondary text-xs"
+                              >
+                                <Printer size={13} aria-hidden="true" />
+                              </button>
+                              {payoutDocs.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSettledPayoutId(payout.id);
+                                    setSettledPayout(undefined);
+                                    setSettlementOpen(true);
+                                  }}
+                                  aria-label={t("financial.settlementDocuments", "Documents de règlement")}
+                                  title={t("financial.settlementDocuments", "Documents de règlement")}
+                                  className="btn btn-secondary text-xs"
+                                >
+                                  <FileText size={13} aria-hidden="true" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("payments.dueDate", "Date")}
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("financial.receiptNumber", "Reçu")}
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-secondary uppercase">
-                    {t("payments.notes", "Notes")}
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-semibold text-text-secondary uppercase">
-                    {t("payments.amount", "Montant")}
-                  </th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {payroll_history.map((payout) => {
-                  const payoutDocs = (documents ?? []).filter((doc) => doc.payout_id === payout.id);
-                  return (
-                    <tr key={payout.id} className="hover:bg-background/50">
-                      <td className="px-3 py-2">
-                        <span className="text-text-primary">{formatDate(payout.paid_at)}</span>
-                        {payout.period && (
-                          <span className="block text-xs text-text-secondary mt-0.5">{formatPeriod(payout.period)}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-text-secondary font-mono text-xs">
-                        {payout.receipt_number ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-text-secondary">{payout.notes ?? "—"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(payout.amount)}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => openReceipt("payroll", payout.id).catch(() => {})}
-                            aria-label={t("financial.printReceipt", "Imprimer le reçu")}
-                            title={t("financial.printReceipt", "Imprimer le reçu")}
-                            className="btn btn-secondary text-xs"
-                          >
-                            <Printer size={13} aria-hidden="true" />
-                          </button>
-                          {payoutDocs.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSettledPayoutId(payout.id);
-                                setSettledPayout(undefined);
-                                setSettlementOpen(true);
-                              }}
-                              aria-label={t("financial.settlementDocuments", "Documents de règlement")}
-                              title={t("financial.settlementDocuments", "Documents de règlement")}
-                              className="btn btn-secondary text-xs"
-                            >
-                              <FileText size={13} aria-hidden="true" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        </div>
       </div>
 
       {payOpen && (

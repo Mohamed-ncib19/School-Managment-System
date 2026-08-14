@@ -240,10 +240,12 @@ export class FinancialController {
   async generateForStudent(
     @Param("studentId", ParseUUIDPipe) studentId: string,
     @Query("months") months?: string,
+    @Query("group_id") groupId?: string,
   ) {
     const result = await this.payments.generateForStudent(
       studentId,
       months ? parseInt(months, 10) : 0,
+      groupId ?? undefined,
     );
     this.financial.invalidate();
     return result;

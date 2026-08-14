@@ -491,6 +491,15 @@ export interface ProfessorFinancialDetail {
     professor_share: string;
     school_share: string;
   }[];
+  pending_students: {
+    student_id: string;
+    full_name: string;
+    group_name: string;
+    amount_due: string;
+    paid_amount: string;
+    remaining: string;
+    status: PaymentStatus;
+  }[];
   payroll_history: PayrollPayment[];
 }
 

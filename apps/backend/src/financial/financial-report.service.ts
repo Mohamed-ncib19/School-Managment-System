@@ -366,11 +366,11 @@ export class FinancialReportService {
         earned: toAmount(earned),
         paid: toAmount(paid),
         balance: toAmount(balance),
-        status: paid.greaterThanOrEqualTo(earned)
-          ? PAYROLL_STATUS_LABELS.paid
-          : paid.greaterThan(0)
-            ? PAYROLL_STATUS_LABELS.partial
-            : PAYROLL_STATUS_LABELS.unpaid,
+        status: paid.lessThanOrEqualTo(0)
+          ? PAYROLL_STATUS_LABELS.unpaid
+          : paid.greaterThanOrEqualTo(earned)
+            ? PAYROLL_STATUS_LABELS.paid
+            : PAYROLL_STATUS_LABELS.partial,
       };
     });
 

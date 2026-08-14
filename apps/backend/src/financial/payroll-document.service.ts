@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { DbService, Tx } from "../db/db.service";
-import { groups, paymentTransactions, payrollDocumentType, payrollDocuments, payrollPayments, professors, studentPayments } from "../db/schema";
+import { groups, paymentTransactions, payrollDocumentType, payrollDocuments, payrollPayments, professors, studentPayments, students } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { RevenueCalculationService, type CompensationRule } from "./revenue-calculation.service";
@@ -85,6 +85,16 @@ export interface SettlementSnapshot {
     school_potential: string;
     projected_earned: string;
     percentage_label: string | null;
+    /** Itemised unsettled invoices — who has not paid yet, per student. */
+    students: {
+      student_id: string;
+      full_name: string;
+      group_name: string;
+      amount_due: string;
+      amount_paid: string;
+      remaining: string;
+      status: string;
+    }[];
   };
   verification: { revenue: string; professor_share: string; school_share: string; verified: boolean };
   groups: {
@@ -288,9 +298,13 @@ export class PayrollDocumentService {
         paid_amount: studentPayments.paid_amount,
         student_id: studentPayments.student_id,
         status: studentPayments.status,
+        first_name: students.first_name,
+        last_name: students.last_name,
+        group_name: groups.name,
       })
       .from(studentPayments)
       .innerJoin(groups, eq(studentPayments.group_id, groups.id))
+      .innerJoin(students, eq(studentPayments.student_id, students.id))
       .where(and(eq(studentPayments.period, period), eq(groups.prof_id, profId)));
 
     // Every distinct student billed this period, whatever their status: a
@@ -306,7 +320,7 @@ export class PayrollDocumentService {
         round2(money(i.amount_due).minus(money(i.paid_amount))).greaterThan(0),
     );
 
-    const students = new Set(unsettled.map((i) => i.student_id));
+    const unsettledStudentIds = new Set(unsettled.map((i) => i.student_id));
     const due = round2(sum(unsettled.map((i) => money(i.amount_due))));
     const paid = round2(sum(unsettled.map((i) => money(i.paid_amount))));
     const unpaid = round2(due.minus(paid));
@@ -320,7 +334,7 @@ export class PayrollDocumentService {
     const schoolPotential = round2(unpaid.minus(professorPotential));
 
     return {
-      student_count: students.size,
+      student_count: unsettledStudentIds.size,
       billed_student_count: billedStudentCount,
       invoice_count: unsettled.length,
       amount_due: toAmount(due),
@@ -331,6 +345,21 @@ export class PayrollDocumentService {
       projected_earned: toAmount(round2(earned.plus(professorPotential))),
       percentage_label:
         projectsPercentage && rule.percentage !== null ? `${toAmount(rule.percentage)}%` : null,
+      students: unsettled
+        .map((i) => ({
+          student_id: i.student_id,
+          full_name: `${i.first_name} ${i.last_name}`.trim(),
+          group_name: i.group_name,
+          amount_due: toAmount(money(i.amount_due)),
+          amount_paid: toAmount(money(i.paid_amount)),
+          remaining: toAmount(round2(money(i.amount_due).minus(money(i.paid_amount)))),
+          status: i.status,
+        }))
+        .sort(
+          (a, b) =>
+            a.group_name.localeCompare(b.group_name, "fr") ||
+            a.full_name.localeCompare(b.full_name, "fr"),
+        ),
     };
   }
 
@@ -390,9 +419,9 @@ export class PayrollDocumentService {
   }
 
   private statusLabel(earned: Money, paid: Money): string {
+    if (paid.lessThanOrEqualTo(0)) return "unpaid";
     if (paid.greaterThanOrEqualTo(earned)) return "paid";
-    if (paid.greaterThan(0)) return "partial";
-    return "unpaid";
+    return "partial";
   }
 
   /** "Septembre 2026 · Année 2026/27" for the period block. */
@@ -741,6 +770,31 @@ export class PayrollDocumentService {
           </tfoot>
         </table>
         <p class="projection-note">Prévisionnel si tous les étudiants non réglés paient — ${fmt.money(s.totals.total_earned)} acquis (encaissements déjà versés compris) + ${fmt.money(pending.professor_potential)} à venir.</p>
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Étudiant</th>
+              <th>Groupe</th>
+              <th class="right">Montant dû</th>
+              <th class="right">Reste à payer</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(pending.students ?? [])
+              .map(
+                (st) => `
+            <tr>
+              <td>${this.escape(st.full_name)}</td>
+              <td>${this.escape(st.group_name)}</td>
+              <td class="right">${fmt.money(st.amount_due)}</td>
+              <td class="right">${fmt.money(st.remaining)}</td>
+              <td>${this.paymentStatusFr(st.status)}</td>
+            </tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
         ` : ""}
 
         <div class="signatures">
@@ -878,6 +932,24 @@ export class PayrollDocumentService {
         return "PAYÉ";
       case "partial":
         return "PARTIELLEMENT PAYÉ";
+      default:
+        return "NON PAYÉ";
+    }
+  }
+
+  /** An invoice's own status, for the per-student detail on the receipt. */
+  private paymentStatusFr(status: string): string {
+    switch (status) {
+      case "paid":
+        return "PAYÉ";
+      case "partially_paid":
+        return "PARTIELLEMENT PAYÉ";
+      case "overdue":
+        return "EN RETARD";
+      case "due_soon":
+        return "DÛ BIENTÔT";
+      case "cancelled":
+        return "ANNULÉ";
       default:
         return "NON PAYÉ";
     }
