@@ -24,6 +24,7 @@ import { CreateScheduleEntryDto, UpdateScheduleEntryDto, PreviewTileDto, SyncTil
 import { CreateExceptionDto } from "./dto/student-exception.dto";
 import { CreateEntryExceptionDto, ListEntryExceptionsDto, OccurrenceFiltersDto, SplitScheduleEntryDto } from "./dto/entry-exception.dto";
 import { UpsertWorkingHoursDto } from "./dto/working-hours.dto";
+import { CreateClassroomDto, UpdateClassroomDto, ClassroomAvailabilityQueryDto } from "./dto/classroom.dto";
 
 @Controller("scheduling")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -38,21 +39,36 @@ export class SchedulingController {
     return this.service.listClassrooms(active === "true" ? true : active === "false" ? false : undefined);
   }
 
+  /**
+   * Which rooms are free for a concrete date and window.
+   *
+   * Declared before `classrooms/:id` so "availability" is not swallowed by the
+   * uuid param route.
+   */
+  @Get("classrooms/availability")
+  @ApiOperation({ summary: "Classroom availability for a date and time window" })
+  async classroomAvailability(@Query() query: ClassroomAvailabilityQueryDto) {
+    return this.service.classroomAvailability(query);
+  }
+
   @Get("classrooms/:id")
   async getClassroom(@Param("id", ParseUUIDPipe) id: string) {
     return this.service.getClassroom(id);
   }
 
+  // The DTOs below were declared but never bound — both bodies were typed
+  // `any`, and `ValidationPipe` only validates class metatypes, so every
+  // classroom field arrived unchecked (the colour pattern included).
   @Post("classrooms")
   @Roles("super_admin")
   @ApiOperation({ summary: "Create a classroom" })
-  async createClassroom(@Body() dto: any, @Req() req: any) {
+  async createClassroom(@Body() dto: CreateClassroomDto, @Req() req: any) {
     return this.service.createClassroom(dto, req.user.id);
   }
 
   @Put("classrooms/:id")
   @Roles("super_admin")
-  async updateClassroom(@Param("id", ParseUUIDPipe) id: string, @Body() dto: any, @Req() req: any) {
+  async updateClassroom(@Param("id", ParseUUIDPipe) id: string, @Body() dto: UpdateClassroomDto, @Req() req: any) {
     return this.service.updateClassroom(id, dto, req.user.id);
   }
 

@@ -13,7 +13,7 @@
  *
  *   npx ts-node -r tsconfig-paths/register -r dotenv/config src/seeds/verify-ledger-paging.ts
  */
-import { and, inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { seedClient } from "../db/seed-util";
 import { studentPayments } from "../db/schema";
 

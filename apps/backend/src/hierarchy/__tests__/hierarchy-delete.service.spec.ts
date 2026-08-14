@@ -26,6 +26,7 @@ describe("HierarchyDeleteService", () => {
     jest.clearAllMocks();
     mockDbClient = {
       query: {
+        levels: { findFirst: jest.fn(), findMany: jest.fn() },
         fields: { findFirst: jest.fn(), findMany: jest.fn() },
         professors: { findFirst: jest.fn(), findMany: jest.fn() },
         groups: { findFirst: jest.fn(), findMany: jest.fn() },
@@ -63,6 +64,7 @@ describe("HierarchyDeleteService", () => {
 
     mockAudit = { record: jest.fn() } as any;
     mockSentinels = {
+      ensureLevelSentinel: jest.fn().mockResolvedValue("sentinel-level-id"),
       ensureFieldSentinel: jest.fn().mockResolvedValue("sentinel-field-id"),
       ensureProfessorSentinel: jest.fn().mockResolvedValue("sentinel-prof-id"),
       ensureGroupSentinel: jest.fn().mockResolvedValue("sentinel-group-id"),
@@ -134,8 +136,71 @@ describe("HierarchyDeleteService", () => {
       }
     });
 
-    it("should throw BadRequestException for Level detach", async () => {
-      await expect(service.detachAndDelete("level", "level-1", { mode: "unassign" })).rejects.toThrow(BadRequestException);
+    /**
+     * A level detach used to be refused outright ("Level cannot be detached -
+     * it has no parent"). That confused the level with its children: the level
+     * itself is not being re-pointed, its fields are, and a field can move to
+     * any other level. The dialog offered the option regardless, so the refusal
+     * surfaced as a 400 after the operator had filled the form in.
+     */
+    it("should detach a level by re-pointing its fields and archiving it", async () => {
+      mockDbClient.query.levels.findFirst = jest
+        .fn()
+        .mockResolvedValue(mockRow({ id: "level-1", name: "Level A", is_active: true }));
+
+      const spy = jest.spyOn(service as any, "deleteImpact").mockResolvedValue({
+        level: 1,
+        field: 1,
+        professor: 0,
+        group: 0,
+        student: 0,
+        directChildren: [{ id: "field-1", name: "CS", type: "field" }],
+      });
+
+      const result = await service.detachAndDelete(
+        "level",
+        "level-1",
+        { mode: "reassign_individual", assignments: [{ childId: "field-1", targetParentId: "level-2" }] },
+        "user-1",
+      );
+
+      expect(result.affected.field).toBe(1);
+      expect(mockAudit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "level.detach_delete", entityId: "level-1" }),
+      );
+
+      spy.mockRestore();
+    });
+
+    it("should send a level's fields to the sentinel when left unassigned", async () => {
+      mockDbClient.query.levels.findFirst = jest
+        .fn()
+        .mockResolvedValue(mockRow({ id: "level-1", name: "Level A", is_active: true }));
+
+      const spy = jest.spyOn(service as any, "deleteImpact").mockResolvedValue({
+        level: 1,
+        field: 1,
+        professor: 0,
+        group: 0,
+        student: 0,
+        directChildren: [{ id: "field-1", name: "CS", type: "field" }],
+      });
+
+      await service.detachAndDelete("level", "level-1", { mode: "unassign" }, "user-1");
+
+      // "Leave unassigned" must park the field somewhere real rather than
+      // orphaning it: fields.level_id is NOT NULL.
+      expect(mockSentinels.ensureLevelSentinel).toHaveBeenCalled();
+
+      spy.mockRestore();
+    });
+
+    it("should still reject a detach of an already-archived level", async () => {
+      mockDbClient.query.levels.findFirst = jest
+        .fn()
+        .mockResolvedValue(mockRow({ id: "level-1", is_active: false }));
+
+      await expect(service.detachAndDelete("level", "level-1", { mode: "unassign" })).rejects.toThrow(ConflictException);
     });
 
     it("should throw BadRequestException for incomplete reassignment plan", async () => {

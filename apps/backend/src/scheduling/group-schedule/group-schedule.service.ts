@@ -11,7 +11,12 @@ import { AuditService } from "../../audit/audit.service";
 import { ConflictService } from "../conflicts/conflict.service";
 import { ClassroomRepository } from "../classrooms/classroom.repository";
 import { ScheduleEntryService } from "../schedule-entries/schedule-entry.service";
+import { WorkingHoursService } from "../working-hours/working-hours.service";
+import { TimeSlotService } from "../time-slots/time-slot.service";
 import { SyncTilesResult, TileDto } from "../types";
+
+/** School week, Saturday first — the same order `time_slots.day_of_week` uses. */
+const DAY_NAMES = ["Samedi", "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];
 
 @Injectable()
 export class GroupScheduleService {
@@ -20,6 +25,8 @@ export class GroupScheduleService {
     private readonly conflict: ConflictService,
     private readonly entryService: ScheduleEntryService,
     private readonly classroomRepo: ClassroomRepository,
+    private readonly workingHours: WorkingHoursService,
+    private readonly timeSlotService: TimeSlotService,
     private readonly audit: AuditService,
   ) {}
 
@@ -96,6 +103,40 @@ export class GroupScheduleService {
      */
     const retiring = new Set(toRemove.map((e) => e.id));
     const survives = (c: { scheduleEntryId: string }) => !retiring.has(c.scheduleEntryId);
+
+    /**
+     * Opening hours are checked before anything is written, and before any time
+     * slot is created for a tile that is going to be rejected.
+     *
+     * This ran nowhere on the save path: `validateSlot` was called only by the
+     * single-entry create, produced a warning rather than a refusal, and missed
+     * partial overlaps entirely. A session an hour outside the school's hours
+     * saved silently.
+     */
+    const outOfHours: string[] = [];
+    for (const tile of toAdd) {
+      const { status, windows } = await this.workingHours.checkContainment(
+        tile.day_of_week,
+        tile.start_time,
+        tile.end_time,
+      );
+      if (status === "partial" || status === "outside") {
+        outOfHours.push(
+          `${DAY_NAMES[tile.day_of_week] ?? `Jour ${tile.day_of_week}`} ${tile.start_time}–${tile.end_time} ` +
+            `(horaires : ${this.workingHours.describeWindows(windows)})`,
+        );
+      }
+    }
+    if (outOfHours.length > 0) {
+      throw new ConflictException({
+        message:
+          outOfHours.length === 1
+            ? `Cette séance est en dehors des horaires d'ouverture : ${outOfHours[0]}`
+            : `${outOfHours.length} séances sont en dehors des horaires d'ouverture`,
+        code: "OUTSIDE_WORKING_HOURS",
+        details: outOfHours,
+      });
+    }
 
     // Only genuinely new sessions are checked: a tile the group already holds
     // conflicts with itself, and re-reporting that on every save would make an
@@ -180,35 +221,41 @@ export class GroupScheduleService {
       return rows.map((r) => r.id);
     });
 
-    for (const [index, entryId] of insertedIds.entries()) {
-      const { tile, timeSlot, tileConflicts } = prepared[index];
-      created.push(await this.entryService.get(entryId));
+    // One read and one audit write for the whole week, rather than a round
+    // trip per session: saving a five-day timetable used to issue five
+    // four-table joins and five inserts, all awaited in sequence, after the
+    // transaction had already committed.
+    created.push(...(await this.entryService.getMany(insertedIds)));
 
-      const action = tileConflicts.length > 0 ? "schedule.entry.created_with_conflict" : "schedule.entry.created";
-      await this.audit.record({
-        action,
+    const entryLogs = insertedIds.map((entryId, index) => {
+      const { tile, timeSlot, tileConflicts } = prepared[index];
+      conflicts.push(...tileConflicts);
+      return {
+        action: tileConflicts.length > 0 ? "schedule.entry.created_with_conflict" : "schedule.entry.created",
         entityType: "schedule_entry",
         entityId: entryId,
         entityLabel: `${group.name} / ${timeSlot.label}`,
         newValues: { group_id: groupId, time_slot_id: timeSlot.id, classroom_id: tile.classroom_id, prof_id: profId },
         meta: tileConflicts.length > 0 ? { conflicts: tileConflicts } : undefined,
-      });
-      conflicts.push(...tileConflicts);
-    }
+      };
+    });
 
     await this.recomputeScheduleNotes(groupId);
-    await this.audit.record({
-      action: "group.schedule.updated",
-      entityType: "group",
-      entityId: groupId,
-      entityLabel: group.name,
-      newValues: {
-        added: prepared.length,
-        removed: toRemove.length,
-        unchanged: unchanged.length,
-        conflicts,
+    await this.audit.recordMany([
+      ...entryLogs,
+      {
+        action: "group.schedule.updated",
+        entityType: "group",
+        entityId: groupId,
+        entityLabel: group.name,
+        newValues: {
+          added: prepared.length,
+          removed: toRemove.length,
+          unchanged: unchanged.length,
+          conflicts,
+        },
       },
-    });
+    ]);
 
     return { created, conflicts };
   }
@@ -231,27 +278,9 @@ export class GroupScheduleService {
     return { groupCount: count, eligible: count >= 2 };
   }
 
-  private async findOrCreateTimeSlot(tile: TileDto): Promise<{ id: string; label: string }> {
-    const existing = await this.db.client.query.timeSlots.findFirst({
-      where: and(
-        eq(timeSlots.day_of_week, tile.day_of_week),
-        eq(timeSlots.start_time, tile.start_time),
-        eq(timeSlots.end_time, tile.end_time),
-      ),
-      columns: { id: true, label: true },
-    });
-    if (existing) return { id: existing.id, label: existing.label };
-
-    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
-    const label = `${dayNames[tile.day_of_week] ?? "Day"} ${tile.start_time}–${tile.end_time}`;
-    const [slot] = await this.db.client.insert(timeSlots).values({
-      label,
-      day_of_week: tile.day_of_week,
-      start_time: tile.start_time,
-      end_time: tile.end_time,
-      sort_order: tile.day_of_week * 100,
-    }).returning();
-    return { id: slot.id, label: slot.label };
+  /** Delegates to `TimeSlotService` so both save paths normalise identically. */
+  private findOrCreateTimeSlot(tile: TileDto): Promise<{ id: string; label: string }> {
+    return this.timeSlotService.findOrCreate(tile.day_of_week, tile.start_time, tile.end_time);
   }
 
   private async recomputeScheduleNotes(groupId: string) {

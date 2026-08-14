@@ -33,7 +33,7 @@ import { useStudentPage } from "@/hooks/use-queries";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { useViewMode } from "@/hooks/use-view-mode";
-import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
+import { useClassrooms } from "@/hooks/use-scheduling";
 import type { Level, Field, Professor, Group, Student, StudentStatus, TileDto, ScheduleEntry } from "@/types";
 import { PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -281,6 +281,8 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
    * first should wipe the group's saved times.
    */
   const [tilesTouched, setTilesTouched] = useState(false);
+  /** Raised by the schedule builder when a tile breaks a rule the API refuses. */
+  const [scheduleBlocked, setScheduleBlocked] = useState(false);
   /** Professor/student clashes the user has been shown and chosen to accept. */
   const [acceptedConflicts, setAcceptedConflicts] = useState(false);
 
@@ -307,7 +309,6 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     },
   });
 
-  const { data: timeSlots } = useTimeSlots();
 
   const { data: classrooms } = useClassrooms();
   // Accent color + list controls
@@ -1822,6 +1823,7 @@ const childrenLabel =
                             setFormTiles(tiles);
                             setTilesTouched(true);
                           }}
+                          onValidityChange={setScheduleBlocked}
                         />
                       </div>
                     </>
@@ -1838,7 +1840,14 @@ const childrenLabel =
                   <button type="button" className="btn btn-secondary" onClick={() => { setCreateOpen(false); resetForm(); }}>
                     {t("fieldsHierarchy.cancel")}
                   </button>
-                  <FormButton type="submit" isLoading={createMutation.isPending || updateMutation.isPending}>
+                  {/* Held back while the builder reports a tile the API would
+                      refuse — out of opening hours, or a room already taken. */}
+                  <FormButton
+                    type="submit"
+                    isLoading={createMutation.isPending || updateMutation.isPending}
+                    disabled={scheduleBlocked}
+                    title={scheduleBlocked ? t("scheduling.fixBlockingFirst", "Corrigez les créneaux signalés pour enregistrer.") : undefined}
+                  >
                     {editingId ? t("fieldsHierarchy.save", "Save") : t("fieldsHierarchy.create")}
                   </FormButton>
                 </div>

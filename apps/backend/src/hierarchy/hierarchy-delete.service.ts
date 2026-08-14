@@ -95,6 +95,21 @@ export class HierarchyDeleteService {
   /*  Delete impact preview (used by all 3 actions)                      */
   /* ------------------------------------------------------------------ */
 
+  /**
+   * What deleting this node would touch.
+   *
+   * The counts are the whole subtree; `directChildren` is strictly the layer
+   * immediately below, because that is the only layer "Delete this only" can
+   * re-point — a field's professors move to another field, but its groups move
+   * with their professor and are never chosen individually.
+   *
+   * `directChildren` previously collected every descendant except the target,
+   * and for a level it collected the professors and groups underneath while
+   * never including the level's own fields. The reassignment UI lists exactly
+   * this array, so deleting a level offered a row per professor and per group
+   * with nothing valid to assign them to, and `detachAndDelete` demanded a
+   * target for each of them before it would proceed.
+   */
   async deleteImpact(type: HierarchyNodeType, id: string): Promise<DeleteImpact> {
     const impact: DeleteImpact = { level: 0, field: 0, professor: 0, group: 0, student: 0, directChildren: [] };
 
@@ -103,9 +118,22 @@ export class HierarchyDeleteService {
     const groupIds: string[] = [];
     const studentIds: string[] = [];
 
+    /** The layer directly beneath the node being deleted. */
+    const isDirectChildLayer = (layer: HierarchyNodeType): boolean =>
+      (type === "level" && layer === "field") ||
+      (type === "field" && layer === "professor") ||
+      (type === "professor" && layer === "group") ||
+      (type === "group" && layer === "student");
+
     if (type === "level") {
-      const rows = await this.db.client.select({ id: fields.id }).from(fields).where(and(eq(fields.level_id, id), eq(fields.is_system_placeholder, false)));
+      const rows = await this.db.client
+        .select({ id: fields.id, name: fields.name })
+        .from(fields)
+        .where(and(eq(fields.level_id, id), eq(fields.is_system_placeholder, false)));
       fieldIds.push(...rows.map((r) => r.id));
+      if (isDirectChildLayer("field")) {
+        rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.name, type: "field" }));
+      }
     } else if (type === "field") {
       fieldIds.push(id);
     }
@@ -116,7 +144,9 @@ export class HierarchyDeleteService {
         .from(professors)
         .where(and(inArray(professors.field_id, fieldIds), eq(professors.is_system_placeholder, false)));
       professorIds.push(...rows.map((r) => r.id));
-      rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.full_name, type: "professor" }));
+      if (isDirectChildLayer("professor")) {
+        rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.full_name, type: "professor" }));
+      }
     }
 
     if (type === "professor") {
@@ -129,7 +159,9 @@ export class HierarchyDeleteService {
         .from(groups)
         .where(and(inArray(groups.prof_id, professorIds), eq(groups.is_system_placeholder, false)));
       groupIds.push(...rows.map((r) => r.id));
-      rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.name, type: "group" }));
+      if (isDirectChildLayer("group")) {
+        rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.name, type: "group" }));
+      }
     }
 
     if (type === "group") {
@@ -143,7 +175,9 @@ export class HierarchyDeleteService {
         .innerJoin(studentAssignments, and(eq(studentAssignments.student_id, students.id), inArray(studentAssignments.group_id, groupIds)))
         .where(eq(students.is_system_placeholder, false));
       studentIds.push(...allRows.map((r) => r.id));
-      allRows.forEach((r) => impact.directChildren.push({ id: r.id, name: `${r.first_name} ${r.last_name}`, type: "student" }));
+      if (isDirectChildLayer("student")) {
+        allRows.forEach((r) => impact.directChildren.push({ id: r.id, name: `${r.first_name} ${r.last_name}`, type: "student" }));
+      }
     }
 
     impact.level = type === "level" ? 1 : fieldIds.length;
@@ -378,11 +412,17 @@ export class HierarchyDeleteService {
     await tx.insert(studentAssignments).values({ student_id: studentId, group_id: targetGroupId }).onConflictDoNothing();
   }
 
+  /**
+   * "Delete this only": archive the node and re-point the layer beneath it.
+   *
+   * A level used to be refused here on the grounds that it "has no parent".
+   * That is true of the level itself and irrelevant to this operation — what
+   * moves is its *children*, and a field can be re-pointed to any other level
+   * exactly as a professor can be re-pointed to another field. The refusal made
+   * the option unusable from the UI, which offered it anyway and then failed
+   * with a 400 after the operator had filled the form in.
+   */
   async detachAndDelete(type: HierarchyNodeType, id: string, plan: DetachPlan, userId?: string): Promise<ArchiveCascadeResult> {
-    if (type === "level") {
-      throw new BadRequestException("Level cannot be detached - it has no parent");
-    }
-
     const parent = await this.assertActive(type, id);
     const impact = await this.deleteImpact(type, id);
 
@@ -397,6 +437,26 @@ export class HierarchyDeleteService {
 
     await this.db.client.transaction(async (tx) => {
       switch (type) {
+        case "level": {
+          const childIds = (await tx.select({ id: fields.id }).from(fields).where(inArray(fields.level_id, [id]))).map((f) => f.id);
+
+          // Any other active level is a valid destination. There is no
+          // same-parent constraint to check as there is one layer down: levels
+          // are the root, so the only thing to reject is the level being
+          // deleted and one that is not active.
+          const moves = this.groupByTarget(plan, childIds);
+          for (const [targetId, ids] of moves.reassigned) {
+            if (targetId === id) throw new BadRequestException("A field cannot be reassigned to the level being deleted");
+            const valid = await tx.select({ id: levels.id }).from(levels).where(and(eq(levels.id, targetId), eq(levels.is_active, true)));
+            if (!valid[0]) throw new BadRequestException("Invalid reassignment target for a field");
+            await tx.update(fields).set({ level_id: targetId }).where(inArray(fields.id, ids));
+          }
+          if (moves.toSentinel.length > 0) {
+            const sentinelId = await this.sentinels.ensureLevelSentinel();
+            await tx.update(fields).set({ level_id: sentinelId }).where(inArray(fields.id, moves.toSentinel));
+          }
+          break;
+        }
         case "field": {
           const childIds = (await tx.select({ id: professors.id }).from(professors).where(inArray(professors.field_id, [id]))).map((p) => p.id);
 
@@ -454,6 +514,9 @@ export class HierarchyDeleteService {
 
       const now = new Date();
       switch (type) {
+        case "level":
+          await tx.update(levels).set({ is_active: false, archived_at: now }).where(eq(levels.id, id));
+          break;
         case "field":
           await tx.update(fields).set({ is_active: false, archived_at: now }).where(eq(fields.id, id));
           break;

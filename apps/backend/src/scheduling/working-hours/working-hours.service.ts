@@ -161,15 +161,62 @@ export class WorkingHoursService {
    * blocks — it only surfaces a warning).
    */
   async validateSlot(dayOfWeek: number, startTime: string, endTime: string): Promise<string[]> {
-    const windows = await this.getEffectiveHours(dayOfWeek);
-    if (windows.length === 0) return [];
-
-    const fullyOutside = !windows.some((w) => startTime < w.end_time && endTime > w.start_time);
-    if (fullyOutside) {
-      const labels = windows.map((w) => `${w.start_time}–${w.end_time}`).join(", ");
-      return [`Outside configured working hours (${labels})`];
+    const { status, windows } = await this.checkContainment(dayOfWeek, startTime, endTime);
+    if (status === "outside" || status === "partial") {
+      return [`Outside configured working hours (${this.describeWindows(windows)})`];
     }
     return [];
+  }
+
+  /**
+   * Whether a proposed window sits inside the school's opening hours.
+   *
+   * Distinct from `validateSlot`, which only ever asked whether the session
+   * overlapped a window *at all*. A session from 08:00 to 10:00 against hours of
+   * 09:00–17:00 overlaps, so it was reported as fine even though the first hour
+   * happens with the school shut — the exact case an operator most needs told
+   * about. Containment is the real question, so it is answered here and the
+   * three outcomes are distinguished:
+   *
+   *  - `unconfigured` — no windows declared, so nothing can be judged and
+   *    callers must let the session through rather than block on a rule the
+   *    school has not set.
+   *  - `inside` — fully within a single window.
+   *  - `partial` — overlaps a window but spills past one or both of its edges.
+   *  - `outside` — touches no window at all.
+   *
+   * A session must fit inside *one* window: two adjacent windows (09:00–12:00
+   * and 14:00–17:00) do not combine into 09:00–17:00, because the gap between
+   * them is precisely when the school is closed.
+   */
+  async checkContainment(
+    dayOfWeek: number,
+    startTime: string,
+    endTime: string,
+  ): Promise<{ status: "unconfigured" | "inside" | "partial" | "outside"; windows: EffectiveWindow[] }> {
+    const windows = await this.getEffectiveHours(dayOfWeek);
+    if (windows.length === 0) return { status: "unconfigured", windows };
+
+    const start = this.normalize(startTime);
+    const end = this.normalize(endTime);
+
+    // Boundary-inclusive: a session running exactly 09:00–12:00 inside a
+    // 09:00–12:00 window is in hours, not out of them.
+    const contained = windows.some((w) => start >= this.normalize(w.start_time) && end <= this.normalize(w.end_time));
+    if (contained) return { status: "inside", windows };
+
+    const overlaps = windows.some((w) => start < this.normalize(w.end_time) && end > this.normalize(w.start_time));
+    return { status: overlaps ? "partial" : "outside", windows };
+  }
+
+  /** "09:00–12:00, 14:00–17:00" — the windows as an operator reads them. */
+  describeWindows(windows: EffectiveWindow[]): string {
+    return windows.map((w) => `${this.normalize(w.start_time)}–${this.normalize(w.end_time)}`).join(", ");
+  }
+
+  /** `HH:MM`, dropping the seconds Postgres `time` columns come back with. */
+  private normalize(time: string): string {
+    return String(time).slice(0, 5);
   }
 
   /** Min start / max end across all resolved days — the calendar's visible bounds. */

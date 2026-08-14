@@ -25,6 +25,10 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api/docs", app, document);
-  await app.listen(3001);
+  // `PORT` has been documented in .env.example since the first release while
+  // the port was hard-coded, so setting it did nothing and a port clash had no
+  // documented way out. 3001 stays the default, which is what every existing
+  // install and the frontend's default API URL already use.
+  await app.listen(Number(process.env.PORT) || 3001);
 }
 bootstrap();

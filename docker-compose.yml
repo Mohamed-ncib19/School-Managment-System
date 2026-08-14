@@ -1,36 +1,35 @@
+# PostgreSQL for development, as an alternative to a native install.
+#
+# The Windows launcher (tools\windows\start.bat) does not use this: it finds an
+# existing server or downloads a private one into .postgres\. This file is for
+# working on the project on a machine where running Postgres in Docker is
+# simpler.
+#
+# The credentials below are the defaults in apps/backend/.env.example, so
+# `docker compose up -d` and that DATABASE_URL line up without editing either.
+# A real install generates its own during the setup wizard.
+#
+# A Redis 7 service used to sit alongside this one. Nothing in the codebase ever
+# connected to it — there is no job runner and no broker — so it was removed
+# rather than left running and misleading.
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: iq-postgres
+    container_name: school-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: iq_user
-      POSTGRES_PASSWORD: iq_password
-      POSTGRES_DB: iq_academy
+      POSTGRES_USER: school_user
+      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: school_db
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U iq_user -d iq_academy"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: iq-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "pg_isready -U school_user -d school_db"]
       interval: 5s
       timeout: 3s
       retries: 5
 
 volumes:
   postgres_data:
-  redis_data:

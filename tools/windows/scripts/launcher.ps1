@@ -28,6 +28,8 @@ $FrontendDir = Join-Path $Root "apps\frontend"
 $LogDir      = Join-Path $Root "logs"
 $BackupDir   = Join-Path $Root "backups"
 
+# Defaults; PORT in apps\backend\.env overrides the API port once the config
+# step has read it, so a machine that has to move off 3001 only says so once.
 $BackendPort  = 3001
 $FrontendPort = 3000
 
@@ -60,6 +62,66 @@ function Test-Port {
     $client.Close()
     return $false
   } catch { return $false }
+}
+
+<#
+  Which process is holding a port, as "name (PID nnn)".
+
+  Used to turn "the port is busy" into a sentence an operator can act on. It is
+  best-effort: Get-NetTCPConnection needs no elevation for the lookup, but the
+  owning process may belong to another user and refuse to identify itself.
+#>
+function Get-PortOwner {
+  param([int]$Port)
+  try {
+    $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $listener) { return $null }
+    $proc = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+    if ($proc) { return "$($proc.ProcessName) (PID $($listener.OwningProcess))" }
+    return "PID $($listener.OwningProcess)"
+  } catch { return $null }
+}
+
+<#
+  Is the thing on this port *our* server, or something else that happens to
+  have taken the port?
+
+  The launcher used to treat any listener as "already running" and report
+  success, so a stray process on 3000 produced a green panel and a browser
+  window showing someone else's page — or nothing at all.
+
+  Returns "ours", "foreign" or "unknown", and the distinction matters more than
+  it looks: only "foreign" is worth stopping for. A dev-mode portal compiles
+  each route on first request, so a perfectly healthy server that has just
+  started can take longer to answer than any sane probe will wait — treating
+  that silence as a conflict would replace a rare wrong success with a common
+  wrong failure. Timeouts are therefore "unknown" and the start continues.
+#>
+function Test-OurServer {
+  param([int]$Port, [ValidateSet("api", "web")][string]$Kind)
+  $url = if ($Kind -eq "api") { "http://127.0.0.1:$Port/api/system-settings" } else { "http://127.0.0.1:$Port/login" }
+  try {
+    $res = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 20 -MaximumRedirection 2 -ErrorAction Stop
+    if ($Kind -eq "api") {
+      # Every response passes through the transform interceptor's envelope.
+      if ($res.Content -match '"data"') { return "ours" }
+      return "foreign"
+    }
+    if ($res.Headers["Content-Type"] -match "text/html") { return "ours" }
+    return "foreign"
+  } catch {
+    $response = $_.Exception.Response
+    if (-not $response) {
+      # No HTTP response at all: refused mid-handshake, reset, or timed out.
+      # Not enough to convict — the readiness wait below is the real check.
+      return "unknown"
+    }
+    # A redirect to the login page is the portal behaving correctly.
+    $status = $response.StatusCode.value__
+    if ($Kind -eq "web" -and ($status -eq 307 -or $status -eq 302)) { return "ours" }
+    if ($status -ge 500) { return "unknown" }
+    return "foreign"
+  }
 }
 
 function Get-EnvValue {
@@ -156,7 +218,27 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Fail "Node.js could not be installed automatically." "Run 'winget install OpenJS.NodeJS.LTS' in a terminal, or install Node.js 20 LTS from https://nodejs.org, then run tools\windows\start.bat again."
   }
 }
-Write-Ok "Node.js" (node --version)
+
+<#
+  Version, not just presence.
+
+  Next 14 needs Node 18.17+ and the toolchain is built against Node 20 LTS. An
+  older Node does install and does start, then fails deep inside a build with a
+  syntax error or a missing global, which reads as "the app is broken" rather
+  than "this machine has Node 16". The floor is the `engines` field in the root
+  package.json — one place to change it.
+#>
+$nodeVersion = (node --version) -replace "^v", ""
+$requiredNode = "20.9.0"
+try {
+  $rootPkg = Get-Content (Join-Path $Root "package.json") -Raw | ConvertFrom-Json
+  if ($rootPkg.engines.node) { $requiredNode = ($rootPkg.engines.node -replace "[^0-9.]", "") }
+} catch { }
+if ([version]($nodeVersion -replace "-.*$", "") -lt [version]$requiredNode) {
+  Fail "Node.js $nodeVersion is too old - this project needs $requiredNode or newer." `
+       "Install Node.js 20 LTS (or newer): run 'winget install OpenJS.NodeJS.LTS' in a terminal, or download it from https://nodejs.org, then run tools\windows\start.bat again."
+}
+Write-Ok "Node.js" "v$nodeVersion (>= $requiredNode)"
 
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   Write-Info "pnpm not found - enabling it via corepack..."
@@ -208,6 +290,9 @@ if (-not (Test-Path $frontendEnv)) {
 
 $schoolName = Get-EnvValue $backendEnv "SCHOOL_NAME"
 if (-not $schoolName) { $schoolName = "School Management System" }
+
+$configuredPort = Get-EnvValue $backendEnv "PORT"
+if ($configuredPort -match "^\d+$") { $BackendPort = [int]$configuredPort }
 
 $databaseUrl = Get-EnvValue $backendEnv "DATABASE_URL"
 if (-not $databaseUrl) { Fail "DATABASE_URL is missing from apps\backend\.env" }
@@ -394,9 +479,17 @@ if ($pushNeeded) {
     if ($LASTEXITCODE -eq 0 -and [int]$nonOwnerTables -gt 0) {
       $superPass = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
       if ($superPass) {
-        Write-Info "Repairing table ownership for drizzle-kit push..."
+        Write-Info "Repairing ownership of $nonOwnerTables table(s) for drizzle-kit push..."
         $env:PGPASSWORD = $superPass
-        & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -c "ALTER TABLE schedule_entries OWNER TO `"$dbUser`"; ALTER TABLE student_schedule_exceptions OWNER TO `"$dbUser`"; ALTER TABLE time_slots OWNER TO `"$dbUser`"; ALTER TABLE classrooms OWNER TO `"$dbUser`";" 2>$null | Out-Null
+        <#
+          Every mis-owned table, found by asking the catalogue, rather than a
+          hard-coded list. The list version named the four scheduling tables and
+          the role of one particular school, so a table added later — or any
+          other install — was not covered by it and pushed into the same
+          failure it exists to prevent.
+        #>
+        $reassign = "DO `$`$ DECLARE t record; BEGIN FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tableowner<>'$dbUser' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO %I', t.tablename, '$dbUser'); END LOOP; END `$`$;"
+        & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -c $reassign 2>$null | Out-Null
         $ownerFixExit = $LASTEXITCODE
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
@@ -527,6 +620,29 @@ if ($Prod) {
 } else {
   $backendCmd  = "pnpm run start:dev"
   $frontendCmd = "pnpm run dev"
+}
+
+<#
+  A busy port is one of two very different situations, and they were treated as
+  one: our own server already running (fine, reuse it) or a foreign process
+  squatting on it (nothing will work, and starting ours will fail silently in a
+  minimised window). Ask the port what it is before deciding.
+#>
+foreach ($check in @(
+  @{ Port = $BackendPort; Kind = "api"; Label = "API" },
+  @{ Port = $FrontendPort; Kind = "web"; Label = "Web portal" }
+)) {
+  if (-not (Test-Port $check.Port)) { continue }
+  $verdict = Test-OurServer -Port $check.Port -Kind $check.Kind
+  if ($verdict -ne "foreign") { continue }
+
+  $owner = Get-PortOwner -Port $check.Port
+  $who = if ($owner) { ": $owner" } else { "" }
+  $hint = "Close that program and run tools\windows\start.bat again, or free the port with:  npx kill-port $($check.Port)"
+  if ($check.Kind -eq "api") {
+    $hint += "  |  To move the API instead, set PORT in apps\backend\.env and NEXT_PUBLIC_API_URL in apps\frontend\.env.local to match."
+  }
+  Fail "Port $($check.Port) is in use by another program$who - the $($check.Label) cannot start." $hint
 }
 
 $apiUp = Test-Port $BackendPort

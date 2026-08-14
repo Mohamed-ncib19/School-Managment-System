@@ -18,6 +18,20 @@ import {
   JWT_REFRESH_EXPIRES_IN,
 } from "./constants";
 
+/**
+ * Cost factor for password hashing.
+ *
+ * `BCRYPT_ROUNDS` has been documented in .env.example since the first release
+ * while both hashing call sites here passed a literal 10, so raising it changed
+ * only what the seed script did — the same shape of bug `PORT` had in main.ts.
+ * Read once at module load, like the JWT settings; out-of-range or unparseable
+ * values fall back to 10 rather than throwing at password-change time.
+ */
+function bcryptRounds(): number {
+  const raw = Number(process.env.BCRYPT_ROUNDS);
+  return Number.isInteger(raw) && raw >= 4 && raw <= 31 ? raw : 10;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -168,7 +182,7 @@ const {
     if (existing) {
       throw new ConflictException("Un super administrateur avec cet e-mail existe déjà");
     }
-    const password_hash = await hash(data.password, 10);
+    const password_hash = await hash(data.password, bcryptRounds());
     const [user] = await this.db.client
       .insert(users)
       .values({ full_name: data.full_name, email: data.email, password_hash, role: "super_admin" })
@@ -209,7 +223,7 @@ const {
       throw new UnauthorizedException("Le mot de passe actuel est incorrect");
     }
 
-    const passwordHash = await hash(newPassword, 10);
+    const passwordHash = await hash(newPassword, bcryptRounds());
     await this.db.client.update(users).set({ password_hash: passwordHash }).where(eq(users.id, userId));
 
     // The event is recorded; the credential itself never is.

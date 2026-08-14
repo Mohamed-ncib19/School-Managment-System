@@ -35,14 +35,37 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
 
   // Sibling parents the direct children can be reassigned to (a deleted field's
   // professors move to another field of the same level, and so on).
-  const { data: summary } = useQuery({
+  //
+  // Fetched as soon as the dialog opens rather than on entering reassign mode:
+  // gated on the mode, the request only started once the operator clicked
+  // "Delete this only", so the dropdowns rendered empty for as long as it took
+  // to answer and looked like there was nothing to choose.
+  const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ["hierarchy-summary"],
     queryFn: hierarchyApi.summary,
-    enabled: isOpen && !!entityId && mode === "reassign",
+    enabled: isOpen && !!entityId,
   });
 
+  /**
+   * Where the children can go.
+   *
+   * For a level that is every other level: levels are the root of the
+   * hierarchy, so there is no shared parent to match on, and the destinations
+   * are simply its siblings. The `level` branch was missing entirely, so this
+   * fell through to `[]` and the reassignment dropdowns rendered with nothing
+   * in them but "Leave unassigned".
+   *
+   * Placeholder rows are excluded: the "Unassigned" holding pens the backend
+   * creates are archived by construction and must not be offered as somewhere
+   * to deliberately file a child.
+   */
   const siblingOptions = useMemo(() => {
     if (!summary) return [];
+    if (entityType === "level") {
+      return summary.levels
+        .filter((l) => l.id !== entityId && l.is_active)
+        .map((l) => ({ id: l.id, name: l.name }));
+    }
     if (entityType === "field") {
       const levelId = summary.fields.find((f) => f.id === entityId)?.level_id;
       return summary.fields.filter((f) => f.level_id === levelId && f.id !== entityId).map((f) => ({ id: f.id, name: f.name }));
@@ -57,6 +80,27 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
     }
     return [];
   }, [summary, entityType, entityId]);
+
+  /**
+   * What is being re-pointed, and to what.
+   *
+   * The breadcrumb keys are used rather than the `nav.*` ones the impact list
+   * reaches for: `nav.fields` is the sidebar label "Hiérarchie", which is the
+   * name of a screen and not the name of the entity, so a picker built from it
+   * would read "choose a niveau for each hiérarchie".
+   */
+  const childLabel = useMemo(() => {
+    switch (entityType) {
+      case "level":
+        return { child: t("fieldsHierarchy.breadcrumbFields", "Fields"), target: t("hierarchy.targetLevel", "level") };
+      case "field":
+        return { child: t("fieldsHierarchy.breadcrumbProfessors", "Professors"), target: t("hierarchy.targetField", "field") };
+      case "professor":
+        return { child: t("fieldsHierarchy.breadcrumbGroups", "Groups"), target: t("hierarchy.targetProfessor", "professor") };
+      default:
+        return { child: t("fieldsHierarchy.breadcrumbStudents", "Students"), target: t("hierarchy.targetGroup", "group") };
+    }
+  }, [entityType, t]);
 
   const archiveMutation = useMutation({
     mutationFn: () => hierarchyApi.archiveCascade(entityType, entityId),
@@ -153,10 +197,13 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
                 <div className="p-3 rounded-lg bg-background border border-border">
                   <p className="text-sm font-medium">{t("hierarchy.deleteImpact", "Impact")}:</p>
                   <ul className="text-xs text-text-secondary mt-1 list-disc list-inside">
-                    {impact.field > 0 && <li>{impact.field} {t("nav.fields", "Fields")}</li>}
-                    {impact.professor > 0 && <li>{impact.professor} {t("nav.professors", "Professors")}</li>}
-                    {impact.group > 0 && <li>{impact.group} {t("nav.groups", "Groups")}</li>}
-                    {impact.student > 0 && <li>{impact.student} {t("students.title", "Students")}</li>}
+                    {/* Breadcrumb keys, not `nav.*`: the sidebar calls the
+                        fields screen "Hiérarchie", so `nav.fields` rendered
+                        this line as "3 Hiérarchie". */}
+                    {impact.field > 0 && <li>{impact.field} {t("fieldsHierarchy.breadcrumbFields", "Fields")}</li>}
+                    {impact.professor > 0 && <li>{impact.professor} {t("fieldsHierarchy.breadcrumbProfessors", "Professors")}</li>}
+                    {impact.group > 0 && <li>{impact.group} {t("fieldsHierarchy.breadcrumbGroups", "Groups")}</li>}
+                    {impact.student > 0 && <li>{impact.student} {t("fieldsHierarchy.breadcrumbStudents", "Students")}</li>}
                   </ul>
                 </div>
 
@@ -179,15 +226,44 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
 
                 {mode === "reassign" && (
                   <div className="space-y-3">
-                    <p className="text-xs text-text-secondary">{t("hierarchy.reassignDesc", "Choose where each direct child goes:")}</p>
+                    {/* `{child}` only: naming the destination type inline would
+                        need gender agreement in French ("un nouveau niveau" but
+                        "une nouvelle spécialité"), and the dropdown already
+                        makes the destination obvious. It stays in the per-row
+                        aria-label, where no article is involved. */}
+                    <p className="text-xs text-text-secondary">
+                      {t("hierarchy.reassignDesc", "Choose the new parent of each {child}:")
+                        .replace("{child}", childLabel.child.toLowerCase())}
+                    </p>
+
+                    {summaryLoading && (
+                      <div className="flex items-center gap-2 text-xs text-text-secondary">
+                        <Loader2 size={14} className="animate-spin" /> {t("common.loading", "Loading...")}
+                      </div>
+                    )}
+
+                    {!summaryLoading && siblingOptions.length === 0 && (
+                      <div className="flex items-start gap-2 rounded-btn border border-warning/30 bg-warning-soft dark:bg-warning/10 px-3 py-2 text-xs text-warning-strong dark:text-warning-dark-strong">
+                        <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {t(
+                            "hierarchy.noReassignTarget",
+                            "There is nowhere else to move these to. They will be kept and filed under “Unassigned”, where you can re-file them later.",
+                          )}
+                        </span>
+                      </div>
+                    )}
+
                     <div className="max-h-60 overflow-y-auto space-y-2">
                       {impact.directChildren.map((child) => (
                         <div key={child.id} className="flex items-center gap-2">
-                          <span className="text-sm flex-1 truncate">{child.name}</span>
+                          <span className="text-sm flex-1 truncate" title={child.name}>{child.name}</span>
                           <select
                             value={selectedChildren[child.id] || ""}
                             onChange={(e) => setSelectedChildren((prev) => ({ ...prev, [child.id]: e.target.value }))}
                             className="input text-xs"
+                            aria-label={`${child.name} → ${childLabel.target}`}
+                            disabled={summaryLoading}
                           >
                             <option value="">{t("hierarchy.leaveUnassigned", "Leave unassigned")}</option>
                             {siblingOptions.map((sibling) => (

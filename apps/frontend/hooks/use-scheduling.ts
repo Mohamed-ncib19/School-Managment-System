@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { schedulingApi, type CreateEntryExceptionPayload, type SplitEntryPayload, type WorkingHourWindow } from "@/lib/api/scheduling.api";
 
@@ -33,12 +34,22 @@ export function useTimeSlots(dayOfWeek?: number) {
   });
 }
 
-export function useScheduleEntries(filters: Record<string, unknown>) {
+export function useScheduleEntries(filters: Record<string, unknown>, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: schedulingKeys.entries(filters),
     queryFn: () => schedulingApi.entries.list(filters),
+    enabled: options?.enabled ?? true,
   });
 }
+
+/**
+ * The live timetable, as both the entries page and the group list ask for it.
+ *
+ * A module constant so the query key is byte-identical from either page: the
+ * two used to fetch the same list under keys of their own and pay for it twice
+ * when navigating between them.
+ */
+export const ACTIVE_ENTRIES = { active: true } as const;
 
 export function useStudentSchedule(studentId: string, from: string, to: string) {
   return useQuery({
@@ -164,18 +175,29 @@ export function useWorkingHours() {
   });
 }
 
+/**
+ * The calendar's visible bounds, derived from the windows already loaded.
+ *
+ * `/working-hours/bounds` and `/working-hours/empty` are both pure functions of
+ * `/working-hours` — the whole table is at most a handful of rows and the
+ * settings page was fetching it three times to ask three questions about it.
+ * Deriving here keeps the endpoints available for other callers while the page
+ * makes one request.
+ */
 export function useWorkingHoursBounds() {
-  return useQuery({
-    queryKey: ["scheduling", "working-hours-bounds"],
-    queryFn: () => schedulingApi.workingHours.bounds(),
-  });
+  const { data, ...rest } = useWorkingHours();
+  const bounds = useMemo(() => {
+    if (!data || data.length === 0) return null;
+    const min = data.reduce((acc, w) => (w.start_time < acc ? w.start_time : acc), "23:59");
+    const max = data.reduce((acc, w) => (w.end_time > acc ? w.end_time : acc), "00:00");
+    return { min, max };
+  }, [data]);
+  return { ...rest, data: bounds };
 }
 
 export function useWorkingHoursEmpty() {
-  return useQuery({
-    queryKey: ["scheduling", "working-hours-empty"],
-    queryFn: () => schedulingApi.workingHours.isEmpty(),
-  });
+  const { data, ...rest } = useWorkingHours();
+  return { ...rest, data: data ? data.length === 0 : undefined };
 }
 
 export function useUpsertWorkingHours() {

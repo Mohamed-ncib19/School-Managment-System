@@ -15,7 +15,6 @@ import { HierarchyModule } from "./hierarchy/hierarchy.module";
 import { HierarchyConfigModule } from "./hierarchy-config/hierarchy-config.module";
 import { SystemSettingsModule } from "./system-settings/system-settings.module";
 import { AttendanceSheetsModule } from "./attendance-sheets/attendance-sheets.module";
-import { AiModule } from "./ai/ai.module";
 import { UpdatesModule } from "./updates/updates.module";
 import { SystemModule } from "./system/system.module";
 import { SchedulingModule } from "./scheduling/scheduling.module";
@@ -39,7 +38,6 @@ import { MachineBindingService } from "./machine/machine-binding.service";
     HierarchyConfigModule,
     SystemSettingsModule,
     AttendanceSheetsModule,
-    AiModule,
     UpdatesModule,
     SystemModule,
     SchedulingModule,

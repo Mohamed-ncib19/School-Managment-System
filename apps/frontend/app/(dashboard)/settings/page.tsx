@@ -67,9 +67,12 @@ const profileSchema = z.object({
   email: z.string().email("Saisissez un e-mail valide"),
 });
 
+// 8, matching the setup wizard and the server-side ChangePasswordDto. This
+// asked for 6, so a 6- or 7-character password passed here and was then
+// rejected by the API — back when the API checked at all.
 const passwordSchema = z.object({
   current_password: z.string().min(1, "Le mot de passe actuel est obligatoire"),
-  new_password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères"),
+  new_password: z.string().min(8, "Le mot de passe doit contenir au moins 8 caractères"),
   confirm_password: z.string().min(1, "Veuillez confirmer le mot de passe"),
 }).refine((data) => data.new_password === data.confirm_password, {
   message: "Les mots de passe ne correspondent pas",

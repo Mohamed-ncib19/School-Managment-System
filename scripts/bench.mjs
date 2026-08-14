@@ -58,7 +58,28 @@ const CASES = [
   { name: "audit:search", path: "/audit-logs?page=1&limit=50&search=paiement", note: "P1-5 audit text search" },
   { name: "audit:filter-options", path: "/audit-logs/options", note: "P1-6 SELECT DISTINCT scans" },
   { name: "payroll:list", path: "/financial/payroll", note: "batched entitlements" },
+  // Scheduling. `MONTH` is rewritten to the current calendar month below, so
+  // the calendar cases always land on a range that actually holds sessions.
+  { name: "schedule:occurrences-month", path: "/scheduling/occurrences?from=MONTH_FROM&to=MONTH_TO", note: "calendar month expansion" },
+  { name: "schedule:occurrences-year", path: "/scheduling/occurrences?from=YEAR_FROM&to=YEAR_TO", note: "worst-case expansion range" },
+  { name: "schedule:occurrences-count", path: "/scheduling/occurrences/count?from=MONTH_FROM&to=MONTH_TO", note: "dashboard session count" },
+  { name: "schedule:entries-list", path: "/scheduling/entries?active=true", note: "entries page, unbounded list" },
+  { name: "schedule:conflicts", path: "/scheduling/conflicts", note: "full timetable clash scan" },
+  { name: "schedule:classrooms", path: "/scheduling/classrooms", note: "reference list" },
+  { name: "schedule:time-slots", path: "/scheduling/time-slots", note: "reference list" },
+  { name: "schedule:working-hours", path: "/scheduling/working-hours", note: "settings list" },
 ];
+
+/** Substitutes the date placeholders in CASES against today's calendar. */
+function resolveDates(path) {
+  const now = new Date();
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return path
+    .replace("MONTH_FROM", iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))))
+    .replace("MONTH_TO", iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))))
+    .replace("YEAR_FROM", iso(new Date(Date.UTC(now.getUTCFullYear(), 0, 1))))
+    .replace("YEAR_TO", iso(new Date(Date.UTC(now.getUTCFullYear(), 11, 31))));
+}
 
 async function login() {
   const res = await fetch(`${API}/auth/login`, {
@@ -99,14 +120,15 @@ async function main() {
   console.log("  " + "-".repeat(100));
 
   for (const c of cases) {
+    const path = resolveDates(c.path);
     // One warm-up so the first case does not absorb connection setup, then
     // three timed runs reported by median — these endpoints have in-process
     // caches, and a mean would blend the cold miss with the warm hits.
-    await timeIt(cookie, c.path).catch(() => {});
+    await timeIt(cookie, path).catch(() => {});
     const runs = [];
     let last = null;
     for (let i = 0; i < 3; i++) {
-      last = await timeIt(cookie, c.path);
+      last = await timeIt(cookie, path);
       runs.push(last.ms);
     }
     runs.sort((a, b) => a - b);
@@ -114,7 +136,7 @@ async function main() {
     const kb = last.bytes / 1024;
     const size = kb > 1024 ? `${(kb / 1024).toFixed(2)} MB` : `${kb.toFixed(1)} KB`;
 
-    results.push({ name: c.name, path: c.path, ms: ms(median), bytes: last.bytes, status: last.status });
+    results.push({ name: c.name, path, ms: ms(median), bytes: last.bytes, status: last.status });
     const flag = last.status >= 400 ? " <-- FAILED" : "";
     console.log(
       "  " + c.name.padEnd(30) + String(last.status).padEnd(8) +

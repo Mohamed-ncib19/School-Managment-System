@@ -26,7 +26,6 @@ import {
   SlidersHorizontal,
   CalendarDays,
   CalendarRange,
-  Clock,
   AlarmClock,
   DoorOpen,
 } from "lucide-react";
@@ -73,11 +72,13 @@ const ADMIN_NAV_ITEMS = [
   { href: "/settings", label: "nav.settings", icon: Settings },
 ];
 
+// The "Créneaux" (time-slots) screen is gone: sessions now carry their own
+// start and end times, so `time_slots` is an internal normalisation detail
+// rather than a catalogue anyone curates.
 const SCHEDULE_NAV_ITEMS = [
   { href: "/schedule/calendar", label: "nav.scheduleCalendar", icon: CalendarRange },
   { href: "/schedule/entries", label: "nav.scheduleEntries", icon: CalendarDays },
   { href: "/schedule/classrooms", label: "nav.classrooms", icon: DoorOpen },
-  { href: "/schedule/time-slots", label: "nav.timeSlots", icon: Clock },
   { href: "/schedule/working-hours", label: "nav.workingHours", icon: AlarmClock },
 ];
 

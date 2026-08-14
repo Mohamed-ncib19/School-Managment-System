@@ -41,11 +41,34 @@ set "SCRIPT_DIR=%~dp0"
 shift 2>nul
 
 REM --- preflight checks ----------------------------------------------------
+REM Node first: without it nothing below can run, and the message it fails with
+REM otherwise ("'node' is not recognized") does not say what to install.
+where node >nul 2>&1
+if not %errorlevel%==0 (
+  echo.
+  echo   [preflight] Node.js is not installed.
+  echo.
+  echo   Install Node.js 20 LTS or newer, then run start.bat again:
+  echo     winget install OpenJS.NodeJS.LTS
+  echo   or download it from https://nodejs.org
+  echo.
+  pause
+  goto :EOF
+)
+
 where pnpm >nul 2>&1
 if %errorlevel%==0 (
   if not exist "node_modules" (
     echo   [preflight] Installing dependencies (first run^)...
     call pnpm install
+    if errorlevel 1 (
+      echo.
+      echo   [preflight] Dependency installation failed.
+      echo   Check your internet connection, then run start.bat again.
+      echo.
+      pause
+      goto :EOF
+    )
   ) else (
     echo   [preflight] Dependencies present
     echo   [preflight] Checking build dependencies...
@@ -53,7 +76,9 @@ if %errorlevel%==0 (
   )
   cd /d "%~dp0\..\.."
 ) else (
-  echo   [preflight] pnpm not found - skipping dependency check
+  REM The launcher enables pnpm via corepack, so a missing pnpm here is not
+  REM fatal - it just means the dependency check is deferred to that step.
+  echo   [preflight] pnpm not found - the launcher will install it
 )
 
 REM --- launch ---------------------------------------------------------------

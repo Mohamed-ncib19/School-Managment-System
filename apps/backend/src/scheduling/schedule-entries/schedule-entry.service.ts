@@ -8,8 +8,9 @@ import {
   timeSlots,
 } from "../../db/schema";
 import { AuditService } from "../../audit/audit.service";
-import { ConflictService } from "../conflicts/conflict.service";
+import { ConflictService, TimeSlotRef } from "../conflicts/conflict.service";
 import { WorkingHoursService } from "../working-hours/working-hours.service";
+import { TimeSlotService } from "../time-slots/time-slot.service";
 import { Conflict, ScheduleEntry, StudentScheduleException } from "../types";
 import {
   CreateScheduleEntryDto,
@@ -31,14 +32,66 @@ import {
  * "invalid", and the Schedule column of the group list was permanently blank —
  * so a schedule that had been stored correctly looked like it had never saved.
  *
- * Both keys are emitted: `time_slot` is the contract, `timeSlot` is kept so
- * anything already reading the Drizzle-shaped payload keeps working.
+ * The Drizzle-shaped `timeSlot` key is dropped rather than emitted alongside:
+ * it was kept for a transition that is over — no reader on either side of the
+ * wire references it — and shipping the slot twice was a seventh of the list
+ * response.
  */
-function withTimeSlot<T extends { timeSlot?: unknown }>(row: T): T & { time_slot: unknown } {
-  return { ...row, time_slot: (row as { timeSlot?: unknown }).timeSlot ?? null };
+function withTimeSlot<T extends { timeSlot?: unknown }>(row: T): Omit<T, "timeSlot"> & { time_slot: unknown } {
+  const { timeSlot, ...rest } = row;
+  return { ...rest, time_slot: timeSlot ?? null };
 }
 
-const withTimeSlots = <T extends { timeSlot?: unknown }>(rows: T[]) => rows.map(withTimeSlot);
+/**
+ * The relation graph `ScheduleEntry` actually declares.
+ *
+ * The previous shape asked for `group` with every column, its professor with
+ * every column, that professor's field with every column and the field's whole
+ * level — four nested rows per entry, of which the contract exposes a name and
+ * a colour. On a 192-group timetable that was half of a 944 KB response, and
+ * none of it reached a screen: the entries table renders the group name, the
+ * professor name, the room and the slot.
+ *
+ * `field` is lifted off the professor by `withGroupField` below, because a
+ * session's field is what a timetable calls its subject.
+ */
+const ENTRY_RELATIONS = {
+  group: {
+    columns: { id: true, name: true, color: true },
+    with: {
+      professor: {
+        columns: { id: true },
+        with: { field: { columns: { id: true, name: true, color: true } } },
+      },
+    },
+  },
+  timeSlot: true,
+  classroom: true,
+  professor: { columns: { id: true, full_name: true, color: true } },
+} as const;
+
+/** Lifts `group.professor.field` onto `group.field` and drops the waypoint. */
+function withGroupField<T extends { group?: unknown }>(row: T): T {
+  const group = row.group as { professor?: { field?: unknown } } | null | undefined;
+  if (!group) return row;
+  const { professor: _waypoint, ...groupFields } = group;
+  return { ...row, group: { ...groupFields, field: group.professor?.field ?? null } };
+}
+
+/** The contract shape: `time_slot` named as declared, group flattened. */
+const toEntry = <T extends { timeSlot?: unknown; group?: unknown }>(row: T) => withTimeSlot(withGroupField(row));
+const toEntries = <T extends { timeSlot?: unknown; group?: unknown }>(rows: T[]) => rows.map(toEntry);
+
+/**
+ * Safety cap on the unfiltered entry list.
+ *
+ * The list is bounded by the timetable — roughly two rules per active group —
+ * so a real school never approaches this. It exists so a runaway import or a
+ * scripted caller cannot ask one request to materialise an unbounded result
+ * set; it is set far above any timetable a school would actually run, so it
+ * never silently truncates what an operator is looking at.
+ */
+const ENTRY_LIST_CAP = 5000;
 
 @Injectable()
 export class ScheduleEntryService {
@@ -46,6 +99,7 @@ export class ScheduleEntryService {
     private readonly db: DbService,
     private readonly conflict: ConflictService,
     private readonly workingHours: WorkingHoursService,
+    private readonly timeSlotService: TimeSlotService,
     private readonly audit: AuditService,
   ) {}
 
@@ -73,70 +127,90 @@ export class ScheduleEntryService {
     const rows = await this.db.client.query.scheduleEntries.findMany({
       where: whereClause,
       orderBy: [desc(scheduleEntries.effective_from), asc(scheduleEntries.created_at)],
-      with: {
-        group: {
-          with: {
-            professor: {
-              with: {
-                field: { with: { level: true } },
-              },
-            },
-          },
-        },
-        timeSlot: true,
-        classroom: true,
-        professor: { columns: { id: true, full_name: true, color: true } },
-      },
+      limit: ENTRY_LIST_CAP,
+      with: ENTRY_RELATIONS,
     });
-    return withTimeSlots(rows);
+    return toEntries(rows);
   }
 
   async get(id: string) {
     const entry = await this.db.client.query.scheduleEntries.findFirst({
       where: eq(scheduleEntries.id, id),
-      with: {
-        group: {
-          with: {
-            professor: {
-              with: {
-                field: { with: { level: true } },
-              },
-            },
-          },
-        },
-        timeSlot: true,
-        classroom: true,
-        professor: { columns: { id: true, full_name: true, color: true } },
-      },
+      with: ENTRY_RELATIONS,
     });
     if (!entry) throw new NotFoundException(`Schedule entry ${id} not found`);
-    return withTimeSlot(entry) as unknown as ScheduleEntry;
+    return toEntry(entry) as unknown as ScheduleEntry;
   }
 
+  /**
+   * Several entries by id, in the order asked for.
+   *
+   * The weekly builder saves a whole week at once and hands back what it
+   * created; resolving those one `get()` at a time was a round trip per session
+   * on the save path, each carrying the same four-table join.
+   */
+  async getMany(ids: string[]): Promise<ScheduleEntry[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.db.client.query.scheduleEntries.findMany({
+      where: inArray(scheduleEntries.id, ids),
+      with: ENTRY_RELATIONS,
+    });
+    const byId = new Map(rows.map((row) => [row.id, toEntry(row)]));
+    return ids.map((id) => byId.get(id)).filter(Boolean) as unknown as ScheduleEntry[];
+  }
+
+  /**
+   * Creates one recurring session.
+   *
+   * Enforces the same two rules the weekly builder's save does — a window
+   * outside opening hours and a double-booked room are both refused — because
+   * they are properties of the timetable, not of the screen that edited it.
+   * This path previously collected conflicts and warnings and then inserted
+   * regardless, so the single-entry form could write exactly what the builder
+   * refused.
+   */
   async create(dto: CreateScheduleEntryDto, userId?: string): Promise<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[] }> {
     const dateObj = new Date(dto.effective_from);
     const conflicts: Conflict[] = [];
     const warnings: string[] = [];
 
-    const slot = await this.db.client.query.timeSlots.findFirst({
-      where: eq(timeSlots.id, dto.time_slot_id),
-      columns: { id: true, day_of_week: true, start_time: true, end_time: true },
-    });
-    if (!slot) throw new NotFoundException(`Time slot ${dto.time_slot_id} not found`);
+    const slot = await this.resolveSlot(dto);
+
+    // Opening hours first: an out-of-hours window is refused whatever the
+    // rooms say, and there is no point resolving conflicts for it.
+    const hours = await this.workingHours.checkContainment(slot.day_of_week, slot.start_time, slot.end_time);
+    if (hours.status === "partial" || hours.status === "outside") {
+      throw new ConflictException({
+        message:
+          `Cette séance est en dehors des horaires d'ouverture ` +
+          `(horaires : ${this.workingHours.describeWindows(hours.windows)})`,
+        code: "OUTSIDE_WORKING_HOURS",
+      });
+    }
 
     conflicts.push(...(await this.conflict.checkRule({
       group_id: dto.group_id,
-      time_slot_id: dto.time_slot_id,
+      time_slot_id: slot.id,
       classroom_id: dto.classroom_id,
       prof_id: dto.prof_id,
       effective_from: dto.effective_from,
       effective_until: dto.effective_until ?? null,
     })));
-    warnings.push(...(await this.workingHours.validateSlot(slot.day_of_week, slot.start_time, slot.end_time)));
+
+    // A room cannot hold two classes at once — same rule, same code, as the
+    // weekly builder's save path.
+    const roomClashes = conflicts.filter((c) => c.type === "classroom");
+    if (roomClashes.length > 0) {
+      throw new ConflictException({
+        message: "Cette salle est déjà occupée sur ce créneau",
+        code: "CLASSROOM_UNAVAILABLE",
+        conflicts: roomClashes,
+      });
+    }
 
     const [entry] = await this.db.client.insert(scheduleEntries).values({
       group_id: dto.group_id,
-      time_slot_id: dto.time_slot_id,
+      time_slot_id: slot.id,
       classroom_id: dto.classroom_id ?? null,
       prof_id: dto.prof_id,
       subject: dto.subject ?? null,
@@ -152,10 +226,46 @@ export class ScheduleEntryService {
       entityType: "schedule_entry",
       entityId: entry.id,
       actorId: userId,
-      newValues: { group_id: dto.group_id, time_slot_id: dto.time_slot_id, classroom_id: dto.classroom_id, prof_id: dto.prof_id, effective_from: dto.effective_from },
+      newValues: { group_id: dto.group_id, time_slot_id: slot.id, classroom_id: dto.classroom_id, prof_id: dto.prof_id, effective_from: dto.effective_from },
       meta: conflicts.length > 0 ? { conflicts } : warnings.length > 0 ? { warnings } : undefined,
     });
     return { entry: full, conflicts, warnings };
+  }
+
+  /**
+   * The stored slot for a create request, from times or from an explicit id.
+   *
+   * Explicit times win when both are given: they are what the operator typed,
+   * and an id sent alongside them would be a stale echo of the previous window.
+   */
+  private async resolveSlot(dto: CreateScheduleEntryDto): Promise<{ id: string; day_of_week: number; start_time: string; end_time: string }> {
+    if (dto.day_of_week !== undefined && dto.start_time && dto.end_time) {
+      if (dto.end_time <= dto.start_time) {
+        throw new BadRequestException("end_time must be after start_time");
+      }
+      const slot = await this.timeSlotService.findOrCreate(dto.day_of_week, dto.start_time, dto.end_time);
+      return {
+        id: slot.id,
+        day_of_week: dto.day_of_week,
+        start_time: dto.start_time.slice(0, 5),
+        end_time: dto.end_time.slice(0, 5),
+      };
+    }
+
+    if (!dto.time_slot_id) {
+      throw new BadRequestException("Provide day_of_week with start_time and end_time, or a time_slot_id");
+    }
+    const stored = await this.db.client.query.timeSlots.findFirst({
+      where: eq(timeSlots.id, dto.time_slot_id),
+      columns: { id: true, day_of_week: true, start_time: true, end_time: true },
+    });
+    if (!stored) throw new NotFoundException(`Time slot ${dto.time_slot_id} not found`);
+    return {
+      id: stored.id,
+      day_of_week: stored.day_of_week,
+      start_time: String(stored.start_time).slice(0, 5),
+      end_time: String(stored.end_time).slice(0, 5),
+    };
   }
 
   /**
@@ -170,11 +280,31 @@ export class ScheduleEntryService {
   async splitAndUpdate(
     entryId: string,
     fromDate: string,
-    newValues: { time_slot_id?: string; classroom_id?: string | null; prof_id?: string; subject?: string; notes?: string; effective_until?: string | null },
+    newValues: { day_of_week?: number; start_time?: string; end_time?: string; time_slot_id?: string; classroom_id?: string | null; prof_id?: string; subject?: string; notes?: string; effective_until?: string | null },
     userId?: string,
   ): Promise<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[]; split: boolean }> {
     const existing = await this.get(entryId);
     if (!existing.is_active) throw new BadRequestException("Cannot edit an archived rule");
+
+    // Times may be given directly instead of a slot id. The weekday defaults to
+    // the rule's current one, so changing only the hours keeps the same day.
+    if (newValues.start_time && newValues.end_time) {
+      if (newValues.end_time <= newValues.start_time) {
+        throw new BadRequestException("end_time must be after start_time");
+      }
+      const day = newValues.day_of_week ?? (existing as any).time_slot.day_of_week;
+      const hours = await this.workingHours.checkContainment(day, newValues.start_time, newValues.end_time);
+      if (hours.status === "partial" || hours.status === "outside") {
+        throw new ConflictException({
+          message:
+            `Ce nouvel horaire est en dehors des horaires d'ouverture ` +
+            `(horaires : ${this.workingHours.describeWindows(hours.windows)})`,
+          code: "OUTSIDE_WORKING_HOURS",
+        });
+      }
+      const slot = await this.timeSlotService.findOrCreate(day, newValues.start_time, newValues.end_time);
+      newValues = { ...newValues, time_slot_id: slot.id };
+    }
 
     const existingFrom = this.isoDate(existing.effective_from);
     const existingUntil = existing.effective_until ? this.isoDate(existing.effective_until) : null;
@@ -350,9 +480,9 @@ export class ScheduleEntryService {
     if (dto.effective_until !== undefined) data.effective_until = dto.effective_until ? new Date(dto.effective_until + "T00:00:00Z") : null;
 
     const previewDto: PreviewTileDto = {
-      day_of_week: (existing as any).timeSlot.day_of_week,
-      start_time: (existing as any).timeSlot.start_time,
-      end_time: (existing as any).timeSlot.end_time,
+      day_of_week: (existing as any).time_slot.day_of_week,
+      start_time: (existing as any).time_slot.start_time,
+      end_time: (existing as any).time_slot.end_time,
       classroom_id: dto.classroom_id ?? (existing as any).classroom_id,
       prof_id: (existing as any).prof_id,
       exclude_group_id: (existing as any).group_id,
@@ -387,7 +517,7 @@ export class ScheduleEntryService {
       action: "schedule.entry.archived",
       entityType: "schedule_entry",
       entityId: id,
-      entityLabel: `${(existing as any).group.name} / ${(existing as any).timeSlot.label}`,
+      entityLabel: `${(existing as any).group.name} / ${(existing as any).time_slot.label}`,
       actorId: userId,
       prevValues: { is_active: true },
       newValues: { is_active: false, effective_until: today },
@@ -402,7 +532,7 @@ export class ScheduleEntryService {
       action: "schedule.entry.deleted",
       entityType: "schedule_entry",
       entityId: id,
-      entityLabel: `${(existing as any).group.name} / ${(existing as any).timeSlot.label}`,
+      entityLabel: `${(existing as any).group.name} / ${(existing as any).time_slot.label}`,
       actorId: userId,
       prevValues: { group_id: (existing as any).group_id, time_slot_id: (existing as any).time_slot_id },
     });
@@ -427,18 +557,7 @@ export class ScheduleEntryService {
         or(sql`${scheduleEntries.effective_until} IS NULL`, gte(scheduleEntries.effective_until, fromObj)) as SQL,
       ),
       with: {
-        group: {
-          with: {
-            professor: {
-              with: {
-                field: { with: { level: true } },
-              },
-            },
-          },
-        },
-        timeSlot: true,
-        classroom: true,
-        professor: { columns: { id: true, full_name: true, color: true } },
+        ...ENTRY_RELATIONS,
         studentExceptions: {
           where: and(
             eq(studentScheduleExceptions.student_id, studentId),
@@ -451,17 +570,36 @@ export class ScheduleEntryService {
     });
 
     return entries.map((e) => ({
-      ...withTimeSlot(e),
+      ...toEntry(e),
       studentExceptions: (e as any).studentExceptions as StudentScheduleException[],
     })) as unknown as ScheduleEntry[];
   }
 
-  async getGroupSchedule(groupId: string, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
+  getGroupSchedule(groupId: string, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
+    return this.scheduleFor(eq(scheduleEntries.group_id, groupId), fromDate, toDate);
+  }
+
+  getProfessorSchedule(profId: string, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
+    return this.scheduleFor(eq(scheduleEntries.prof_id, profId), fromDate, toDate);
+  }
+
+  getClassroomSchedule(classroomId: string, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
+    return this.scheduleFor(eq(scheduleEntries.classroom_id, classroomId), fromDate, toDate);
+  }
+
+  /**
+   * Live rules for one owner over a date window.
+   *
+   * The group, professor and classroom variants differ only in which column
+   * they pin, so they share one body — three copies of the same query is three
+   * places for the relation graph to drift out of step with the contract.
+   */
+  private async scheduleFor(owner: SQL, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
     const fromObj = new Date(fromDate);
     const toObj = new Date(toDate);
     const result = await this.db.client.query.scheduleEntries.findMany({
       where: and(
-        eq(scheduleEntries.group_id, groupId),
+        owner,
         eq(scheduleEntries.is_active, true),
         lte(scheduleEntries.effective_from, toObj),
         or(
@@ -469,141 +607,70 @@ export class ScheduleEntryService {
           gte(scheduleEntries.effective_until, fromObj),
         ),
       ),
-      with: {
-        group: {
-          with: {
-            professor: {
-              with: {
-                field: { with: { level: true } },
-              },
-            },
-          },
-        },
-        timeSlot: true,
-        classroom: true,
-        professor: { columns: { id: true, full_name: true, color: true } },
-      },
+      with: ENTRY_RELATIONS,
       orderBy: [asc(scheduleEntries.created_at)],
     });
-    return withTimeSlots(result) as unknown as ScheduleEntry[];
+    return toEntries(result) as unknown as ScheduleEntry[];
   }
 
-  async getProfessorSchedule(profId: string, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
-    const fromObj = new Date(fromDate);
-    const toObj = new Date(toDate);
-    const result = await this.db.client.query.scheduleEntries.findMany({
-      where: and(
-        eq(scheduleEntries.prof_id, profId),
-        eq(scheduleEntries.is_active, true),
-        lte(scheduleEntries.effective_from, toObj),
-        or(
-          sql`${scheduleEntries.effective_until} IS NULL`,
-          gte(scheduleEntries.effective_until, fromObj),
-        ),
-      ),
-      with: {
-        group: {
-          with: {
-            professor: {
-              with: {
-                field: { with: { level: true } },
-              },
-            },
-          },
-        },
-        timeSlot: true,
-        classroom: true,
-        professor: { columns: { id: true, full_name: true, color: true } },
-      },
-      orderBy: [asc(scheduleEntries.created_at)],
-    });
-    return withTimeSlots(result) as unknown as ScheduleEntry[];
-  }
-
-  async getClassroomSchedule(classroomId: string, fromDate: string, toDate: string): Promise<ScheduleEntry[]> {
-    const fromObj = new Date(fromDate);
-    const toObj = new Date(toDate);
-    const result = await this.db.client.query.scheduleEntries.findMany({
-      where: and(
-        eq(scheduleEntries.classroom_id, classroomId),
-        eq(scheduleEntries.is_active, true),
-        lte(scheduleEntries.effective_from, toObj),
-        or(
-          sql`${scheduleEntries.effective_until} IS NULL`,
-          gte(scheduleEntries.effective_until, fromObj),
-        ),
-      ),
-      with: {
-        group: {
-          with: {
-            professor: {
-              with: {
-                field: { with: { level: true } },
-              },
-            },
-          },
-        },
-        timeSlot: true,
-        classroom: true,
-        professor: { columns: { id: true, full_name: true, color: true } },
-      },
-      orderBy: [asc(scheduleEntries.created_at)],
-    });
-    return withTimeSlots(result) as unknown as ScheduleEntry[];
-  }
-
+  /**
+   * "Would this tile clash?" — asked live while the weekly builder is edited.
+   *
+   * A read, and now only a read: it used to resolve the proposed window to a
+   * `time_slots` row and *create* one when the window was new, so previewing a
+   * timetable wrote to the database and left a row behind for every time an
+   * admin tried and discarded. The conflict service answers a bare window
+   * directly, so nothing is persisted until the schedule is actually saved.
+   *
+   * The three checks are independent, so they go out together rather than one
+   * after another.
+   */
   async previewConflicts(dto: PreviewTileDto, excludeEntryId?: string): Promise<Conflict[]> {
-    const results: Conflict[] = [];
     const date = dto.effective_from ?? new Date().toISOString().split("T")[0];
-    if (!dto.time_slot_id && dto.day_of_week !== undefined && dto.start_time && dto.end_time) {
-      dto.time_slot_id = await this.resolveOrCreateTimeSlot(dto.day_of_week, dto.start_time, dto.end_time);
-    }
-    if (!dto.time_slot_id) return results;
-    if (dto.prof_id) {
-      results.push(...(await this.conflict.checkProfessor(dto.prof_id, dto.time_slot_id, date, excludeEntryId)));
-    }
-    if (dto.classroom_id) {
-      results.push(...(await this.conflict.checkClassroom(dto.classroom_id, dto.time_slot_id, date, excludeEntryId)));
-    }
-    if (dto.exclude_group_id) {
-      results.push(...(await this.conflict.checkStudents(dto.exclude_group_id, dto.time_slot_id, date, excludeEntryId)));
-    }
-    return results;
+    const slot = await this.describeSlot(dto);
+    if (!slot) return [];
+
+    const [professorClashes, classroomClashes, studentClashes] = await Promise.all([
+      dto.prof_id ? this.conflict.checkProfessor(dto.prof_id, slot, date, excludeEntryId) : Promise.resolve([]),
+      dto.classroom_id ? this.conflict.checkClassroom(dto.classroom_id, slot, date, excludeEntryId) : Promise.resolve([]),
+      dto.exclude_group_id ? this.conflict.checkStudents(dto.exclude_group_id, slot, date, excludeEntryId) : Promise.resolve([]),
+    ]);
+    return [...professorClashes, ...classroomClashes, ...studentClashes];
   }
 
-  private async resolveOrCreateTimeSlot(dayOfWeek: number, startTime: string, endTime: string): Promise<string> {
+  /**
+   * The proposed slot as a reference the conflict checks can use — the stored
+   * row when the tile names one, otherwise the bare window it describes.
+   */
+  private async describeSlot(dto: PreviewTileDto): Promise<TimeSlotRef | null> {
+    if (dto.time_slot_id) {
+      const stored = await this.db.client.query.timeSlots.findFirst({
+        where: eq(timeSlots.id, dto.time_slot_id),
+        columns: { id: true, label: true, day_of_week: true, start_time: true, end_time: true },
+      });
+      if (stored) return stored as TimeSlotRef;
+    }
+    if (dto.day_of_week === undefined || !dto.start_time || !dto.end_time) return null;
+
     const existing = await this.db.client.query.timeSlots.findFirst({
-      where: and(eq(timeSlots.day_of_week, dayOfWeek), eq(timeSlots.start_time, startTime), eq(timeSlots.end_time, endTime)),
-      columns: { id: true },
+      where: and(
+        eq(timeSlots.day_of_week, dto.day_of_week),
+        eq(timeSlots.start_time, dto.start_time),
+        eq(timeSlots.end_time, dto.end_time),
+      ),
+      columns: { id: true, label: true, day_of_week: true, start_time: true, end_time: true },
     });
-    if (existing) return existing.id;
-    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
-    const label = `${dayNames[dayOfWeek] ?? "Day"} ${startTime}–${endTime}`;
-    const [slot] = await this.db.client.insert(timeSlots).values({
-      label,
-      day_of_week: dayOfWeek,
-      start_time: startTime,
-      end_time: endTime,
-      sort_order: dayOfWeek * 100,
-    }).returning();
-    return slot.id;
-  }
+    if (existing) return existing as TimeSlotRef;
 
-  private async runConflictChecks(dto: CreateScheduleEntryDto, excludeEntryId?: string): Promise<Conflict[]> {
-    const ts = await this.db.client.query.timeSlots.findFirst({
-      where: eq(timeSlots.id, dto.time_slot_id),
-      columns: { id: true },
-    });
-    if (!ts) return [];
-    const date = dto.effective_from;
-    const results: Conflict[] = [];
-    if (dto.prof_id) {
-      results.push(...(await this.conflict.checkProfessor(dto.prof_id, dto.time_slot_id, date, excludeEntryId)));
-    }
-    if (dto.classroom_id) {
-      results.push(...(await this.conflict.checkClassroom(dto.classroom_id, dto.time_slot_id, date, excludeEntryId)));
-    }
-    results.push(...(await this.conflict.checkStudents(dto.group_id, dto.time_slot_id, date, excludeEntryId)));
-    return results;
+    // Never saved: describe it in place. The empty id is only ever compared
+    // against `excludeEntryId`, which no unsaved window can match.
+    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+    return {
+      id: "",
+      label: `${dayNames[dto.day_of_week] ?? "Day"} ${dto.start_time}–${dto.end_time}`,
+      day_of_week: dto.day_of_week,
+      start_time: dto.start_time,
+      end_time: dto.end_time,
+    };
   }
 }

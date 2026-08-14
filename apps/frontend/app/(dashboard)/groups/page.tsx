@@ -9,7 +9,7 @@ import { groupsApi } from "@/lib/api/groups.api";
 import { schedulingApi } from "@/lib/api/scheduling.api";
 import { useProfessors, useFields, useLevels } from "@/hooks/use-queries";
 import { useViewMode } from "@/hooks/use-view-mode";
-import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
+import { useClassrooms, useScheduleEntries, ACTIVE_ENTRIES } from "@/hooks/use-scheduling";
 import type { Group, Professor, Field, TileDto, ScheduleEntry } from "@/types";
 import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -34,9 +34,9 @@ export default function GroupsPage() {
     queryFn: () => groupsApi.list(),
   });
 
-  const { data: allEntries } = useQuery({
-    queryKey: ["scheduling", "entries", "all-groups"],
-    queryFn: () => schedulingApi.entries.list({ active: true }),
+  // Same key as the schedule entries page, so moving between the two reuses
+  // the cached timetable instead of re-fetching it under a private key.
+  const { data: allEntries } = useScheduleEntries(ACTIVE_ENTRIES, {
     enabled: !!groups && groups.length > 0,
   });
 
@@ -58,10 +58,11 @@ export default function GroupsPage() {
   const [capacity, setCapacity] = useState("");
   const [profId, setProfId] = useState("");
   const [tiles, setTiles] = useState<TileDto[]>([]);
+  /** Raised by the schedule builder when a tile breaks a rule the API refuses. */
+  const [scheduleBlocked, setScheduleBlocked] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [formError, setFormError] = useState("");
-  const { data: timeSlots } = useTimeSlots();
   const { data: classrooms } = useClassrooms();
 
   // Filters
@@ -461,11 +462,20 @@ export default function GroupsPage() {
                   }))}
                   initialTilesLoaded={editingGroup ? !!editingEntries : false}
                   onChange={setTiles}
+                  onValidityChange={setScheduleBlocked}
                 />
               </div>
               <div className="flex gap-3 justify-end pt-2">
                 <button type="button" className="btn btn-secondary" onClick={() => { setCreateOpen(false); resetForm(); }}>{t("fieldsHierarchy.cancel")}</button>
-                <FormButton type="submit" isLoading={createMutation.isPending || updateMutation.isPending}>{editingGroup ? t("fieldsHierarchy.save", "Save") : t("fieldsHierarchy.create")}</FormButton>
+                {/* Blocked means the API would refuse this timetable (out of
+                    opening hours, or a taken room), so the save is held back
+                    rather than sent to come back a 409. */}
+                <FormButton
+                  type="submit"
+                  isLoading={createMutation.isPending || updateMutation.isPending}
+                  disabled={scheduleBlocked}
+                  title={scheduleBlocked ? t("scheduling.fixBlockingFirst", "Corrigez les créneaux signalés pour enregistrer.") : undefined}
+                >{editingGroup ? t("fieldsHierarchy.save", "Save") : t("fieldsHierarchy.create")}</FormButton>
               </div>
             </form>
           </div>

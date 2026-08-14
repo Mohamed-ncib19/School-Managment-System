@@ -1,14 +1,47 @@
-import { IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from "class-validator";
+import { IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+
+/** `HH:MM`, 24-hour. */
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const TIME_MESSAGE = "Time must be HH:MM (24-hour)";
 
 export class CreateScheduleEntryDto {
   @ApiProperty({ format: "uuid" })
   @IsUUID("4")
   group_id!: string;
 
-  @ApiProperty({ format: "uuid" })
+  /**
+   * The window, given directly.
+   *
+   * A session used to be created by naming a `time_slot_id` from a catalogue an
+   * administrator had to curate first, which meant a session could only be put
+   * at a time someone had already declared. The times are now given as
+   * themselves and the stored slot is resolved (or created) from them.
+   *
+   * `time_slot_id` is still accepted so existing callers keep working; when
+   * both are supplied the explicit times win.
+   */
+  @ApiPropertyOptional({ minimum: 0, maximum: 6 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  day_of_week?: number;
+
+  @ApiPropertyOptional({ example: "09:00" })
+  @IsOptional()
+  @Matches(TIME_PATTERN, { message: TIME_MESSAGE })
+  start_time?: string;
+
+  @ApiPropertyOptional({ example: "10:30" })
+  @IsOptional()
+  @Matches(TIME_PATTERN, { message: TIME_MESSAGE })
+  end_time?: string;
+
+  @ApiPropertyOptional({ format: "uuid" })
+  @IsOptional()
   @IsUUID("4")
-  time_slot_id!: string;
+  time_slot_id?: string;
 
   @ApiPropertyOptional({ format: "uuid", nullable: true })
   @IsOptional()

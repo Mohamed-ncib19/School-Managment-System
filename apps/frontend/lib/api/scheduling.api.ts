@@ -15,6 +15,10 @@ export type CreateEntryExceptionPayload = {
   exception_type: "cancelled" | "moved" | "substitute_prof" | "room_change";
   occurrence_date: string;
   new_date?: string;
+  /** The new window, typed. The weekday comes from `new_date`. */
+  new_start_time?: string;
+  new_end_time?: string;
+  /** Legacy alternative to the two times above. */
   new_time_slot_id?: string;
   new_classroom_id?: string;
   new_prof_id?: string;
@@ -23,6 +27,11 @@ export type CreateEntryExceptionPayload = {
 
 export type SplitEntryPayload = {
   from_date: string;
+  /** The new window, typed. Omit both to keep the rule's current one. */
+  day_of_week?: number;
+  start_time?: string;
+  end_time?: string;
+  /** Legacy alternative to the two times above. */
   time_slot_id?: string;
   classroom_id?: string | null;
   prof_id?: string;
@@ -39,6 +48,17 @@ export type WorkingHourWindow = {
   is_active?: boolean;
 };
 
+/** One room's answer to "is it free?" for a concrete date and window. */
+export type ClassroomAvailability = {
+  id: string;
+  name: string;
+  room_number: string | null;
+  capacity: number | null;
+  color: string | null;
+  available: boolean;
+  conflicts: Array<{ scheduleEntryId: string; groupName: string; start_time: string; end_time: string }>;
+};
+
 export const schedulingApi = {
   classrooms: {
     list: (active?: boolean) =>
@@ -47,9 +67,18 @@ export const schedulingApi = {
     get: (id: string) => ApiClient.get<Classroom>(`/scheduling/classrooms/${id}`),
     create: (data: { name: string; floor?: string; room_number?: string; capacity?: number; equipment?: string[]; color?: string }) =>
       ApiClient.post<Classroom>("/scheduling/classrooms", data),
-    update: (id: string, data: Partial<{ name: string; floor: string; room_number: string; capacity: number; equipment: string[]; is_active: boolean; color: string }>) =>
+    /** `color: null` clears it; omitting the key leaves it unchanged. */
+    update: (id: string, data: Partial<{ name: string; floor: string; room_number: string; capacity: number; equipment: string[]; color: string | null }>) =>
       ApiClient.put<Classroom>(`/scheduling/classrooms/${id}`, data),
+    /** Permanent. The API refuses with 409 when sessions still reference the room. */
     remove: (id: string) => ApiClient.del(`/scheduling/classrooms/${id}`),
+    availability: (params: {
+      date: string;
+      start_time: string;
+      end_time: string;
+      excludeGroupId?: string;
+      excludeEntryId?: string;
+    }) => ApiClient.get<ClassroomAvailability[]>("/scheduling/classrooms/availability", { params }),
   },
 
   timeSlots: {

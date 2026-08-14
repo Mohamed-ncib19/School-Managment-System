@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength, Matches } from "class-validator";
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Matches, Min } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { ScheduleEntryExceptionType } from "../types";
 
@@ -19,7 +19,26 @@ export class CreateEntryExceptionDto {
   @IsString()
   new_date?: string;
 
-  @ApiPropertyOptional({ format: "uuid", description: "Required for `moved`" })
+  /**
+   * The new window, given directly.
+   *
+   * A move used to require picking a `new_time_slot_id` from the declared
+   * slots, so a session could only be moved to a time somebody had already
+   * catalogued. The times are given as themselves and the stored slot is
+   * resolved from them; the weekday comes from the target date, so it is not
+   * asked for. `new_time_slot_id` still works for existing callers.
+   */
+  @ApiPropertyOptional({ example: "09:00" })
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "new_start_time must be HH:MM" })
+  new_start_time?: string;
+
+  @ApiPropertyOptional({ example: "10:30" })
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "new_end_time must be HH:MM" })
+  new_end_time?: string;
+
+  @ApiPropertyOptional({ format: "uuid", description: "Legacy alternative to new_start_time/new_end_time" })
   @IsOptional()
   @IsUUID("4")
   new_time_slot_id?: string;
@@ -64,7 +83,25 @@ export class SplitScheduleEntryDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: "from_date must be YYYY-MM-DD" })
   from_date!: string;
 
-  @ApiPropertyOptional({ format: "uuid" })
+  /** The new window, given directly. See `CreateEntryExceptionDto`. */
+  @ApiPropertyOptional({ minimum: 0, maximum: 6 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  day_of_week?: number;
+
+  @ApiPropertyOptional({ example: "09:00" })
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "start_time must be HH:MM" })
+  start_time?: string;
+
+  @ApiPropertyOptional({ example: "10:30" })
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "end_time must be HH:MM" })
+  end_time?: string;
+
+  @ApiPropertyOptional({ format: "uuid", description: "Legacy alternative to start_time/end_time" })
   @IsOptional()
   @IsUUID("4")
   time_slot_id?: string;

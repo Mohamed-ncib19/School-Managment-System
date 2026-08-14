@@ -25,6 +25,42 @@ export class TimeSlotService {
     return row;
   }
 
+  /**
+   * The stored row for a (day, start, end) window, creating it if new.
+   *
+   * `time_slots` is no longer a catalogue an administrator curates — sessions
+   * are given their times directly and the row is just the normalised tuple
+   * those times resolve to, shared by every session that meets then. Both
+   * creation paths (the weekly builder's sync and the single-entry create) go
+   * through here so a window means the same row whichever screen made it.
+   *
+   * Only ever called from a save. The live conflict preview deliberately does
+   * not resolve through this: previewing a timetable must not write rows for
+   * every window an operator tries and discards.
+   */
+  async findOrCreate(dayOfWeek: number, startTime: string, endTime: string): Promise<{ id: string; label: string }> {
+    const start = startTime.slice(0, 5);
+    const end = endTime.slice(0, 5);
+
+    const existing = await this.db.client.query.timeSlots.findFirst({
+      where: and(
+        eq(timeSlots.day_of_week, dayOfWeek),
+        eq(timeSlots.start_time, start),
+        eq(timeSlots.end_time, end),
+      ),
+      columns: { id: true, label: true },
+    });
+    if (existing) return existing;
+
+    const dayNames = ["Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"];
+    const label = `${dayNames[dayOfWeek] ?? "Day"} ${start}–${end}`;
+    const [slot] = await this.db.client
+      .insert(timeSlots)
+      .values({ label, day_of_week: dayOfWeek, start_time: start, end_time: end, sort_order: dayOfWeek * 100 })
+      .returning({ id: timeSlots.id, label: timeSlots.label });
+    return slot;
+  }
+
   async create(dto: CreateTimeSlotDto, userId?: string) {
     await this.assertUnique(dto.day_of_week, dto.start_time, dto.end_time);
     const [slot] = await this.db.client.insert(timeSlots).values({

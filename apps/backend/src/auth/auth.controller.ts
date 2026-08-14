@@ -15,6 +15,7 @@ import { Response } from "express";
 import { Request as ExpressRequest } from "express";
 import { AuthService } from "./auth.service";
 import { LoginDto } from "./dto/login.dto";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { SESSION_COOKIE, REFRESH_COOKIE } from "./jwt.strategy";
 import { JWT_EXPIRES_IN, JWT_REFRESH_EXPIRES_IN } from "./constants";
@@ -69,12 +70,15 @@ export class AuthController {
   @Post("login")
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto, @Request() req: ExpressRequest, @Res({ passthrough: true }) res: Response) {
-    const forwarded = req.headers["x-forwarded-for"];
-    const ipAddress =
-      (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(",")[0]?.trim()) ||
-      req.ip ||
-      req.socket?.remoteAddress ||
-      "unknown";
+    // The throttle key must be something the caller cannot choose. It used to
+    // prefer `x-forwarded-for`, a request header, so varying it per attempt
+    // defeated the limiter entirely — the only brute-force defence this app
+    // has. The socket address is the one value a client cannot forge.
+    //
+    // Express resolves `req.ip` from `x-forwarded-for` only when `trust proxy`
+    // is enabled, which it is not here; behind a real reverse proxy, set that
+    // setting rather than reading the header by hand.
+    const ipAddress = req.ip || req.socket?.remoteAddress || "unknown";
     const userAgent = req.get("user-agent") || "unknown";
 
     const now = Date.now();
@@ -154,7 +158,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async changePassword(
     @Req() req: any,
-    @Body() dto: { current_password: string; new_password: string },
+    @Body() dto: ChangePasswordDto,
   ) {
     return this.authService.changePassword(req.user.id, dto.current_password, dto.new_password);
   }

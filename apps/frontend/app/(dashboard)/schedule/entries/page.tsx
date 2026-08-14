@@ -6,12 +6,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Search, ChevronDown, ChevronUp, CalendarDays, AlertTriangle, ShieldCheck } from "lucide-react";
 import { schedulingApi } from "@/lib/api/scheduling.api";
 import { useProfessors, useGroups } from "@/hooks/use-queries";
-import { useClassrooms, useTimeSlots, useConflicts } from "@/hooks/use-scheduling";
+import { useClassrooms, useConflicts, useScheduleEntries, useWorkingHours, ACTIVE_ENTRIES } from "@/hooks/use-scheduling";
 import type { ScheduleEntry, Professor, Group, Classroom, TimeSlot, Conflict } from "@/types";
-import { TableSkeleton, PageLoader } from "@/components/shared/skeletons";
+import { PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import { useTranslation } from "@/lib/i18n/context";
+import { checkWorkingHours, describeWindows, isValidRange, nextDateForSchoolDay } from "@/lib/utils/scheduling";
+import { ClassroomPicker } from "@/components/scheduling/classroom-picker";
 
 const DAY_NAMES = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
 
@@ -114,32 +116,73 @@ export default function ScheduleEntriesPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
 
-  const { data: entries, isLoading } = useQuery({
-    queryKey: ["scheduling", "entries"],
-    queryFn: () => schedulingApi.entries.list({ active: true }),
-  });
+  // Through the shared hook, so this and the groups page hit one cache entry
+  // rather than fetching the same list under two different keys.
+  const { data: entries, isLoading } = useScheduleEntries(ACTIVE_ENTRIES);
 
   const { data: professors } = useProfessors();
   const { data: groups } = useGroups();
   const { data: classrooms } = useClassrooms();
-  const { data: timeSlots } = useTimeSlots();
+
 
   const [search, setSearch] = useState("");
   const [filterGroupId, setFilterGroupId] = useState("");
   const [filterProfId, setFilterProfId] = useState("");
   const [filterClassroomId, setFilterClassroomId] = useState("");
-  const [filterTimeSlotId, setFilterTimeSlotId] = useState("");
+  const [filterDay, setFilterDay] = useState("");
   const [showFilters, setShowFilters] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<ScheduleEntry | null>(null);
   const [formGroupId, setFormGroupId] = useState("");
-  const [formTimeSlotId, setFormTimeSlotId] = useState("");
+  const [formDayOfWeek, setFormDayOfWeek] = useState(0);
+  const [formStartTime, setFormStartTime] = useState("09:00");
+  const [formEndTime, setFormEndTime] = useState("10:30");
   const [formClassroomId, setFormClassroomId] = useState("");
   const [formProfId, setFormProfId] = useState("");
   const [effectiveFrom, setEffectiveFrom] = useState("");
   const [effectiveUntil, setEffectiveUntil] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const { data: workingHours } = useWorkingHours();
+
+  const rangeValid = isValidRange(formStartTime, formEndTime);
+  const hoursCheck = useMemo(
+    () => checkWorkingHours(workingHours, formDayOfWeek, formStartTime, formEndTime),
+    [workingHours, formDayOfWeek, formStartTime, formEndTime],
+  );
+  const hoursStatus = rangeValid ? hoursCheck.status : "unconfigured";
+
+  /**
+   * The concrete date the window lands on, for the availability lookup.
+   *
+   * Anchored on `effective_from` when one is set, because which rules are in
+   * force depends on the date, and a rule starting next term should be checked
+   * against next term.
+   */
+  const availabilityDate = useMemo(
+    () => (effectiveFrom ? nextDateForSchoolDay(formDayOfWeek, new Date(effectiveFrom + "T00:00:00")) : nextDateForSchoolDay(formDayOfWeek)),
+    [effectiveFrom, formDayOfWeek],
+  );
+
+  // Reported by `ClassroomPicker`, which owns the lookup. Running a second
+  // query here to answer the same question meant two requests whose keys did
+  // not quite match, so neither could serve the other from cache.
+  const [roomState, setRoomState] = useState({ selectedBusy: false, noneFree: false });
+  const selectedRoomBusy = !!formClassroomId && roomState.selectedBusy;
+
+  /**
+   * The API refuses these, so the form does not offer to send them.
+   *
+   * On edit only the room is in play: the window is fixed and is not
+   * resubmitted, so judging the form on it would make a session that predates
+   * the opening-hours rule permanently uneditable — including for the one
+   * change that could fix it.
+   */
+  const submitBlocked = editingEntry
+    ? selectedRoomBusy
+    : !rangeValid || hoursStatus === "partial" || hoursStatus === "outside" || selectedRoomBusy;
 
   const filteredEntries = useMemo(() => {
     if (!entries) return [];
@@ -152,19 +195,22 @@ export default function ScheduleEntriesPage() {
       if (filterGroupId && e.group_id !== filterGroupId) return false;
       if (filterProfId && e.prof_id !== filterProfId) return false;
       if (filterClassroomId && e.classroom_id !== filterClassroomId) return false;
-      if (filterTimeSlotId && e.time_slot_id !== filterTimeSlotId) return false;
+      if (filterDay !== "" && e.time_slot?.day_of_week !== Number(filterDay)) return false;
       return true;
     });
-  }, [entries, search, filterGroupId, filterProfId, filterClassroomId, filterTimeSlotId]);
+  }, [entries, search, filterGroupId, filterProfId, filterClassroomId, filterDay]);
 
   const resetForm = () => {
     setFormGroupId("");
-    setFormTimeSlotId("");
+    setFormDayOfWeek(0);
+    setFormStartTime("09:00");
+    setFormEndTime("10:30");
     setFormClassroomId("");
     setFormProfId("");
     setEffectiveFrom("");
     setEffectiveUntil("");
     setEditingEntry(null);
+    setFormError(null);
   };
 
   const createMutation = useMutation({
@@ -174,6 +220,14 @@ export default function ScheduleEntriesPage() {
       setCreateOpen(false);
       resetForm();
     },
+    // The API refuses out-of-hours windows and taken rooms; the reason names
+    // what to change, so it is shown in the form rather than swallowed.
+    onError: (err: any) =>
+      setFormError(
+        err?.response?.data?.error?.message ||
+          err?.response?.data?.message ||
+          t("scheduling.saveFailed", "Enregistrement impossible"),
+      ),
   });
 
   const updateMutation = useMutation({
@@ -183,6 +237,14 @@ export default function ScheduleEntriesPage() {
       setCreateOpen(false);
       resetForm();
     },
+    // The API refuses out-of-hours windows and taken rooms; the reason names
+    // what to change, so it is shown in the form rather than swallowed.
+    onError: (err: any) =>
+      setFormError(
+        err?.response?.data?.error?.message ||
+          err?.response?.data?.message ||
+          t("scheduling.saveFailed", "Enregistrement impossible"),
+      ),
   });
 
   const deleteMutation = useMutation({
@@ -196,11 +258,14 @@ export default function ScheduleEntriesPage() {
   const openEdit = (entry: ScheduleEntry) => {
     setEditingEntry(entry);
     setFormGroupId(entry.group_id);
-    setFormTimeSlotId(entry.time_slot_id);
+    setFormDayOfWeek(entry.time_slot?.day_of_week ?? 0);
+    setFormStartTime(String(entry.time_slot?.start_time ?? "09:00").slice(0, 5));
+    setFormEndTime(String(entry.time_slot?.end_time ?? "10:30").slice(0, 5));
     setFormClassroomId(entry.classroom_id ?? "");
     setFormProfId(entry.prof_id);
     setEffectiveFrom(entry.effective_from.split("T")[0]);
     setEffectiveUntil(entry.effective_until ? entry.effective_until.split("T")[0] : "");
+    setFormError(null);
     setCreateOpen(true);
   };
 
@@ -212,17 +277,26 @@ export default function ScheduleEntriesPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formGroupId || !formTimeSlotId || !formProfId || !effectiveFrom) return;
+    if (!formGroupId || !formProfId || !effectiveFrom || submitBlocked) return;
+    setFormError(null);
     const data = {
       group_id: formGroupId,
-      time_slot_id: formTimeSlotId,
+      // Times, not a slot id: the API resolves them to a stored slot itself.
+      day_of_week: formDayOfWeek,
+      start_time: formStartTime,
+      end_time: formEndTime,
       classroom_id: formClassroomId || null,
       prof_id: formProfId,
       effective_from: effectiveFrom,
       effective_until: effectiveUntil || null,
     };
     if (editingEntry) {
-      updateMutation.mutate({ id: editingEntry.id, data });
+      // Update only accepts the fields it owns; the window is changed by
+      // re-creating through the builder, as before.
+      updateMutation.mutate({
+        id: editingEntry.id,
+        data: { classroom_id: data.classroom_id, effective_until: data.effective_until },
+      });
     } else {
       createMutation.mutate(data);
     }
@@ -288,12 +362,15 @@ export default function ScheduleEntriesPage() {
                   {classrooms?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+              {/* Filtering by weekday, not by a declared slot: sessions are no
+                  longer drawn from a catalogue, so "which day" is the question
+                  that still has a fixed set of answers. */}
               <div>
-                <label className="block text-xs font-medium mb-1">{t("nav.timeSlots", "Time slot")}</label>
-                <select value={filterTimeSlotId} onChange={(e) => setFilterTimeSlotId(e.target.value)} className="input text-xs">
-                  <option value="">{t("common.all", "All")}</option>
-                  {timeSlots?.map((ts) => (
-                    <option key={ts.id} value={ts.id}>{DAY_NAMES[ts.day_of_week]} {ts.start_time}-{ts.end_time}</option>
+                <label className="block text-xs font-medium mb-1">{t("scheduling.day", "Jour")}</label>
+                <select value={filterDay} onChange={(e) => setFilterDay(e.target.value)} className="input text-xs">
+                  <option value="">{t("common.all", "Tous")}</option>
+                  {DAY_NAMES.map((label, day) => (
+                    <option key={day} value={String(day)}>{label}</option>
                   ))}
                 </select>
               </div>
@@ -313,7 +390,7 @@ export default function ScheduleEntriesPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.group", "Group")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.professor", "Professor")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.classrooms", "Classroom")}</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.timeSlots", "Time slot")}</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.schedule", "Horaire")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.from", "From")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.until", "Until")}</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("common.actions", "Actions")}</th>
@@ -373,21 +450,103 @@ export default function ScheduleEntriesPage() {
                   {professors?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
                 </select>
               </div>
+              {/*
+                The day and the two times, typed directly. This was a dropdown
+                of `time_slots` rows, so a session could only be placed at a
+                window someone had declared in a separate admin screen first.
+              */}
+              {/*
+                The window is fixed once a rule exists: `PUT /entries/:id` only
+                owns the room and the end date, and moving a session in time is
+                the split/"this and following" operation the calendar runs. The
+                fields are shown disabled rather than hidden so the session is
+                still identifiable, with a line saying where to change them —
+                editable-looking inputs that silently discard their value would
+                be worse than either.
+              */}
               <div>
-                <label className="block text-sm font-medium mb-1">{t("nav.timeSlots", "Time slot")} *</label>
-                <select value={formTimeSlotId} onChange={(e) => setFormTimeSlotId(e.target.value)} className="input" required>
-                  <option value="">{t("scheduling.selectTimeSlot", "Select time slot")}</option>
-                  {timeSlots?.map((ts) => (
-                    <option key={ts.id} value={ts.id}>{DAY_NAMES[ts.day_of_week]} {ts.start_time}-{ts.end_time}</option>
+                <label htmlFor="entry-day" className="block text-sm font-medium mb-1">{t("scheduling.day", "Jour")} *</label>
+                <select
+                  id="entry-day"
+                  value={formDayOfWeek}
+                  onChange={(e) => setFormDayOfWeek(Number(e.target.value))}
+                  className="input disabled:opacity-60"
+                  required
+                  disabled={!!editingEntry}
+                >
+                  {DAY_NAMES.map((label, day) => (
+                    <option key={day} value={day}>{label}</option>
                   ))}
                 </select>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="entry-start" className="block text-sm font-medium mb-1">{t("scheduling.startTime", "Début")} *</label>
+                  <input
+                    id="entry-start"
+                    type="time"
+                    value={formStartTime}
+                    onChange={(e) => setFormStartTime(e.target.value)}
+                    className={`input w-full disabled:opacity-60 ${hoursStatus === "partial" || hoursStatus === "outside" ? "border-danger/50" : ""}`}
+                    required
+                    disabled={!!editingEntry}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="entry-end" className="block text-sm font-medium mb-1">{t("scheduling.endTime", "Fin")} *</label>
+                  <input
+                    id="entry-end"
+                    type="time"
+                    value={formEndTime}
+                    onChange={(e) => setFormEndTime(e.target.value)}
+                    className={`input w-full disabled:opacity-60 ${!rangeValid && formEndTime ? "border-danger/50" : hoursStatus === "partial" || hoursStatus === "outside" ? "border-danger/50" : ""}`}
+                    required
+                    disabled={!!editingEntry}
+                  />
+                </div>
+              </div>
+
+              {editingEntry && (
+                <p className="text-xs text-text-secondary">
+                  {t(
+                    "scheduling.windowFixedOnEdit",
+                    "L'horaire d'une séance existante se change depuis le calendrier (« Décaler la série »).",
+                  )}
+                </p>
+              )}
+
+              {formEndTime && formStartTime && !rangeValid && (
+                <p role="alert" className="text-xs text-danger">
+                  {t("scheduling.endBeforeStart", "La fin doit être après le début.")}
+                </p>
+              )}
+
+              {!editingEntry && rangeValid && (hoursStatus === "partial" || hoursStatus === "outside") && (
+                <p role="alert" className="text-xs text-danger">
+                  {hoursStatus === "partial"
+                    ? t("scheduling.partiallyOutsideHours", "Ce créneau dépasse les horaires d'ouverture. Ramenez-le à l'intérieur de :")
+                    : t("scheduling.outsideHours", "Ce créneau est en dehors des horaires d'ouverture. Horaires de ce jour :")}{" "}
+                  <span className="font-semibold tabular-nums">{describeWindows(hoursCheck.windows)}</span>
+                </p>
+              )}
+
               <div>
-                <label className="block text-sm font-medium mb-1">{t("nav.classrooms", "Classroom")}</label>
-                <select value={formClassroomId} onChange={(e) => setFormClassroomId(e.target.value)} className="input">
-                  <option value="">{t("scheduling.noClassroom", "No classroom")}</option>
-                  {classrooms?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <label id="entry-room-label" className="block text-sm font-medium mb-1">{t("nav.classrooms", "Salle")}</label>
+                {/* The shared picker, so this screen, the calendar's move and
+                    room dialogs all report availability the same way. */}
+                <ClassroomPicker
+                  labelId="entry-room-label"
+                  value={formClassroomId}
+                  onChange={setFormClassroomId}
+                  date={availabilityDate}
+                  startTime={formStartTime}
+                  endTime={formEndTime}
+                  excludeGroupId={formGroupId || undefined}
+                  excludeEntryId={editingEntry?.id}
+                  classrooms={classrooms ?? []}
+                  allowEmpty
+                  onAvailabilityChange={setRoomState}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">{t("scheduling.from", "From")} *</label>
@@ -397,9 +556,18 @@ export default function ScheduleEntriesPage() {
                 <label className="block text-sm font-medium mb-1">{t("scheduling.until", "Until")}</label>
                 <input type="date" value={effectiveUntil} onChange={(e) => setEffectiveUntil(e.target.value)} className="input" />
               </div>
+              {formError && (
+                <p role="alert" className="text-xs text-danger">{formError}</p>
+              )}
+
               <div className="flex gap-3 justify-end pt-2">
                 <button type="button" className="btn btn-secondary" onClick={() => { setCreateOpen(false); resetForm(); }}>{t("common.cancel", "Cancel")}</button>
-                <FormButton type="submit" isLoading={createMutation.isPending || updateMutation.isPending}>{editingEntry ? t("common.save", "Save") : t("common.create", "Create")}</FormButton>
+                <FormButton
+                  type="submit"
+                  isLoading={createMutation.isPending || updateMutation.isPending}
+                  disabled={submitBlocked}
+                  title={submitBlocked ? t("scheduling.fixBlockingFirst", "Corrigez les créneaux signalés pour enregistrer.") : undefined}
+                >{editingEntry ? t("common.save", "Save") : t("common.create", "Create")}</FormButton>
               </div>
             </form>
           </div>

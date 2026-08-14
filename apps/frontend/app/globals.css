@@ -391,3 +391,168 @@
   --color-soft-primary: rgba(248, 113, 113, 0.18);
   --shadow-glow-primary: 0 0 0 1px rgba(248, 113, 113, 0.25), 0 4px 16px rgba(248, 113, 113, 0.15);
 }
+
+/* ---------------------------------------------------------------------------
+ * FullCalendar, themed to the design system.
+ *
+ * The library ships its own greys, borders and toolbar typography, which read
+ * as a third-party widget dropped into the page rather than part of it. These
+ * rules map its variables onto the project's tokens and quieten the grid so the
+ * sessions are what the eye lands on.
+ *
+ * Everything is scoped under `.calendar-shell` so nothing here can affect
+ * another page, and so the calendar can be styled without `!important`.
+ * ------------------------------------------------------------------------- */
+.calendar-shell {
+  --fc-border-color: var(--color-border);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: transparent;
+  --fc-today-bg-color: rgb(var(--color-primary-50) / 0.55);
+  --fc-now-indicator-color: #EF4444;
+  /* Outside opening hours: visible and navigable, just clearly not the day. */
+  --fc-non-business-color: rgb(0 0 0 / 0.035);
+}
+
+.dark .calendar-shell {
+  --fc-today-bg-color: rgb(var(--color-primary) / 0.14);
+  --fc-non-business-color: rgb(255 255 255 / 0.035);
+}
+
+/* The custom header owns navigation; FullCalendar's own toolbar is hidden. */
+.calendar-shell .fc-header-toolbar {
+  display: none;
+}
+
+/* Column headers: quiet, uppercase, aligned with the table headers elsewhere. */
+.calendar-shell .fc-col-header-cell {
+  background: var(--color-background);
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.calendar-shell .fc-col-header-cell.fc-day-today {
+  color: rgb(var(--color-primary));
+}
+
+/* Time gutter: tabular so the labels form a straight column, and small enough
+   not to compete with the sessions beside them. */
+.calendar-shell .fc-timegrid-slot-label,
+.calendar-shell .fc-timegrid-axis {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  border-color: transparent;
+}
+
+/* Half-hour lines dashed and full-hour solid: the grid stays readable at a
+   glance without drawing fourteen equally heavy lines per hour. */
+.calendar-shell .fc-timegrid-slot {
+  height: 2.75rem;
+}
+
+.calendar-shell .fc-timegrid-slot-minor {
+  border-top-style: dotted;
+  border-top-color: rgb(0 0 0 / 0.06);
+}
+
+.dark .calendar-shell .fc-timegrid-slot-minor {
+  border-top-color: rgb(255 255 255 / 0.06);
+}
+
+/* Day numbers in the month grid. */
+.calendar-shell .fc-daygrid-day-number {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  padding: 6px 8px;
+}
+
+.calendar-shell .fc-day-today .fc-daygrid-day-number {
+  font-weight: 700;
+  color: rgb(var(--color-primary));
+}
+
+/* Events: the tile provides its own surface, so FullCalendar's chrome is
+   removed rather than layered under it. */
+.calendar-shell .fc-event,
+.calendar-shell .fc-event:hover {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.calendar-shell .fc-daygrid-event {
+  margin-top: 2px;
+}
+
+.calendar-shell .fc-timegrid-event {
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.calendar-shell .fc-timegrid-event-harness > .fc-timegrid-event {
+  inset-inline: 1px;
+}
+
+/* Keyboard focus has to survive the transparent event background. */
+.calendar-shell .fc-event:focus-visible {
+  outline: 2px solid rgb(var(--color-primary));
+  outline-offset: 1px;
+  border-radius: 8px;
+}
+
+/* "+2 more" in a packed month cell. */
+.calendar-shell .fc-daygrid-more-link {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgb(var(--color-primary));
+  padding: 0 4px;
+}
+
+/* The popover the more-link opens. */
+.calendar-shell .fc-popover {
+  border-radius: 12px;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  z-index: 30;
+}
+
+.calendar-shell .fc-popover-header {
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 10px;
+}
+
+/* The outer frame is the card; the table's own outer border would double it. */
+.calendar-shell .fc-scrollgrid {
+  border-left: 0;
+  border-top: 0;
+}
+
+.calendar-shell .fc-scrollgrid td:last-of-type,
+.calendar-shell .fc-scrollgrid th:last-of-type {
+  border-right: 0;
+}
+
+/* Tighter rows on small screens: the same grid at phone width is unusable. */
+@media (max-width: 640px) {
+  .calendar-shell .fc-timegrid-slot {
+    height: 2.25rem;
+  }
+  .calendar-shell .fc-col-header-cell {
+    font-size: 10px;
+    padding: 6px 2px;
+  }
+  .calendar-shell .fc-timegrid-slot-label,
+  .calendar-shell .fc-timegrid-axis {
+    font-size: 10px;
+  }
+}

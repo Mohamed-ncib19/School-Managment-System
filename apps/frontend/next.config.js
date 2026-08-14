@@ -7,8 +7,10 @@ const nextConfig = {
   images: { remotePatterns: [] },
   // Shrink the module graph per route: the heavy client libs are imported
   // wholesale today, which stretches both dev compiles and first-visit TTI.
+  // Only packages the app actually imports — the Radix entries listed here
+  // named dependencies no source file ever pulled in.
   experimental: {
-    optimizePackageImports: ["recharts", "framer-motion", "lucide-react", "@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-toast"],
+    optimizePackageImports: ["recharts", "framer-motion", "lucide-react"],
   },
   async rewrites() {
     return [

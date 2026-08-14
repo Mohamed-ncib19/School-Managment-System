@@ -1,8 +1,7 @@
 # School Management System — Intern Management System
 
 Admin portal for managing the academic hierarchy (Field → Professor → Level → Group → Student)
-and monthly cash tuition payments. Built to the spec in
-[`school-management-architecture.md`](./school-management-architecture.md), which is the source of truth.
+and monthly cash tuition payments.
 
 ## Stack
 
@@ -11,8 +10,12 @@ and monthly cash tuition payments. Built to the spec in
 | Frontend | Next.js 14 (App Router), TanStack Query, Tailwind, shadcn/ui, Recharts, React Hook Form + Zod |
 | Backend | NestJS 10, Drizzle ORM, class-validator DTOs |
 | Database | PostgreSQL 16 |
-| Jobs | Redis 7 (BullMQ) / `@nestjs/schedule` |
 | Auth | JWT access + refresh |
+
+There is no job runner, no message broker and nothing running on a timer:
+every operation happens inside the request that asked for it. Payment status is
+a stored column that the `POST /api/financial/payments/refresh-statuses`
+endpoint rolls forward on demand — the app never advances it in the background.
 
 ## Repository layout
 
@@ -21,13 +24,13 @@ domain types (`packages/shared`) and are always released together — one `pnpm 
 one lockfile, and type changes stay in sync by construction.
 
 ```
-apps/backend      NestJS API — one module per entity (§6)
-apps/frontend     Next.js App Router, nested routes mirroring the hierarchy (§10)
+apps/backend      NestJS API — one module per entity
+apps/frontend     Next.js App Router, nested routes mirroring the hierarchy
 packages/shared   Enums shared by both sides (UserRole, PaymentStatus, …)
-tools/windows/    .bat entry points (start / stop / update) + PowerShell helpers
-tools/macos/      .sh entry points (start / stop / update) for macOS & Linux
+tools/windows/    start.bat + stop.bat entry points, PowerShell helpers in scripts/
+tools/macos/      start.sh entry point for macOS & Linux, helpers in scripts/
 backups/          Timestamped database dumps (git-ignored)
-docker-compose.yml  Postgres 16 + Redis 7 — alternative to a native install
+docker-compose.yml  PostgreSQL 16 — alternative to a native install
 ```
 
 ## Daily use
@@ -70,9 +73,10 @@ That single file is the only one you ever click: **stopping**, **updating** and
 **backing up** all happen inside the logged-in web app. The navbar's power
 button shuts the system down (API + web portal, and on Windows the local
 database too); the "new update" dialog finds and applies newer versions; and
-the Database Backup page manages `pg_dump` backups. The `stop` and `update`
-entry points were removed — every school gets one file to run, and the rest
-lives in the app where settings and data belong.
+the Database Backup page manages `pg_dump` backups. The `update` entry point
+was removed — every school gets one file to run, and the rest lives in the app
+where settings and data belong. `tools\windows\stop.bat` is kept as a way out
+when the portal itself will not load; nothing in normal use needs it.
 
 **In-app update notifications** — while logged in, the app quietly compares the
 installed git commit against the release repository (every 30 minutes). When a new
@@ -127,14 +131,52 @@ folder.
 
 ## Manual setup (for development)
 
+Requires Node.js 20.9 or newer (see `engines` in the root `package.json`) and a
+reachable PostgreSQL 16. On Windows, `tools\windows\start.bat` does all of this
+for you — including installing Node and creating the database — so this section
+is for non-Windows machines and for working on the project itself.
+
 ```bash
 pnpm install
-cp apps/backend/.env.example apps/backend/.env
+cp apps/backend/.env.example apps/backend/.env      # then fill in DATABASE_URL and the secrets
 cp apps/frontend/.env.example apps/frontend/.env.local
-pnpm db:migrate     # apply migrations to a fresh database
-pnpm db:seed        # create the super_admin user
+pnpm db:push        # apply the schema to the database
+pnpm db:seed        # create the super_admin user and the settings rows
 pnpm dev            # backend :3001, frontend :3000
 ```
+
+`pg_trgm` backs every "contains" search in the app and creating an extension
+needs superuser, which the application role deliberately is not. Once, as the
+superuser:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+`pnpm db:seed` is the only seed. It creates the single `super_admin` operator
+and the settings rows, and is idempotent — the launcher runs it on every start.
+The sample-data seeds that used to sit beside it (a demo school, a generated
+hierarchy, a year of invoices, a weekly timetable) were removed: they existed to
+exercise the screens during development, and a school's real data comes from the
+Excel import.
+
+### Checking a change
+
+```bash
+pnpm test                # unit tests (jest) — no database, no running server
+pnpm bench               # endpoint latency and response size, against the current database
+pnpm verify:scheduling   # asserts the scheduling API still returns every field the UI reads
+```
+
+`pnpm test` stands alone. `bench` and `verify:scheduling` need the backend
+running (`pnpm dev`) and read the admin credentials from `apps/backend/.env`.
+
+The unit tests cover the logic that is wrong silently rather than loudly — the
+Saturday-based weekday rotations and the closed-form occurrence walk, where an
+error produces plausible output on the wrong day rather than an exception. Jest
+was configured in `apps/backend/package.json` long before there was a `test`
+script to run it, so the one spec that existed could not be executed by any
+documented command.
 
 ## Backups
 
@@ -183,9 +225,9 @@ One row per student, with the hierarchy given by name:
 ## Conventions
 
 - **Response envelope** — every endpoint returns `{ data, meta, error }`, applied globally by
-  `TransformInterceptor`; errors are normalised by `AllExceptionsFilter` (§12).
+  `TransformInterceptor`; errors are normalised by `AllExceptionsFilter`.
 - **Design tokens** — colours, spacing, radii, shadows and type scale are defined once in
-  `apps/frontend/tailwind.config.ts` (§9). Components must not hard-code hex values or
+  `apps/frontend/tailwind.config.ts`. Components must not hard-code hex values or
   arbitrary pixel spacing.
 - **Naming** — kebab-case files, `PascalCase` components, `camelCase` values, plural table names.
 
@@ -198,7 +240,7 @@ Confirmed with the client; recorded here so they don't get silently re-litigated
 | Billing day | **Enrollment anniversary.** `due_date` derives from `students.enrollment_date`; short months clamp to the last valid day (a 31st enrollment bills the 30th/28th). |
 | Partial payments | **Not supported in Phase 1.** Strictly paid / not-paid; `paid_amount` always equals `amount_due`. The column exists so a `partially_paid` state is a later migration, not a rewrite. |
 | Reminders | **Dashboard only.** No SMS/email/WhatsApp integration in Phase 1. |
-| Roles | **`super_admin` only.** The `users.role` column and `RolesGuard` exist so `field_manager` / `prof` / `accountant` can be added without redesign — but no UI or permission logic for them yet (§5). |
+| Roles | **`super_admin` only.** The `users.role` column and `RolesGuard` exist so `field_manager` / `prof` / `accountant` can be added without redesign — but no UI or permission logic for them yet. |
 
 ## Explicitly out of scope for Phase 1
 

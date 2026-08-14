@@ -29,6 +29,9 @@ export class SchedulingService {
   createClassroom(dto: any, userId?: string) { return this.classrooms.create(dto, userId); }
   updateClassroom(id: string, dto: any, userId?: string) { return this.classrooms.update(id, dto, userId); }
   removeClassroom(id: string, userId?: string) { return this.classrooms.remove(id, userId); }
+  classroomAvailability(query: { date: string; start_time: string; end_time: string; excludeGroupId?: string; excludeEntryId?: string }) {
+    return this.classrooms.availability(query);
+  }
 
   // Time slots
   listTimeSlots(dayOfWeek?: number) { return this.timeSlots.list(dayOfWeek); }

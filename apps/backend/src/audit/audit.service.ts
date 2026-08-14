@@ -148,6 +148,48 @@ export class AuditService {
   }
 
   /**
+   * Several entries in one round trip.
+   *
+   * For an operation that touches a batch of rows — saving a whole week's
+   * timetable, say — `record()` in a loop is one INSERT per row, awaited in
+   * sequence, on the request's critical path. The rows are independent and land
+   * in the same table, so they go in one statement.
+   *
+   * Failure stays non-fatal, exactly as in `record()`: the audit trail must
+   * never be the reason a legitimate write is rejected.
+   */
+  async recordMany(entries: AuditEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+    const ctx = getAuditContext();
+
+    try {
+      await this.db.client.insert(auditLogs).values(
+        entries.map((entry) => ({
+          actor_user_id: asUuidOrNull(entry.actorId ?? ctx?.actorId ?? null),
+          actor_label: entry.actorLabel ?? ctx?.actorLabel ?? null,
+          actor_role: entry.actorRole ?? ctx?.actorRole ?? null,
+          action: entry.action,
+          entity_type: entry.entityType,
+          entity_id: asUuidOrNull(entry.entityId),
+          entity_label: entry.entityLabel ?? null,
+          prev_values: this.sanitize(entry.prevValues),
+          new_values: this.sanitize(entry.newValues),
+          ip_address: entry.ipAddress ?? ctx?.ipAddress ?? null,
+          user_agent: entry.userAgent ?? ctx?.userAgent ?? null,
+          meta: this.sanitize(entry.meta),
+        })),
+      );
+      if (ctx) ctx.logged = true;
+    } catch (err) {
+      this.logger.error(
+        `Failed to write ${entries.length} audit entries ("${entries[0].action}" …): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
    * Positional form kept for the existing call sites across the services.
    * Prefer `record()` for new code - it carries prev/new values.
    */

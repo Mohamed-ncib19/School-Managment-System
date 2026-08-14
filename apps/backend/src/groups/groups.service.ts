@@ -17,9 +17,28 @@ export class GroupsService {
     private readonly sentinels: SentinelService,
   ) {}
 
-  /** Parent chain a group carries for display: professor -> field -> level. */
+  /**
+   * Parent chain a group carries for display: professor -> field -> level.
+   *
+   * Named columns rather than whole rows. Every consumer of this chain reads
+   * the same eight fields — the three names, the three ids that build a
+   * hierarchy URL, and the colours the cards are tinted with — while the
+   * unrestricted `with` shipped all three rows entire: the professor's phone
+   * and e-mail, the field's description and author, every archival flag and
+   * timestamp on all three. That was 71% of a 242 KB group list, repeated for
+   * each of the groups a professor teaches, and it put staff contact details
+   * into a payload that exists to render a name.
+   */
   private static readonly HIERARCHY_WITH = {
-    professor: { with: { field: { with: { level: true } } } },
+    professor: {
+      columns: { id: true, full_name: true, field_id: true, color: true },
+      with: {
+        field: {
+          columns: { id: true, name: true, level_id: true, color: true },
+          with: { level: { columns: { id: true, name: true, color: true } } },
+        },
+      },
+    },
   } as const;
 
   /**

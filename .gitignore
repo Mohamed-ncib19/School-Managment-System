@@ -9,7 +9,12 @@ out
 .env
 .env.local
 .env.*.local
-.env**
+.env.*
+# `.env**` used to sit here, which also matched `.env.example`. The templates
+# survived only because they were already tracked — a new app's `.env.example`
+# would have been ignored silently. Re-allow them explicitly.
+!.env.example
+!.env.*.example
 *.db
 *.db-journal
 coverage

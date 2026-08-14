@@ -4,6 +4,9 @@ import { DbService } from "../../db/db.service";
 import { scheduleEntries, scheduleEntryExceptions, timeSlots } from "../../db/schema";
 import { AuditService } from "../../audit/audit.service";
 import { ConflictService } from "../conflicts/conflict.service";
+import { TimeSlotService } from "../time-slots/time-slot.service";
+import { WorkingHoursService } from "../working-hours/working-hours.service";
+import { schoolDayOfDate } from "../date.util";
 import { CreateEntryExceptionDto, ListEntryExceptionsDto } from "../dto/entry-exception.dto";
 import type { Conflict, ScheduleEntryException } from "../types";
 
@@ -18,25 +21,68 @@ export class EntryExceptionService {
   constructor(
     private readonly db: DbService,
     private readonly conflict: ConflictService,
+    private readonly timeSlotService: TimeSlotService,
+    private readonly workingHours: WorkingHoursService,
     private readonly audit: AuditService,
   ) {}
+
+  /**
+   * The slot a move is aiming at, from times or from an explicit id.
+   *
+   * The weekday is taken from the target date rather than asked for: a move
+   * names the date it is moving to, and a session cannot land on a different
+   * weekday from the date it happens on.
+   */
+  private async resolveNewSlot(dto: CreateEntryExceptionDto, targetDate: string): Promise<string | null> {
+    if (dto.new_start_time && dto.new_end_time) {
+      if (dto.new_end_time <= dto.new_start_time) {
+        throw new BadRequestException("new_end_time must be after new_start_time");
+      }
+      const day = schoolDayOfDate(targetDate);
+      const hours = await this.workingHours.checkContainment(day, dto.new_start_time, dto.new_end_time);
+      if (hours.status === "partial" || hours.status === "outside") {
+        throw new ConflictException({
+          message:
+            `Ce nouvel horaire est en dehors des horaires d'ouverture ` +
+            `(horaires : ${this.workingHours.describeWindows(hours.windows)})`,
+          code: "OUTSIDE_WORKING_HOURS",
+        });
+      }
+      const slot = await this.timeSlotService.findOrCreate(day, dto.new_start_time, dto.new_end_time);
+      return slot.id;
+    }
+    return dto.new_time_slot_id ?? null;
+  }
 
   async create(scheduleEntryId: string, dto: CreateEntryExceptionDto, userId?: string): Promise<ScheduleEntryException> {
     const rule = await this.db.client.query.scheduleEntries.findFirst({
       where: eq(scheduleEntries.id, scheduleEntryId),
-      with: { group: { columns: { name: true } }, timeSlot: { columns: { label: true, start_time: true, end_time: true } } },
+      columns: { id: true, is_active: true, effective_from: true, effective_until: true },
+      with: {
+        group: { columns: { name: true } },
+        // `day_of_week` is here so the occurrence check below can be answered
+        // from this row: it used to re-read the same rule to find it.
+        timeSlot: { columns: { label: true, start_time: true, end_time: true, day_of_week: true } },
+      },
     });
     if (!rule) throw new NotFoundException(`Schedule entry ${scheduleEntryId} not found`);
     if (!rule.is_active) throw new BadRequestException("Cannot add an exception to an archived rule");
 
     this.validateFields(dto);
-    await this.assertOccurrenceExists(scheduleEntryId, dto.occurrence_date);
+    this.assertOccurrenceExists(rule, dto.occurrence_date);
+
+    // Times may be given directly; resolve them to a stored slot (validating
+    // the opening hours of the day being moved to) before anything else uses
+    // the window.
+    const targetDateForSlot =
+      dto.exception_type === "moved" && dto.new_date ? dto.new_date : dto.occurrence_date;
+    const newTimeSlotId = await this.resolveNewSlot(dto, targetDateForSlot);
 
     // Layer 2: the target professor/classroom must be free on the target date.
     if (dto.exception_type !== "cancelled") {
-      const targetDate = dto.exception_type === "moved" && dto.new_date ? dto.new_date : dto.occurrence_date;
-      const { start, end } = dto.new_time_slot_id
-        ? await this.timeBounds(dto.new_time_slot_id)
+      const targetDate = targetDateForSlot;
+      const { start, end } = newTimeSlotId
+        ? await this.timeBounds(newTimeSlotId)
         : { start: rule.timeSlot.start_time, end: rule.timeSlot.end_time };
 
       const conflicts: Conflict[] = [];
@@ -60,7 +106,7 @@ export class EntryExceptionService {
         occurrence_date: new Date(dto.occurrence_date + "T00:00:00Z"),
         exception_type: dto.exception_type,
         new_date: dto.new_date ? new Date(dto.new_date + "T00:00:00Z") : null,
-        new_time_slot_id: dto.new_time_slot_id ?? null,
+        new_time_slot_id: newTimeSlotId,
         new_classroom_id: dto.new_classroom_id ?? null,
         new_prof_id: dto.new_prof_id ?? null,
         notes: dto.notes ?? null,
@@ -153,8 +199,11 @@ export class EntryExceptionService {
   private validateFields(dto: CreateEntryExceptionDto): void {
     switch (dto.exception_type) {
       case "moved":
-        if (!dto.new_date || !dto.new_time_slot_id) {
-          throw new BadRequestException("`moved` requires new_date and new_time_slot_id");
+        // Either form of window is acceptable — the times, or a slot id.
+        if (!dto.new_date || !(dto.new_time_slot_id || (dto.new_start_time && dto.new_end_time))) {
+          throw new BadRequestException(
+            "`moved` requires new_date and either new_start_time + new_end_time, or new_time_slot_id",
+          );
         }
         break;
       case "substitute_prof":
@@ -169,14 +218,10 @@ export class EntryExceptionService {
   }
 
   /** The rule must actually produce an occurrence on the given date. */
-  private async assertOccurrenceExists(scheduleEntryId: string, occurrenceDate: string): Promise<void> {
-    const rule = await this.db.client.query.scheduleEntries.findFirst({
-      where: eq(scheduleEntries.id, scheduleEntryId),
-      columns: { id: true, effective_from: true, effective_until: true },
-      with: { timeSlot: { columns: { day_of_week: true } } },
-    });
-    if (!rule) throw new NotFoundException(`Schedule entry ${scheduleEntryId} not found`);
-
+  private assertOccurrenceExists(
+    rule: { effective_from: Date; effective_until: Date | null; timeSlot: { day_of_week: number } },
+    occurrenceDate: string,
+  ): void {
     const fromStr = rule.effective_from.toISOString().slice(0, 10);
     const untilStr = rule.effective_until ? rule.effective_until.toISOString().slice(0, 10) : null;
     if (occurrenceDate < fromStr || (untilStr && occurrenceDate > untilStr)) {

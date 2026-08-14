@@ -3,6 +3,13 @@ import { and, eq, gte, inArray, lte, or, SQL, sql } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
 import { classrooms, professors, scheduleEntries, scheduleEntryExceptions, studentScheduleExceptions, timeSlots } from "../../db/schema";
 import type { Occurrence, ScheduleEntryException, StudentScheduleException } from "../types";
+import {
+  addDays,
+  dateString,
+  firstWeekdayOnOrAfter,
+  isoDayOfWeek,
+  weekdayCountBetween,
+} from "../date.util";
 
 export interface OccurrenceFilters {
   groupId?: string;
@@ -42,20 +49,18 @@ interface ReferenceEntities {
   timeSlots: Map<string, { id: string; day_of_week: number; start_time: string; end_time: string }>;
 }
 
-export function dateString(d: Date | string): string {
-  return typeof d === "string" ? d.split("T")[0] : d.toISOString().slice(0, 10);
-}
-
-export function nextDay(date: string): string {
-  const d = new Date(date + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
-/** 0=Sat…6=Fri (Tunisian school week) → JS getUTCDay. */
-export function isoDayOfWeek(dayOfWeek: number): number {
-  return (dayOfWeek + 6) % 7;
-}
+// The calendar arithmetic now lives in `../date.util`, where ConflictService
+// can reach it without importing this service. Re-exported so the existing
+// callers of these names keep working unchanged.
+export {
+  addDays,
+  dateString,
+  firstWeekdayOnOrAfter,
+  isoDayOfWeek,
+  schoolDayOfDate,
+  schoolDayOfWeek,
+  weekdayCountBetween,
+} from "../date.util";
 
 /**
  * The occurrence engine: turns recurring `schedule_entries` rules plus their
@@ -88,45 +93,80 @@ export class OccurrenceService {
       const end = minStr(rule.effective_until, toDate);
       if (start > end) continue;
 
+      // A weekly rule meets on one weekday, so the walk lands on the first
+      // matching date and then strides seven days at a time. Testing every
+      // date in the range instead parsed six dates per hit and threw them
+      // away — on a year view that is hundreds of thousands of wasted `Date`
+      // constructions before a single occurrence is built.
       const isoDay = isoDayOfWeek(rule.time_slot.day_of_week);
-      let cursor = start;
+      let cursor = firstWeekdayOnOrAfter(start, isoDay);
       while (cursor <= end) {
-        if (new Date(cursor + "T00:00:00Z").getUTCDay() === isoDay) {
-          const occurrence = this.baseOccurrence(rule, cursor);
-          const entryException = entryMap.get(`${rule.id}::${cursor}`);
-          if (entryException) this.applyEntryException(occurrence, entryException, reference);
+        const occurrence = this.baseOccurrence(rule, cursor);
+        const entryException = entryMap.get(`${rule.id}::${cursor}`);
+        if (entryException) this.applyEntryException(occurrence, entryException, reference);
 
-          const studentException = studentMap.get(`${rule.id}::${cursor}`);
-          if (studentException) this.applyStudentException(occurrence, studentException);
+        const studentException = studentMap.get(`${rule.id}::${cursor}`);
+        if (studentException) this.applyStudentException(occurrence, studentException);
 
-          occurrences.push(occurrence);
-          if (studentException?.exception_type === "makeup") {
-            occurrences.push(this.makeupOccurrence(rule, studentException));
-          }
+        occurrences.push(occurrence);
+        if (studentException?.exception_type === "makeup") {
+          occurrences.push(this.makeupOccurrence(rule, studentException));
         }
-        cursor = nextDay(cursor);
+        cursor = addDays(cursor, 7);
       }
     }
 
     return occurrences.sort(compareByDateThenTime);
   }
 
-  /** Count of occurrences in a range — used by the overview dashboard. */
+  /**
+   * Count of occurrences in a range — used by the overview dashboard.
+   *
+   * Deliberately not `generateOccurrences(...).length`: the dashboard wants one
+   * integer, and building the objects to count them meant loading every rule
+   * with its group, field, classroom and professor attached — two megabytes of
+   * joined rows discarded immediately. This reads three columns per rule and
+   * closes the form for the weekday count, so the cost no longer scales with
+   * the length of the range at all.
+   *
+   * It agrees with `generateOccurrences(...).length` only because this count is
+   * unfiltered. `makeup` student exceptions add a synthetic occurrence there,
+   * and those are loaded only when `filters.studentId` is set — which it never
+   * is here. Giving this method filters would break that equality (which
+   * `scripts/verify-scheduling.mjs` asserts) unless makeups are added back in.
+   */
   async countOccurrences(fromDate: string, toDate: string): Promise<number> {
-    const rules = await this.loadRules({}, fromDate, toDate);
+    const spans = await this.loadRuleSpans(fromDate, toDate);
     let count = 0;
-    for (const rule of rules) {
-      const start = maxStr(rule.effective_from, fromDate);
-      const end = minStr(rule.effective_until, toDate);
+    for (const span of spans) {
+      const start = maxStr(span.effective_from, fromDate);
+      const end = minStr(span.effective_until, toDate);
       if (start > end) continue;
-      const isoDay = isoDayOfWeek(rule.time_slot.day_of_week);
-      let cursor = start;
-      while (cursor <= end) {
-        if (new Date(cursor + "T00:00:00Z").getUTCDay() === isoDay) count++;
-        cursor = nextDay(cursor);
-      }
+      count += weekdayCountBetween(start, end, isoDayOfWeek(span.day_of_week));
     }
     return count;
+  }
+
+  /** Just the three columns the occurrence count needs, for rules in range. */
+  private async loadRuleSpans(fromDate: string, toDate: string) {
+    return this.db.client
+      .select({
+        effective_from: scheduleEntries.effective_from,
+        effective_until: scheduleEntries.effective_until,
+        day_of_week: timeSlots.day_of_week,
+      })
+      .from(scheduleEntries)
+      .innerJoin(timeSlots, eq(timeSlots.id, scheduleEntries.time_slot_id))
+      .where(
+        and(
+          eq(scheduleEntries.is_active, true),
+          lte(scheduleEntries.effective_from, new Date(toDate + "T23:59:59.999Z")),
+          or(
+            sql`${scheduleEntries.effective_until} IS NULL`,
+            gte(scheduleEntries.effective_until, new Date(fromDate + "T00:00:00Z")),
+          ) as SQL,
+        ),
+      );
   }
 
   private async loadRules(filters: OccurrenceFilters, fromDate: string, toDate: string): Promise<RuleRow[]> {
@@ -181,10 +221,33 @@ export class OccurrenceService {
 
     const rows = await this.db.client.query.scheduleEntries.findMany({
       where: and(...clauses),
+      columns: {
+        id: true,
+        group_id: true,
+        time_slot_id: true,
+        classroom_id: true,
+        prof_id: true,
+        subject: true,
+        notes: true,
+        effective_from: true,
+        effective_until: true,
+      },
       with: {
         group: {
           with: {
+            /**
+             * Only the id, because the professor is a waypoint and not a
+             * payload: the field is read off it and lifted onto the group,
+             * and nothing downstream looks at `group.professor` itself.
+             *
+             * Left unrestricted, Drizzle returns the whole professors row —
+             * phone, e-mail, timestamps, archival flags — once per occurrence.
+             * That single omission was 45% of a two-megabyte calendar
+             * response, and it put staff contact details on the wire for a
+             * screen that never shows them.
+             */
             professor: {
+              columns: { id: true },
               with: { field: { columns: { id: true, name: true, color: true } } },
             },
           },
@@ -208,14 +271,17 @@ export class OccurrenceService {
      * `group.professor.field` vs `group.field`: the field belongs to the
      * professor in the schema but to the *session* in the reader's mind — it is
      * what a timetable calls the subject — so it is lifted onto the group,
-     * which is where `RuleRow` and the calendar both look for it.
+     * which is where `RuleRow` and the calendar both look for it. The professor
+     * waypoint is dropped once the field is off it: `Occurrence.group` declares
+     * `{ id, name, color, field }` and nothing reads past that.
      */
     return rows.map((row) => {
       const group = row.group as { professor?: { field?: unknown } } | null;
+      const { professor: _waypoint, ...groupFields } = group ?? {};
       return {
         ...row,
         time_slot: (row as { timeSlot?: unknown }).timeSlot,
-        group: group ? { ...group, field: group.professor?.field ?? null } : null,
+        group: group ? { ...groupFields, field: group.professor?.field ?? null } : null,
       };
     }) as unknown as RuleRow[];
   }

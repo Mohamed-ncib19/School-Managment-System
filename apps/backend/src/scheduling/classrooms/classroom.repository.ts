@@ -45,6 +45,10 @@ export class ClassroomRepository {
     return row;
   }
 
+  async remove(id: string) {
+    await this.db.client.delete(classrooms).where(eq(classrooms.id, id));
+  }
+
   async findDuplicate(roomNumber: string, excludeId?: string) {
     const conditions = [
       eq(classrooms.room_number, roomNumber),

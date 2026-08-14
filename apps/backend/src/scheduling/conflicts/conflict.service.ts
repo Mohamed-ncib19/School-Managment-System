@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { and, eq, gt, gte, inArray, lt, lte, or, sql, SQL } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
-import { classrooms, groups, professors, scheduleEntries, scheduleEntryExceptions, studentAssignments, students, timeSlots } from "../../db/schema";
+import { classrooms, professors, scheduleEntries, scheduleEntryExceptions, studentAssignments, students, timeSlots } from "../../db/schema";
 import { Conflict, ConflictType } from "../types";
+import { schoolDayOfDate } from "../date.util";
 
 export interface ProposedRule {
   group_id: string;
@@ -17,7 +18,7 @@ export interface ProposedRule {
   excludeEntryId?: string;
 }
 
-interface TimeSlotRef {
+export interface TimeSlotRef {
   id: string;
   label: string;
   day_of_week: number;
@@ -176,22 +177,24 @@ export class ConflictService {
       });
     }
 
-    const conflicts: Conflict[] = [];
     const entityId = target.profId ?? target.classroomId ?? "";
     const type: ConflictType = target.profId ? "professor" : "classroom";
+    const overlapping = [...occupying].filter(
+      ([, slot]) => slot.start_time < endTime && slot.end_time > startTime,
+    );
+    // Same reasoning as `clashesFor`: don't pay for the name when there is
+    // nothing to name.
+    if (overlapping.length === 0) return [];
+
     const entityName = (await this.entityName(type, entityId)) ?? entityId;
-    for (const [entryId, slot] of occupying) {
-      if (!(slot.start_time < endTime && slot.end_time > startTime)) continue;
-      conflicts.push({
-        type,
-        entityId,
-        entityName,
-        scheduleEntryId: entryId,
-        timeSlotLabel: `${slot.label} (${slot.start_time}–${slot.end_time})`,
-        date,
-      });
-    }
-    return conflicts;
+    return overlapping.map(([entryId, slot]) => ({
+      type,
+      entityId,
+      entityName,
+      scheduleEntryId: entryId,
+      timeSlotLabel: `${slot.label} (${slot.start_time}–${slot.end_time})`,
+      date,
+    }));
   }
 
   /**
@@ -370,8 +373,12 @@ export class ConflictService {
       .select({ id: scheduleEntries.id })
       .from(scheduleEntries)
       .innerJoin(timeSlots, eq(timeSlots.id, scheduleEntries.time_slot_id))
-      .innerJoin(groups, eq(groups.id, scheduleEntries.group_id))
       .where(and(entityClause, ...rangeClauses));
+
+    // The name is only needed to label a clash. Resolving it first meant a
+    // second round trip on every check, and the check almost always comes back
+    // clean — the weekly builder fires one per keystroke-debounced edit.
+    if (clashes.length === 0) return [];
 
     const entityName = (await this.entityName(type, entityId)) ?? entityId;
     return clashes.map((clash) => ({
@@ -464,12 +471,23 @@ export class ConflictService {
 
   // ---- legacy single-date helpers (used by the weekly tile builder) ----
 
-  async checkProfessor(profId: string, timeSlotId: string, date: string, excludeEntryId?: string): Promise<Conflict[]> {
-    const ts = await this.timeSlotOf(timeSlotId);
+  /**
+   * These take either a stored slot's id or a bare window.
+   *
+   * Only the weekday and the two times decide whether something clashes, so a
+   * window that has never been saved can be answered as well as one that has.
+   * That is what lets the tile builder's live preview stay a pure read: it used
+   * to have to *create* a `time_slots` row for the window being dragged just to
+   * have an id to ask about, so every distinct time an admin tried while
+   * hesitating left a permanent row behind — and every keystroke on a preview
+   * wrote to the database.
+   */
+  async checkProfessor(profId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string): Promise<Conflict[]> {
+    const ts = await this.timeSlotOf(slot);
     if (!ts) return [];
     return this.clashesFor("professor", profId, eq(scheduleEntries.prof_id, profId), ts, {
       group_id: "",
-      time_slot_id: timeSlotId,
+      time_slot_id: ts.id,
       prof_id: profId,
       effective_from: date,
       effective_until: date,
@@ -477,12 +495,12 @@ export class ConflictService {
     });
   }
 
-  async checkClassroom(classroomId: string, timeSlotId: string, date: string, excludeEntryId?: string): Promise<Conflict[]> {
-    const ts = await this.timeSlotOf(timeSlotId);
+  async checkClassroom(classroomId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string): Promise<Conflict[]> {
+    const ts = await this.timeSlotOf(slot);
     if (!ts) return [];
     return this.clashesFor("classroom", classroomId, eq(scheduleEntries.classroom_id, classroomId), ts, {
       group_id: "",
-      time_slot_id: timeSlotId,
+      time_slot_id: ts.id,
       classroom_id: classroomId,
       prof_id: "",
       effective_from: date,
@@ -491,17 +509,18 @@ export class ConflictService {
     });
   }
 
-  async checkStudents(groupId: string, timeSlotId: string, date: string, excludeEntryId?: string): Promise<Conflict[]> {
-    const ts = await this.timeSlotOf(timeSlotId);
+  async checkStudents(groupId: string, slot: string | TimeSlotRef, date: string, excludeEntryId?: string): Promise<Conflict[]> {
+    const ts = await this.timeSlotOf(slot);
     if (!ts) return [];
-    return this.studentClashes({ group_id: groupId, time_slot_id: timeSlotId, prof_id: "", effective_from: date, effective_until: date, excludeEntryId }, ts);
+    return this.studentClashes({ group_id: groupId, time_slot_id: ts.id, prof_id: "", effective_from: date, effective_until: date, excludeEntryId }, ts);
   }
 
   // ---- helpers ----
 
-  private async timeSlotOf(id: string): Promise<TimeSlotRef | null> {
+  private async timeSlotOf(slot: string | TimeSlotRef): Promise<TimeSlotRef | null> {
+    if (typeof slot !== "string") return slot;
     const ts = await this.db.client.query.timeSlots.findFirst({
-      where: eq(timeSlots.id, id),
+      where: eq(timeSlots.id, slot),
       columns: { id: true, label: true, day_of_week: true, start_time: true, end_time: true },
     });
     return ts as TimeSlotRef | null;
@@ -521,7 +540,17 @@ export class ConflictService {
     return student ? `${student.first_name} ${student.last_name}` : null;
   }
 
+  /**
+   * The `time_slots.day_of_week` a date falls on.
+   *
+   * This used to apply `(getUTCDay() + 6) % 7` — the school→JS rotation — in
+   * the JS→school direction, which is wrong on every day of the week and two
+   * days off. `checkOccurrencesOnDate` then filtered candidate rules against
+   * the wrong weekday entirely, so a substitution or room change silently
+   * missed a genuine double-booking on the target date while being blocked by
+   * an unrelated rule two weekdays away.
+   */
   private dayOfWeekFromDate(date: string): number {
-    return (new Date(date + "T00:00:00Z").getUTCDay() + 6) % 7;
+    return schoolDayOfDate(date);
   }
 }

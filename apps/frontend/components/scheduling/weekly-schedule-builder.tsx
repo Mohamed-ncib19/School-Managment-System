@@ -1,12 +1,20 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Plus, AlertTriangle, DoorOpen } from "lucide-react";
+import { Plus, AlertTriangle, DoorOpen, Clock } from "lucide-react";
 import { ScheduleTile } from "@/components/scheduling/schedule-tile";
-import { useTimeSlots, useClassrooms } from "@/hooks/use-scheduling";
+import { useClassrooms, useWorkingHours } from "@/hooks/use-scheduling";
 import type { TileDto, Conflict } from "@/types";
 import { useTranslation } from "@/lib/i18n/context";
-import { schedulingApi } from "@/lib/api/scheduling.api";
+import { schedulingApi, type ClassroomAvailability } from "@/lib/api/scheduling.api";
+import {
+  checkWorkingHours,
+  describeWindows,
+  isValidRange,
+  nextDateForSchoolDay,
+  windowsForDay,
+  type WorkingHoursResult,
+} from "@/lib/utils/scheduling";
 
 const DAY_NAMES = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const DAY_SHORT = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
@@ -18,12 +26,18 @@ interface WeeklyScheduleBuilderProps {
   /** True once the caller's tiles data (e.g. async edit-entries query) has settled. */
   initialTilesLoaded?: boolean;
   onChange: (tiles: TileDto[]) => void;
+  /**
+   * Raised whenever a tile breaks a rule the API will refuse (out of opening
+   * hours, or a room that is taken). The caller disables its save button on it,
+   * so the form cannot submit something that is going to come back 409.
+   */
+  onValidityChange?: (blocked: boolean) => void;
 }
 
-export function WeeklyScheduleBuilder({ groupId, profId, initialTiles = [], initialTilesLoaded = true, onChange }: WeeklyScheduleBuilderProps) {
+export function WeeklyScheduleBuilder({ groupId, profId, initialTiles = [], initialTilesLoaded = true, onChange, onValidityChange }: WeeklyScheduleBuilderProps) {
   const { t } = useTranslation();
-  const { data: timeSlots } = useTimeSlots();
   const { data: classrooms } = useClassrooms();
+  const { data: workingHours } = useWorkingHours();
 
   const [tiles, setTiles] = useState<TileDto[]>(initialTiles);
   const [tileConflicts, setTileConflicts] = useState<Map<string, Conflict[]>>(new Map());
@@ -153,22 +167,135 @@ export function WeeklyScheduleBuilder({ groupId, profId, initialTiles = [], init
   const classroomOptions = useMemo(() => classrooms ?? [], [classrooms]);
 
   /**
-   * The time windows the academy already teaches in, offered as one-click adds.
+   * The opening-hours verdict per tile.
    *
-   * Every session had to be typed digit by digit even though a school runs the
-   * same few windows all week; these come from the declared time slots, so the
-   * common case is a single click and the timetable stays consistent.
+   * Computed in the browser from the same rules the API applies, so the field
+   * can explain itself as it is typed rather than on submit. The server still
+   * refuses an out-of-hours save — this only makes the refusal predictable.
    */
-  const presets = useMemo(() => {
-    const seen = new Map<string, { start_time: string; end_time: string }>();
-    for (const slot of timeSlots ?? []) {
-      const start = String(slot.start_time).slice(0, 5);
-      const end = String(slot.end_time).slice(0, 5);
-      const key = `${start}-${end}`;
-      if (!seen.has(key)) seen.set(key, { start_time: start, end_time: end });
+  const hoursByTile = useMemo(() => {
+    const map = new Map<number, WorkingHoursResult>();
+    tiles.forEach((tile, idx) => {
+      if (!isValidRange(tile.start_time, tile.end_time)) return;
+      map.set(idx, checkWorkingHours(workingHours, tile.day_of_week, tile.start_time, tile.end_time));
+    });
+    return map;
+  }, [tiles, workingHours]);
+
+  /**
+   * Room availability, fetched once per distinct window rather than per tile.
+   *
+   * Two tiles at the same day and time ask the same question, and the answer is
+   * keyed by the window alone. Only windows that are valid and inside opening
+   * hours are asked about: there is no point costing a request on a range the
+   * form is already refusing.
+   */
+  const [availability, setAvailability] = useState<Map<string, ClassroomAvailability[]>>(new Map());
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const availabilityAbortRef = useRef<AbortController | null>(null);
+
+  const windowKey = (tile: TileDto) => `${tile.day_of_week}|${tile.start_time}|${tile.end_time}`;
+
+  const neededWindows = useMemo(() => {
+    const out = new Map<string, TileDto>();
+    tiles.forEach((tile, idx) => {
+      if (!isValidRange(tile.start_time, tile.end_time)) return;
+      const hours = hoursByTile.get(idx);
+      if (hours && (hours.status === "partial" || hours.status === "outside")) return;
+      out.set(windowKey(tile), tile);
+    });
+    return out;
+  }, [tiles, hoursByTile]);
+
+  useEffect(() => {
+    const missing = Array.from(neededWindows.keys()).filter((k) => !availability.has(k));
+    if (missing.length === 0) {
+      setAvailabilityLoading(false);
+      return;
     }
-    return Array.from(seen.values()).sort((a, b) => a.start_time.localeCompare(b.start_time)).slice(0, 5);
-  }, [timeSlots]);
+
+    availabilityAbortRef.current?.abort();
+    const controller = new AbortController();
+    availabilityAbortRef.current = controller;
+    setAvailabilityLoading(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await Promise.all(
+          missing.map(async (key) => {
+            const tile = neededWindows.get(key)!;
+            const rows = await schedulingApi.classrooms.availability({
+              date: nextDateForSchoolDay(tile.day_of_week),
+              start_time: tile.start_time,
+              end_time: tile.end_time,
+              // The group being edited must not conflict with itself.
+              excludeGroupId: groupId,
+            });
+            return [key, rows] as const;
+          }),
+        );
+        if (controller.signal.aborted) return;
+        setAvailability((prev) => {
+          const next = new Map(prev);
+          for (const [key, rows] of results) next.set(key, rows);
+          return next;
+        });
+      } catch {
+        // A failed lookup must not block the form: the server still validates.
+      } finally {
+        if (!controller.signal.aborted) setAvailabilityLoading(false);
+      }
+    }, 400);
+
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [neededWindows, availability, groupId]);
+
+  /**
+   * Whether the form may be submitted.
+   *
+   * Only the two rules the API refuses outright count as blocking: a window
+   * outside opening hours, and a room already taken. Professor and student
+   * overlaps stay overridable, as they were.
+   */
+  const blockedTiles = useMemo(() => {
+    const reasons: string[] = [];
+    tiles.forEach((tile, idx) => {
+      if (!isValidRange(tile.start_time, tile.end_time)) {
+        if (tile.start_time && tile.end_time) {
+          reasons.push(`${DAY_SHORT[tile.day_of_week]} — ${t("scheduling.endBeforeStart", "Fin avant le début")}`);
+        }
+        return;
+      }
+      const hours = hoursByTile.get(idx);
+      if (hours && (hours.status === "partial" || hours.status === "outside")) {
+        reasons.push(
+          `${DAY_SHORT[tile.day_of_week]} ${tile.start_time}–${tile.end_time} — ${t("scheduling.outsideHoursShort", "hors horaires")} (${describeWindows(hours.windows)})`,
+        );
+        return;
+      }
+      const rooms = availability.get(windowKey(tile));
+      if (!rooms) return;
+      if (tile.classroom_id && rooms.find((r) => r.id === tile.classroom_id)?.available === false) {
+        reasons.push(
+          `${DAY_SHORT[tile.day_of_week]} ${tile.start_time}–${tile.end_time} — ${t("scheduling.roomTaken", "salle occupée")}`,
+        );
+      }
+    });
+    return reasons;
+  }, [tiles, hoursByTile, availability, t]);
+
+  useEffect(() => {
+    onValidityChange?.(blockedTiles.length > 0);
+  }, [blockedTiles, onValidityChange]);
+
+  /** The declared opening hours for the day being edited, shown as guidance. */
+  const activeDayWindows = useMemo(
+    () => windowsForDay(workingHours, activeDay),
+    [workingHours, activeDay],
+  );
 
   /** Every session in the week, ordered, for the summary strip. */
   const weekSummary = useMemo(
@@ -243,23 +370,20 @@ export function WeeklyScheduleBuilder({ groupId, profId, initialTiles = [], init
         </button>
       </div>
 
-      {presets.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
-            {t("scheduling.quickAdd", "Créneaux courants")}
-          </span>
-          {presets.map((preset) => (
-            <button
-              key={`${preset.start_time}-${preset.end_time}`}
-              type="button"
-              onClick={() => addTile(preset)}
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-text-secondary hover:border-primary/40 hover:text-primary transition-colors tabular-nums"
-            >
-              <Plus size={11} aria-hidden="true" />
-              {preset.start_time}–{preset.end_time}
-            </button>
-          ))}
-        </div>
+      {/*
+        The day's opening hours, stated where the times are typed.
+        The predefined "créneaux courants" chips that used to sit here came from
+        the `time_slots` table and existed to spare the operator typing — but
+        they also made the declared slots feel like the only permitted windows.
+        Times are now typed directly, so the useful thing to show is the range
+        they have to land inside.
+      */}
+      {activeDayWindows.length > 0 && (
+        <p className="flex items-center gap-1.5 text-[11px] text-text-secondary">
+          <Clock size={12} className="shrink-0" aria-hidden="true" />
+          {t("scheduling.dayHours", "Horaires d'ouverture ce jour :")}{" "}
+          <span className="font-semibold tabular-nums text-text-primary">{describeWindows(activeDayWindows)}</span>
+        </p>
       )}
 
       {/*
@@ -324,12 +448,35 @@ export function WeeklyScheduleBuilder({ groupId, profId, initialTiles = [], init
               onChange={(patch) => updateTile(idx, patch)}
               onRemove={() => removeTile(idx)}
               classrooms={classroomOptions}
+              workingHours={hoursByTile.get(idx)}
+              availability={availability.get(windowKey(tile))}
+              availabilityLoading={availabilityLoading && !availability.has(windowKey(tile))}
             />
           ))}
         </div>
       )}
 
-      {totalConflicts > 0 && (
+      {/*
+        Blocking reasons first and itemised: the operator is editing one day at
+        a time, so a problem on another day is otherwise invisible until save.
+      */}
+      {blockedTiles.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 p-3 rounded-lg border bg-danger-soft border-danger/30">
+          <AlertTriangle size={16} className="shrink-0 mt-0.5 text-danger" aria-hidden="true" />
+          <div className="text-xs text-danger space-y-1">
+            <p className="font-medium">
+              {t("scheduling.blockedSummary", "Ces créneaux empêchent l'enregistrement :")}
+            </p>
+            <ul className="space-y-0.5">
+              {blockedTiles.map((reason, i) => (
+                <li key={i} className="tabular-nums">{reason}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {totalConflicts > 0 && blockedTiles.length === 0 && (
         <div
           className={`flex items-start gap-2 p-3 rounded-lg border ${
             blockingConflicts > 0 ? "bg-danger-soft border-danger/30" : "bg-gold-50 border-gold/30"
