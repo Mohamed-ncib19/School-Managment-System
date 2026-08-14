@@ -170,7 +170,10 @@ export class ScheduleEntryService {
    * refused.
    */
   async create(dto: CreateScheduleEntryDto, userId?: string): Promise<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[] }> {
-    const dateObj = new Date(dto.effective_from);
+    // Starts today unless a date is given, and runs open-ended. The form no
+    // longer asks for either; see `CreateScheduleEntryDto.effective_from`.
+    const effectiveFrom = dto.effective_from ?? new Date().toISOString().slice(0, 10);
+    const dateObj = new Date(effectiveFrom + "T00:00:00Z");
     const conflicts: Conflict[] = [];
     const warnings: string[] = [];
 
@@ -193,8 +196,8 @@ export class ScheduleEntryService {
       time_slot_id: slot.id,
       classroom_id: dto.classroom_id,
       prof_id: dto.prof_id,
-      effective_from: dto.effective_from,
-      effective_until: dto.effective_until ?? null,
+      effective_from: effectiveFrom,
+      effective_until: null,
     })));
 
     // A room cannot hold two classes at once — same rule, same code, as the
@@ -216,7 +219,8 @@ export class ScheduleEntryService {
       subject: dto.subject ?? null,
       notes: dto.notes ?? null,
       effective_from: dateObj,
-      effective_until: dto.effective_until ? new Date(dto.effective_until + "T00:00:00Z") : null,
+      // Open-ended: a series is ended deliberately, from the calendar.
+      effective_until: null,
     }).returning();
 
     const full = await this.get(entry.id);
@@ -226,7 +230,7 @@ export class ScheduleEntryService {
       entityType: "schedule_entry",
       entityId: entry.id,
       actorId: userId,
-      newValues: { group_id: dto.group_id, time_slot_id: slot.id, classroom_id: dto.classroom_id, prof_id: dto.prof_id, effective_from: dto.effective_from },
+      newValues: { group_id: dto.group_id, time_slot_id: slot.id, classroom_id: dto.classroom_id, prof_id: dto.prof_id, effective_from: effectiveFrom },
       meta: conflicts.length > 0 ? { conflicts } : warnings.length > 0 ? { warnings } : undefined,
     });
     return { entry: full, conflicts, warnings };

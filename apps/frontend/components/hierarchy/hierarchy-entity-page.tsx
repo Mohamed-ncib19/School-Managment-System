@@ -235,6 +235,8 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingEntity, setEditingEntity] = useState<any>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ type: HierarchyEntity; id: string; name: string } | null>(null);
+  /** A server refusal shown inside the delete dialog rather than as a toast. */
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   /**
    * A save the server refused because of a timetable clash.
    *
@@ -698,9 +700,21 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
       for (const key of ["levels", "fields", "professors", "groups", "students", "hierarchy-summary"]) {
         qc.invalidateQueries({ queryKey: [key] });
       }
+      setDeleteError(null);
       setDeleteTarget(null);
     },
-    onError: showError,
+    onError: (err: unknown) => {
+      // The API refuses to delete a student who has recorded payments and says
+      // to withdraw them instead. That is an instruction, not a notification —
+      // it stays in the dialog rather than vanishing with a toast.
+      const body = (err as any)?.response?.data?.error ?? (err as any)?.response?.data;
+      const message = body?.message;
+      if (deleteTarget?.type === "student" && typeof message === "string" && message) {
+        setDeleteError(message);
+        return;
+      }
+      showError(err);
+    },
   });
 
   const resetForm = () => {
@@ -1944,6 +1958,31 @@ const childrenLabel =
           }}
         />
       )}
+
+      {/*
+        Students get the plain confirmation, not the hierarchy dialog.
+        `HierarchyDeleteDialog` offers archive / cascade / re-parent, which are
+        choices about an entity's *children* — a student is a leaf and has
+        none, which is why it was excluded above. But nothing was rendered in
+        its place: the Delete action set `deleteTarget`, the dialog above
+        skipped it, and `deleteMutation` — which already handles the student
+        case — was never called by anything. The button did nothing at all.
+      */}
+      <ConfirmDeleteDialog
+        entityName={deleteTarget?.type === "student" ? deleteTarget.name : ""}
+        isOpen={deleteTarget?.type === "student"}
+        isDeleting={deleteMutation.isPending}
+        error={deleteError ?? undefined}
+        onClose={() => {
+          setDeleteTarget(null);
+          setDeleteError(null);
+        }}
+        onConfirm={() => deleteMutation.mutate()}
+        message={t(
+          "studentDetail.deleteConfirm",
+          "Cet étudiant et ses factures impayées seront définitivement supprimés. Cette action est irréversible. Un étudiant ayant des paiements enregistrés ne peut pas être supprimé — passez-le en « retiré ».",
+        )}
+      />
 
       <StudentDetailModal
         studentId={detailStudentId ?? ""}

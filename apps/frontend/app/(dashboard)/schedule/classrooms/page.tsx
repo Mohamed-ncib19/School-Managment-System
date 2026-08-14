@@ -409,7 +409,9 @@ function ClassroomCard({
         <div className="mt-auto flex items-center justify-end gap-1 border-t border-border pt-3">
           <button
             onClick={onEdit}
-            className="inline-flex h-8 items-center gap-1.5 rounded-btn px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-primary-50 hover:text-primary"
+            // `bg-primary-50` is a fixed pale tint, so in dark mode hovering
+            // flashed a light block; the dark variant tints the accent instead.
+            className="inline-flex h-8 items-center gap-1.5 rounded-btn px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-primary-50 hover:text-primary dark:hover:bg-primary/15"
             aria-label={`${t("common.edit", "Modifier")} ${room.name}`}
           >
             <Pencil size={13} aria-hidden="true" />
@@ -417,7 +419,7 @@ function ClassroomCard({
           </button>
           <button
             onClick={onDelete}
-            className="inline-flex h-8 items-center gap-1.5 rounded-btn px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-danger-soft hover:text-danger"
+            className="inline-flex h-8 items-center gap-1.5 rounded-btn px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-danger-soft hover:text-danger dark:hover:bg-danger/15 dark:hover:text-danger-dark"
             aria-label={`${t("common.delete", "Supprimer")} ${room.name}`}
           >
             <Trash2 size={13} aria-hidden="true" />

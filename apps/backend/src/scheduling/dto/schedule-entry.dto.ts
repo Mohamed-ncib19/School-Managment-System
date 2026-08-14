@@ -64,14 +64,23 @@ export class CreateScheduleEntryDto {
   @MaxLength(500)
   notes?: string;
 
-  @ApiProperty({ example: "2026-09-01" })
-  @IsString()
-  effective_from!: string;
-
-  @ApiPropertyOptional({ example: "2027-06-30" })
+  /**
+   * When the rule starts. Optional — defaults to today.
+   *
+   * The session form no longer asks for a period: a weekly rule runs from now
+   * until it is deliberately ended, and ending it is the calendar's
+   * "Terminer la série". Requiring two dates up front turned every new session
+   * into a decision about a term boundary the operator did not have in mind.
+   *
+   * The column itself stays: `effective_from` is `NOT NULL`, sits in all three
+   * unique indexes that stop a double-booking, and is what bounds a rule when
+   * the occurrence engine expands it. It is now filled in rather than asked
+   * for — the same thing the weekly timetable builder has always done.
+   */
+  @ApiPropertyOptional({ example: "2026-09-01", description: "Defaults to today" })
   @IsOptional()
   @IsString()
-  effective_until?: string | null;
+  effective_from?: string;
 }
 
 export class UpdateScheduleEntryDto {

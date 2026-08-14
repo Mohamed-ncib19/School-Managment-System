@@ -98,7 +98,13 @@ export const schedulingApi = {
     list: (filters: { groupId?: string; profId?: string; classroomId?: string; timeSlotId?: string; date?: string; active?: boolean }) =>
       ApiClient.get<ScheduleEntry[]>("/scheduling/entries", { params: filters }),
     get: (id: string) => ApiClient.get<ScheduleEntry>(`/scheduling/entries/${id}`),
-    create: (data: { group_id: string; time_slot_id: string; classroom_id?: string | null; prof_id: string; subject?: string; notes?: string; effective_from: string; effective_until?: string | null }) =>
+    /**
+     * `day_of_week` + the two times, or a legacy `time_slot_id`.
+     *
+     * `effective_from` is optional and defaults to today server-side; a new
+     * rule is always open-ended. Ending a series is `entries.end`.
+     */
+    create: (data: { group_id: string; day_of_week?: number; start_time?: string; end_time?: string; time_slot_id?: string; classroom_id?: string | null; prof_id: string; subject?: string; notes?: string; effective_from?: string }) =>
       ApiClient.post<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[] }>("/scheduling/entries", data),
     update: (id: string, data: { classroom_id?: string | null; subject?: string; notes?: string; effective_until?: string | null }) =>
       ApiClient.put<ScheduleEntry>(`/scheduling/entries/${id}`, data),

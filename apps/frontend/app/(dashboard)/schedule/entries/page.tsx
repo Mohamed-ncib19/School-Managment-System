@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Search, ChevronDown, ChevronUp, CalendarDays, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronDown, ChevronUp, CalendarDays, AlertTriangle, ShieldCheck, X, Clock, Info, Layers, DoorOpen, StickyNote } from "lucide-react";
 import { schedulingApi } from "@/lib/api/scheduling.api";
 import { useProfessors, useGroups } from "@/hooks/use-queries";
 import { useClassrooms, useConflicts, useScheduleEntries, useWorkingHours, ACTIVE_ENTRIES } from "@/hooks/use-scheduling";
@@ -12,10 +12,30 @@ import { PageLoader } from "@/components/shared/skeletons";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FormButton, ConfirmDeleteDialog } from "@/components/forms/form-helpers";
 import { useTranslation } from "@/lib/i18n/context";
-import { checkWorkingHours, describeWindows, isValidRange, nextDateForSchoolDay } from "@/lib/utils/scheduling";
+import { checkWorkingHours, describeWindows, durationLabel, isValidRange, nextDateForSchoolDay, windowsForDay } from "@/lib/utils/scheduling";
 import { ClassroomPicker } from "@/components/scheduling/classroom-picker";
 
 const DAY_NAMES = ["Sam", "Dim", "Lun", "Mar", "Mer", "Jeu", "Ven"];
+
+/** A section heading inside the session dialog. */
+function SectionLabel({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+      {icon}
+      {children}
+    </h4>
+  );
+}
+
+/** An inline validation message, styled once so every field reads the same. */
+function FieldError({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="alert" className="flex items-start gap-1.5 rounded-btn border border-danger/30 bg-danger-soft px-2.5 py-1.5 text-[11px] text-danger dark:bg-danger/10 dark:text-danger-dark-strong">
+      <AlertTriangle size={12} className="mt-px shrink-0" aria-hidden="true" />
+      <span>{children}</span>
+    </p>
+  );
+}
 
 const CONFLICT_META: Record<string, { label: string; hint: string }> = {
   classroom: { label: "Salle", hint: "Deux cours dans la même salle au même moment." },
@@ -50,9 +70,17 @@ function ConflictsPanel() {
 
   if (conflicts.length === 0) {
     return (
-      <div className="flex items-center gap-2 rounded-btn border border-success/30 bg-success-soft px-3 py-2">
-        <ShieldCheck size={15} className="text-success shrink-0" aria-hidden="true" />
-        <p className="text-xs text-success-700">
+      /*
+        `text-success-700` used to sit here, and the `success` token has no
+        numeric scale — only DEFAULT / soft / strong and their dark variants —
+        so the class generated nothing and the text fell back to whatever it
+        inherited. Paired with `bg-success-soft`, a fixed pale green applied in
+        both themes, that meant light text on a light panel in dark mode: the
+        line was there but invisible. Both halves now carry a dark variant.
+      */
+      <div className="flex items-center gap-2 rounded-btn border border-success/30 bg-success-soft px-3 py-2 dark:bg-success/10">
+        <ShieldCheck size={15} className="shrink-0 text-success-strong dark:text-success-dark" aria-hidden="true" />
+        <p className="text-xs font-medium text-success-strong dark:text-success-dark-strong">
           {t("scheduling.noConflicts", "Aucun conflit dans l'emploi du temps.")}
         </p>
       </div>
@@ -60,22 +88,28 @@ function ConflictsPanel() {
   }
 
   return (
-    <div className="rounded-card border border-gold/40 bg-gold-50 overflow-hidden">
+    /*
+      Same fix on the warning state: `bg-gold-50` and the white chip fills are
+      fixed light colours, so this panel stayed a bright cream card in a dark
+      UI. The gold scale is real (unlike `success-700`), so only the surfaces
+      needed dark variants.
+    */
+    <div className="rounded-card border border-gold/40 bg-gold-50 dark:bg-gold/10 overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gold-100/60 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-gold-100/60 dark:hover:bg-gold/15"
       >
-        <AlertTriangle size={15} className="text-gold-500 shrink-0" aria-hidden="true" />
-        <p className="text-xs text-gold-700 font-medium">
+        <AlertTriangle size={15} className="shrink-0 text-gold-500 dark:text-gold-300" aria-hidden="true" />
+        <p className="text-xs font-medium text-gold-700 dark:text-gold-200">
           {conflicts.length} {t("scheduling.conflictsDetected", "conflit(s) détecté(s)")}
         </p>
         <span className="ml-2 flex items-center gap-1.5">
           {Array.from(byType.entries()).map(([type, list]: [string, Conflict[]]) => (
             <span
               key={type}
-              className="inline-flex items-center gap-1 rounded-full bg-white/70 border border-gold/30 px-2 py-0.5 text-[10px] font-semibold text-gold-700"
+              className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-gold-700 dark:bg-white/10 dark:text-gold-200"
             >
               {CONFLICT_META[type]?.label ?? type} {list.length}
             </span>
@@ -83,16 +117,16 @@ function ConflictsPanel() {
         </span>
         <ChevronDown
           size={14}
-          className={`ml-auto text-gold-600 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`ml-auto text-gold-600 dark:text-gold-300 transition-transform ${open ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
       </button>
 
       {open && (
-        <div className="border-t border-gold/30 bg-white/50 divide-y divide-gold/20 max-h-64 overflow-y-auto">
+        <div className="border-t border-gold/30 bg-white/50 dark:bg-black/20 divide-y divide-gold/20 max-h-64 overflow-y-auto">
           {Array.from(byType.entries()).map(([type, list]: [string, Conflict[]]) => (
             <div key={type} className="px-3 py-2">
-              <p className="text-[11px] font-semibold text-gold-700 mb-1">
+              <p className="text-[11px] font-semibold text-gold-700 dark:text-gold-200 mb-1">
                 {CONFLICT_META[type]?.label ?? type}
                 <span className="font-normal text-text-secondary"> — {CONFLICT_META[type]?.hint ?? ""}</span>
               </p>
@@ -140,8 +174,7 @@ export default function ScheduleEntriesPage() {
   const [formEndTime, setFormEndTime] = useState("10:30");
   const [formClassroomId, setFormClassroomId] = useState("");
   const [formProfId, setFormProfId] = useState("");
-  const [effectiveFrom, setEffectiveFrom] = useState("");
-  const [effectiveUntil, setEffectiveUntil] = useState("");
+  const [formNotes, setFormNotes] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -162,8 +195,10 @@ export default function ScheduleEntriesPage() {
    * against next term.
    */
   const availabilityDate = useMemo(
-    () => (effectiveFrom ? nextDateForSchoolDay(formDayOfWeek, new Date(effectiveFrom + "T00:00:00")) : nextDateForSchoolDay(formDayOfWeek)),
-    [effectiveFrom, formDayOfWeek],
+    // The soonest matching weekday from today: a rule now starts today, so that
+    // is the first date its availability is actually being asked about.
+    () => nextDateForSchoolDay(formDayOfWeek),
+    [formDayOfWeek],
   );
 
   // Reported by `ClassroomPicker`, which owns the lookup. Running a second
@@ -171,6 +206,22 @@ export default function ScheduleEntriesPage() {
   // not quite match, so neither could serve the other from cache.
   const [roomState, setRoomState] = useState({ selectedBusy: false, noneFree: false });
   const selectedRoomBusy = !!formClassroomId && roomState.selectedBusy;
+
+  /** Closes the dialog and clears the draft — used by the X, Cancel and backdrop. */
+  const closeForm = useCallback(() => {
+    setCreateOpen(false);
+    resetForm();
+  }, []);
+
+  /** The day's declared opening hours, shown beside the time fields. */
+  const dayWindows = useMemo(() => windowsForDay(workingHours, formDayOfWeek), [workingHours, formDayOfWeek]);
+
+  const sessionDuration = durationLabel(formStartTime, formEndTime);
+
+  /** Both time inputs go red together — the window is wrong, not one field. */
+  const timeFieldsInvalid =
+    (!!formStartTime && !!formEndTime && !rangeValid) ||
+    (!editingEntry && rangeValid && (hoursStatus === "partial" || hoursStatus === "outside"));
 
   /**
    * The API refuses these, so the form does not offer to send them.
@@ -207,8 +258,7 @@ export default function ScheduleEntriesPage() {
     setFormEndTime("10:30");
     setFormClassroomId("");
     setFormProfId("");
-    setEffectiveFrom("");
-    setEffectiveUntil("");
+    setFormNotes("");
     setEditingEntry(null);
     setFormError(null);
   };
@@ -255,6 +305,18 @@ export default function ScheduleEntriesPage() {
     },
   });
 
+  // Escape closes, as it does on the delete dialog — a modal only the mouse can
+  // dismiss is the odd one out in this app. Declared after the mutations
+  // because it reads their pending state to avoid closing mid-save.
+  useEffect(() => {
+    if (!createOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !createMutation.isPending && !updateMutation.isPending) closeForm();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [createOpen, closeForm, createMutation.isPending, updateMutation.isPending]);
+
   const openEdit = (entry: ScheduleEntry) => {
     setEditingEntry(entry);
     setFormGroupId(entry.group_id);
@@ -263,21 +325,19 @@ export default function ScheduleEntriesPage() {
     setFormEndTime(String(entry.time_slot?.end_time ?? "10:30").slice(0, 5));
     setFormClassroomId(entry.classroom_id ?? "");
     setFormProfId(entry.prof_id);
-    setEffectiveFrom(entry.effective_from.split("T")[0]);
-    setEffectiveUntil(entry.effective_until ? entry.effective_until.split("T")[0] : "");
+    setFormNotes(entry.notes ?? "");
     setFormError(null);
     setCreateOpen(true);
   };
 
   const openCreate = () => {
     resetForm();
-    setEffectiveFrom(new Date().toISOString().split("T")[0]);
     setCreateOpen(true);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formGroupId || !formProfId || !effectiveFrom || submitBlocked) return;
+    if (!formGroupId || !formProfId || submitBlocked) return;
     setFormError(null);
     const data = {
       group_id: formGroupId,
@@ -287,15 +347,16 @@ export default function ScheduleEntriesPage() {
       end_time: formEndTime,
       classroom_id: formClassroomId || null,
       prof_id: formProfId,
-      effective_from: effectiveFrom,
-      effective_until: effectiveUntil || null,
+      notes: formNotes.trim() || undefined,
+      // No effective range: the server starts the rule today and leaves it
+      // open-ended. Ending it is a separate, deliberate act from the calendar.
     };
     if (editingEntry) {
       // Update only accepts the fields it owns; the window is changed by
       // re-creating through the builder, as before.
       updateMutation.mutate({
         id: editingEntry.id,
-        data: { classroom_id: data.classroom_id, effective_until: data.effective_until },
+        data: { classroom_id: data.classroom_id, notes: data.notes ?? "" },
       });
     } else {
       createMutation.mutate(data);
@@ -391,8 +452,12 @@ export default function ScheduleEntriesPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("fieldsHierarchy.professor", "Professor")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("nav.classrooms", "Classroom")}</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.schedule", "Horaire")}</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.from", "From")}</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.until", "Until")}</th>
+                  {/* The From/Until columns are gone with the form fields that
+                      fed them: every new rule now starts today and runs
+                      open-ended, so one column repeated the creation date and
+                      the other was always "—". Notes takes the space, which is
+                      also what makes the new field visible after saving. */}
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase">{t("scheduling.sectionNotes", "Notes")}</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-text-secondary uppercase">{t("common.actions", "Actions")}</th>
                 </tr>
               </thead>
@@ -403,8 +468,13 @@ export default function ScheduleEntriesPage() {
                     <td className="px-4 py-3 text-text-secondary">{entry.professor?.full_name ?? "—"}</td>
                     <td className="px-4 py-3 text-text-secondary">{entry.classroom?.name ?? "—"}</td>
                     <td className="px-4 py-3 text-text-secondary">{entry.time_slot ? `${DAY_NAMES[entry.time_slot.day_of_week]} ${entry.time_slot.start_time}-${entry.time_slot.end_time}` : "—"}</td>
-                    <td className="px-4 py-3 text-text-secondary">{entry.effective_from.split("T")[0]}</td>
-                    <td className="px-4 py-3 text-text-secondary">{entry.effective_until ? entry.effective_until.split("T")[0] : "—"}</td>
+                    <td className="max-w-[220px] px-4 py-3 text-text-secondary">
+                      {entry.notes ? (
+                        <span className="block truncate" title={entry.notes}>{entry.notes}</span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Link
@@ -432,143 +502,251 @@ export default function ScheduleEntriesPage() {
       </div>
 
       {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setCreateOpen(false); resetForm(); }}>
-          <div className="bg-surface rounded-modal shadow-hover p-6 w-full max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-h4 font-bold mb-4">{editingEntry ? t("scheduling.editEntry", "Edit Schedule Entry") : t("scheduling.newEntry", "New Schedule Entry")}</h3>
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.group", "Group")} *</label>
-                <select value={formGroupId} onChange={(e) => setFormGroupId(e.target.value)} className="input" required>
-                  <option value="">{t("students.selectGroup", "Select group")}</option>
-                  {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                </select>
+        /*
+          The session form, as four labelled steps rather than eight stacked
+          fields in a `max-w-sm` column.
+          The order is the one the rules are applied in — who and what, then
+          when, then where, then for how long — because the room's availability
+          depends on the window above it, and asking for the room first invites
+          a choice that the times then invalidate.
+          The dialog is a column: header and actions stay put while only the
+          fields scroll, so on a short laptop screen the submit button is still
+          reachable without scrolling a modal that has no visible scrollbar.
+        */
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="entry-dialog-title"
+          onClick={closeForm}
+        >
+          <div
+            className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-modal bg-surface shadow-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+              <div className="min-w-0">
+                <h3 id="entry-dialog-title" className="text-h4 font-bold text-text-primary">
+                  {editingEntry ? t("scheduling.editEntry", "Modifier la séance") : t("scheduling.newEntry", "Nouvelle séance")}
+                </h3>
+                <p className="mt-0.5 text-xs text-text-secondary">
+                  {editingEntry
+                    ? t("scheduling.editEntryHint", "Salle et date de fin. L'horaire se change depuis le calendrier.")
+                    : t("scheduling.newEntryHint", "Une séance hebdomadaire, répétée jusqu'à la date de fin.")}
+                </p>
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">{t("fieldsHierarchy.professor", "Professor")} *</label>
-                <select value={formProfId} onChange={(e) => setFormProfId(e.target.value)} className="input" required>
-                  <option value="">{t("students.selectProfessor", "Select professor")}</option>
-                  {professors?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
-                </select>
-              </div>
-              {/*
-                The day and the two times, typed directly. This was a dropdown
-                of `time_slots` rows, so a session could only be placed at a
-                window someone had declared in a separate admin screen first.
-              */}
-              {/*
-                The window is fixed once a rule exists: `PUT /entries/:id` only
-                owns the room and the end date, and moving a session in time is
-                the split/"this and following" operation the calendar runs. The
-                fields are shown disabled rather than hidden so the session is
-                still identifiable, with a line saying where to change them —
-                editable-looking inputs that silently discard their value would
-                be worse than either.
-              */}
-              <div>
-                <label htmlFor="entry-day" className="block text-sm font-medium mb-1">{t("scheduling.day", "Jour")} *</label>
-                <select
-                  id="entry-day"
-                  value={formDayOfWeek}
-                  onChange={(e) => setFormDayOfWeek(Number(e.target.value))}
-                  className="input disabled:opacity-60"
-                  required
-                  disabled={!!editingEntry}
-                >
-                  {DAY_NAMES.map((label, day) => (
-                    <option key={day} value={day}>{label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="entry-start" className="block text-sm font-medium mb-1">{t("scheduling.startTime", "Début")} *</label>
-                  <input
-                    id="entry-start"
-                    type="time"
-                    value={formStartTime}
-                    onChange={(e) => setFormStartTime(e.target.value)}
-                    className={`input w-full disabled:opacity-60 ${hoursStatus === "partial" || hoursStatus === "outside" ? "border-danger/50" : ""}`}
-                    required
-                    disabled={!!editingEntry}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="entry-end" className="block text-sm font-medium mb-1">{t("scheduling.endTime", "Fin")} *</label>
-                  <input
-                    id="entry-end"
-                    type="time"
-                    value={formEndTime}
-                    onChange={(e) => setFormEndTime(e.target.value)}
-                    className={`input w-full disabled:opacity-60 ${!rangeValid && formEndTime ? "border-danger/50" : hoursStatus === "partial" || hoursStatus === "outside" ? "border-danger/50" : ""}`}
-                    required
-                    disabled={!!editingEntry}
-                  />
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={closeForm}
+                aria-label={t("common.close", "Fermer")}
+                className="-mr-1 -mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-btn text-text-secondary transition-colors hover:bg-background hover:text-text-primary"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </header>
 
-              {editingEntry && (
-                <p className="text-xs text-text-secondary">
-                  {t(
-                    "scheduling.windowFixedOnEdit",
-                    "L'horaire d'une séance existante se change depuis le calendrier (« Décaler la série »).",
+            <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+                <section className="space-y-3">
+                  <SectionLabel icon={<Layers size={12} aria-hidden="true" />}>
+                    {t("scheduling.sectionWhat", "Séance")}
+                  </SectionLabel>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="entry-group" className="mb-1 block text-xs font-medium text-text-secondary">
+                        {t("fieldsHierarchy.group", "Groupe")} *
+                      </label>
+                      <select id="entry-group" value={formGroupId} onChange={(e) => setFormGroupId(e.target.value)} className="input w-full" required>
+                        <option value="">{t("students.selectGroup", "Choisir un groupe")}</option>
+                        {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="entry-prof" className="mb-1 block text-xs font-medium text-text-secondary">
+                        {t("fieldsHierarchy.professor", "Professeur")} *
+                      </label>
+                      <select id="entry-prof" value={formProfId} onChange={(e) => setFormProfId(e.target.value)} className="input w-full" required>
+                        <option value="">{t("students.selectProfessor", "Choisir un professeur")}</option>
+                        {professors?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <SectionLabel icon={<CalendarDays size={12} aria-hidden="true" />}>
+                    {t("scheduling.sectionWhen", "Horaire")}
+                  </SectionLabel>
+
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto] sm:items-end">
+                    <div>
+                      <label htmlFor="entry-day" className="mb-1 block text-xs font-medium text-text-secondary">
+                        {t("scheduling.day", "Jour")} *
+                      </label>
+                      <select
+                        id="entry-day"
+                        value={formDayOfWeek}
+                        onChange={(e) => setFormDayOfWeek(Number(e.target.value))}
+                        className="input w-full disabled:opacity-60"
+                        required
+                        disabled={!!editingEntry}
+                      >
+                        {DAY_NAMES.map((label, day) => (
+                          <option key={day} value={day}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="entry-start" className="mb-1 block text-xs font-medium text-text-secondary">
+                        {t("scheduling.startTime", "Début")} *
+                      </label>
+                      <input
+                        id="entry-start"
+                        type="time"
+                        value={formStartTime}
+                        onChange={(e) => setFormStartTime(e.target.value)}
+                        className={`input w-full tabular-nums disabled:opacity-60 ${timeFieldsInvalid ? "border-danger/60" : ""}`}
+                        required
+                        disabled={!!editingEntry}
+                        aria-invalid={timeFieldsInvalid || undefined}
+                      />
+                    </div>
+                    <span className="hidden pb-2 text-text-secondary sm:block" aria-hidden="true">→</span>
+                    <div>
+                      <label htmlFor="entry-end" className="mb-1 block text-xs font-medium text-text-secondary">
+                        {t("scheduling.endTime", "Fin")} *
+                      </label>
+                      <input
+                        id="entry-end"
+                        type="time"
+                        value={formEndTime}
+                        onChange={(e) => setFormEndTime(e.target.value)}
+                        className={`input w-full tabular-nums disabled:opacity-60 ${timeFieldsInvalid ? "border-danger/60" : ""}`}
+                        required
+                        disabled={!!editingEntry}
+                        aria-invalid={timeFieldsInvalid || undefined}
+                      />
+                    </div>
+                  </div>
+
+                  {/* The length of the session, and the day's opening hours —
+                      the two things the two time inputs do not say themselves. */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary">
+                    {sessionDuration && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 font-medium tabular-nums">
+                        <Clock size={10} aria-hidden="true" />
+                        {sessionDuration}
+                      </span>
+                    )}
+                    {dayWindows.length > 0 && (
+                      <span className="tabular-nums">
+                        {t("scheduling.dayHours", "Horaires d'ouverture ce jour :")}{" "}
+                        <span className="font-medium text-text-primary">{describeWindows(dayWindows)}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {editingEntry && (
+                    <p className="flex items-start gap-1.5 rounded-btn border border-border bg-background px-2.5 py-1.5 text-[11px] text-text-secondary">
+                      <Info size={12} className="mt-px shrink-0" aria-hidden="true" />
+                      {t(
+                        "scheduling.windowFixedOnEdit",
+                        "L'horaire d'une séance existante se change depuis le calendrier (« Décaler la série »).",
+                      )}
+                    </p>
                   )}
-                </p>
-              )}
 
-              {formEndTime && formStartTime && !rangeValid && (
-                <p role="alert" className="text-xs text-danger">
-                  {t("scheduling.endBeforeStart", "La fin doit être après le début.")}
-                </p>
-              )}
+                  {formEndTime && formStartTime && !rangeValid && (
+                    <FieldError>{t("scheduling.endBeforeStart", "La fin doit être après le début.")}</FieldError>
+                  )}
 
-              {!editingEntry && rangeValid && (hoursStatus === "partial" || hoursStatus === "outside") && (
-                <p role="alert" className="text-xs text-danger">
-                  {hoursStatus === "partial"
-                    ? t("scheduling.partiallyOutsideHours", "Ce créneau dépasse les horaires d'ouverture. Ramenez-le à l'intérieur de :")
-                    : t("scheduling.outsideHours", "Ce créneau est en dehors des horaires d'ouverture. Horaires de ce jour :")}{" "}
-                  <span className="font-semibold tabular-nums">{describeWindows(hoursCheck.windows)}</span>
-                </p>
-              )}
+                  {!editingEntry && rangeValid && (hoursStatus === "partial" || hoursStatus === "outside") && (
+                    <FieldError>
+                      {hoursStatus === "partial"
+                        ? t("scheduling.partiallyOutsideHours", "Ce créneau dépasse les horaires d'ouverture. Ramenez-le à l'intérieur de :")
+                        : t("scheduling.outsideHours", "Ce créneau est en dehors des horaires d'ouverture. Horaires de ce jour :")}{" "}
+                      <span className="font-semibold tabular-nums">{describeWindows(hoursCheck.windows)}</span>
+                    </FieldError>
+                  )}
+                </section>
 
-              <div>
-                <label id="entry-room-label" className="block text-sm font-medium mb-1">{t("nav.classrooms", "Salle")}</label>
-                {/* The shared picker, so this screen, the calendar's move and
-                    room dialogs all report availability the same way. */}
-                <ClassroomPicker
-                  labelId="entry-room-label"
-                  value={formClassroomId}
-                  onChange={setFormClassroomId}
-                  date={availabilityDate}
-                  startTime={formStartTime}
-                  endTime={formEndTime}
-                  excludeGroupId={formGroupId || undefined}
-                  excludeEntryId={editingEntry?.id}
-                  classrooms={classrooms ?? []}
-                  allowEmpty
-                  onAvailabilityChange={setRoomState}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">{t("scheduling.from", "From")} *</label>
-                <input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} className="input" required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">{t("scheduling.until", "Until")}</label>
-                <input type="date" value={effectiveUntil} onChange={(e) => setEffectiveUntil(e.target.value)} className="input" />
-              </div>
-              {formError && (
-                <p role="alert" className="text-xs text-danger">{formError}</p>
-              )}
+                <section className="space-y-3">
+                  <SectionLabel icon={<DoorOpen size={12} aria-hidden="true" />}>
+                    {t("nav.classrooms", "Salle")}
+                  </SectionLabel>
+                  {/* The shared picker, so this screen, the calendar's move and
+                      room dialogs all report availability the same way. */}
+                  <ClassroomPicker
+                    labelId="entry-dialog-title"
+                    value={formClassroomId}
+                    onChange={setFormClassroomId}
+                    date={availabilityDate}
+                    startTime={formStartTime}
+                    endTime={formEndTime}
+                    excludeGroupId={formGroupId || undefined}
+                    excludeEntryId={editingEntry?.id}
+                    classrooms={classrooms ?? []}
+                    allowEmpty
+                    onAvailabilityChange={setRoomState}
+                  />
+                </section>
 
-              <div className="flex gap-3 justify-end pt-2">
-                <button type="button" className="btn btn-secondary" onClick={() => { setCreateOpen(false); resetForm(); }}>{t("common.cancel", "Cancel")}</button>
-                <FormButton
-                  type="submit"
-                  isLoading={createMutation.isPending || updateMutation.isPending}
-                  disabled={submitBlocked}
-                  title={submitBlocked ? t("scheduling.fixBlockingFirst", "Corrigez les créneaux signalés pour enregistrer.") : undefined}
-                >{editingEntry ? t("common.save", "Save") : t("common.create", "Create")}</FormButton>
+                {/*
+                  The "du / au" period fields are gone. A session is a weekly
+                  rule that runs from now until it is ended, and the series is
+                  ended from the calendar ("Terminer la série") where the dates
+                  are visible — asking for two dates up front made every new
+                  session a decision about a term boundary nobody had in mind.
+                  The rule still carries an effective range; the server starts
+                  it today and leaves it open, exactly as the weekly timetable
+                  builder already did.
+                */}
+                <section className="space-y-3">
+                  <SectionLabel icon={<StickyNote size={12} aria-hidden="true" />}>
+                    {t("scheduling.sectionNotes", "Notes")}
+                  </SectionLabel>
+                  <div>
+                    <label htmlFor="entry-notes" className="mb-1 block text-xs font-medium text-text-secondary">
+                      {t("scheduling.notesOptional", "Remarques (optionnel)")}
+                    </label>
+                    <textarea
+                      id="entry-notes"
+                      value={formNotes}
+                      onChange={(e) => setFormNotes(e.target.value)}
+                      rows={3}
+                      maxLength={500}
+                      className="input w-full resize-y"
+                      placeholder={t("scheduling.notesPlaceholder", "Matériel requis, salle partagée, consignes…")}
+                    />
+                    <p className="mt-1 text-right text-[11px] tabular-nums text-text-secondary">
+                      {formNotes.length}/500
+                    </p>
+                  </div>
+                </section>
               </div>
+
+              <footer className="shrink-0 space-y-2 border-t border-border px-5 py-3">
+                {formError && (
+                  <p role="alert" className="flex items-start gap-1.5 text-xs text-danger">
+                    <AlertTriangle size={13} className="mt-px shrink-0" aria-hidden="true" />
+                    {formError}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-3">
+                  <button type="button" className="btn btn-secondary text-sm" onClick={closeForm}>
+                    {t("common.cancel", "Annuler")}
+                  </button>
+                  <FormButton
+                    type="submit"
+                    className="text-sm"
+                    isLoading={createMutation.isPending || updateMutation.isPending}
+                    disabled={submitBlocked}
+                    title={submitBlocked ? t("scheduling.fixBlockingFirst", "Corrigez les créneaux signalés pour enregistrer.") : undefined}
+                  >
+                    {editingEntry ? t("common.save", "Enregistrer") : t("common.create", "Créer la séance")}
+                  </FormButton>
+                </div>
+              </footer>
             </form>
           </div>
         </div>

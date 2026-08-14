@@ -131,16 +131,30 @@ export class StudentTimetablePrintService {
   }): string {
     const e = (v: string) => this.escape(v);
 
-    // Only the days that actually have a class become columns — an academy
-    // teaching three days a week should not print four empty ones.
-    const days = [...new Set(data.sessions.map((s) => s.day))].sort((a, b) => a - b);
+    /**
+     * Every day of the week is a column, whether or not it holds a class.
+     *
+     * Only the occupied days used to be printed, which saved paper but made the
+     * document lie about the shape of the week: a student free on Wednesday saw
+     * Tuesday and Thursday side by side, and no way to tell whether Wednesday
+     * was empty or simply not taught. A timetable is read as much for the gaps
+     * as for the sessions, so the gaps are printed too.
+     */
+    const days = DAY_NAMES.map((_, index) => index);
 
     // Rows are the distinct time windows, so sessions that share a start line
     // up across the week the way a paper timetable does.
     const windows = [...new Set(data.sessions.map((s) => `${s.start}-${s.end}`))].sort();
 
-    const cellFor = (day: number, window: string) =>
-      data.sessions.find((s) => s.day === day && `${s.start}-${s.end}` === window);
+    /**
+     * Every session in a cell, not just the first.
+     *
+     * `find` returned one, so a student enrolled in two groups that meet at the
+     * same hour on the same day had one of them silently dropped from their own
+     * timetable — the multi-group case this document exists to serve.
+     */
+    const cellsFor = (day: number, window: string) =>
+      data.sessions.filter((s) => s.day === day && `${s.start}-${s.end}` === window);
 
     const grid =
       data.sessions.length === 0
@@ -159,15 +173,19 @@ export class StudentTimetablePrintService {
                     <td class="time-col">${e(w.replace("-", " – "))}</td>
                     ${days
                       .map((d) => {
-                        const s = cellFor(d, w);
-                        if (!s) return `<td class="empty-cell"></td>`;
-                        const accent = s.color ? ` style="border-left:4px solid ${e(s.color)}"` : "";
-                        return `<td class="session"${accent}>
-                          <span class="group">${e(s.group)}</span>
-                          ${s.field ? `<span class="meta">${e(s.field)}</span>` : ""}
-                          <span class="meta">${e(s.professor)}</span>
-                          ${s.classroom ? `<span class="room">${e(s.classroom)}</span>` : ""}
-                        </td>`;
+                        const cells = cellsFor(d, w);
+                        if (cells.length === 0) return `<td class="empty-cell"></td>`;
+                        return `<td class="session">${cells
+                          .map((s) => {
+                            const accent = s.color ? ` style="border-top:3px solid ${e(s.color)}"` : "";
+                            return `<div class="entry"${accent}>
+                              <span class="group">${e(s.group)}</span>
+                              ${s.field ? `<span class="field">${e(s.field)}</span>` : ""}
+                              <span class="meta">${e(s.professor)}</span>
+                              ${s.classroom ? `<span class="room">${e(s.classroom)}</span>` : ""}
+                            </div>`;
+                          })
+                          .join("")}</td>`;
                       })
                       .join("")}
                   </tr>`,
@@ -176,10 +194,15 @@ export class StudentTimetablePrintService {
             </tbody>
           </table>`;
 
+    // The enrolments as cards rather than a bulleted list: a bullet forces a
+    // left margin, which is the one thing a centred block cannot have.
     const enrolments = data.groups
       .map(
-        (g) =>
-          `<li><strong>${e(g.name)}</strong>${g.field ? ` — ${e(g.field)}` : ""} <span>${e(g.professor)}</span></li>`,
+        (g) => `<div class="enrolment">
+          <span class="enrolment-group">${e(g.name)}</span>
+          ${g.field ? `<span class="enrolment-field">${e(g.field)}</span>` : ""}
+          <span class="enrolment-prof">${e(g.professor)}</span>
+        </div>`,
       )
       .join("");
 
@@ -199,25 +222,38 @@ export class StudentTimetablePrintService {
   .sub { font-size: 11px; color: #555; margin-top: 2px; }
   .generated { font-size: 10px; color: #777; text-align: right; }
 
-  .enrolments { background: #DCEEFF; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; }
+  /* Enrolments: centred cards, so group / field / professor read as one block
+     rather than as a left-hugging list beside a full-width table. */
+  .enrolments { background: #DCEEFF; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px;
+                text-align: center; }
   .enrolments h2 { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
-                   color: #264EAE; margin: 0 0 4px; }
-  .enrolments ul { margin: 0; padding-left: 16px; font-size: 11px; }
-  .enrolments li { margin-bottom: 2px; }
-  .enrolments span { color: #555; }
+                   color: #264EAE; margin: 0 0 6px; }
+  .enrolment-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 10px; }
+  .enrolment { background: #fff; border: 1px solid #B9CDEA; border-radius: 5px;
+               padding: 4px 10px; text-align: center; min-width: 110px; }
+  .enrolment-group { display: block; font-size: 11px; font-weight: 700; color: #1a1a1a; }
+  .enrolment-field { display: block; font-size: 9.5px; font-weight: 600; color: #264EAE; }
+  .enrolment-prof  { display: block; font-size: 9.5px; color: #555; }
 
+  /* Seven day columns plus the time gutter, so the cells are narrow: the
+     content is centred and the type scaled to match. */
   table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  table.grid th, table.grid td { border: 1px solid #B9CDEA; padding: 6px; vertical-align: top; }
-  table.grid th { background: #264EAE; color: #fff; font-size: 11px; text-transform: uppercase;
-                  letter-spacing: .04em; padding: 7px 6px; }
-  .time-col { width: 92px; background: #F8E8A5; font-size: 11px; font-weight: 700;
-              text-align: center; vertical-align: middle; }
+  table.grid th, table.grid td { border: 1px solid #B9CDEA; padding: 5px 4px;
+                                 vertical-align: middle; text-align: center; }
+  table.grid th { background: #264EAE; color: #fff; font-size: 10.5px; text-transform: uppercase;
+                  letter-spacing: .03em; padding: 7px 4px; }
+  .time-col { width: 84px; background: #F8E8A5; font-size: 10.5px; font-weight: 700;
+              text-align: center; vertical-align: middle; white-space: nowrap; }
   thead .time-col { background: #264EAE; color: #fff; }
   td.session { background: #fff; }
   td.empty-cell { background: #FAFBFD; }
-  .group { display: block; font-size: 11.5px; font-weight: 700; }
-  .meta  { display: block; font-size: 10px; color: #555; }
-  .room  { display: inline-block; margin-top: 3px; font-size: 9.5px; font-weight: 600;
+  /* One block per session, so a cell holding two groups keeps them apart. */
+  .entry { padding: 2px 0; }
+  .entry + .entry { margin-top: 4px; border-top: 1px dashed #B9CDEA; padding-top: 4px; }
+  .group { display: block; font-size: 10.5px; font-weight: 700; line-height: 1.25; }
+  .field { display: block; font-size: 9.5px; font-weight: 600; color: #264EAE; line-height: 1.25; }
+  .meta  { display: block; font-size: 9.5px; color: #555; line-height: 1.25; }
+  .room  { display: inline-block; margin-top: 3px; font-size: 9px; font-weight: 600;
            color: #264EAE; background: #DCEEFF; border-radius: 3px; padding: 1px 5px; }
   .empty { font-size: 12px; color: #777; padding: 30px; text-align: center;
            border: 1px dashed #B9CDEA; border-radius: 6px; }
@@ -238,7 +274,7 @@ export class StudentTimetablePrintService {
     <div class="generated">Établi le<br />${data.generatedAt.toLocaleDateString("fr-FR")}</div>
   </header>
 
-  ${data.groups.length > 0 ? `<section class="enrolments"><h2>Inscriptions</h2><ul>${enrolments}</ul></section>` : ""}
+  ${data.groups.length > 0 ? `<section class="enrolments"><h2>Inscriptions</h2><div class="enrolment-list">${enrolments}</div></section>` : ""}
 
   ${grid}
 
