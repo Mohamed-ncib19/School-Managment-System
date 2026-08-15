@@ -36,6 +36,20 @@
       "when": 1786928400000,
       "tag": "0004_schedule_unique_active_only",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786714950514,
+      "tag": "0005_smiling_synch",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786724802085,
+      "tag": "0006_striped_surge",
+      "breakpoints": true
     }
   ]
 }

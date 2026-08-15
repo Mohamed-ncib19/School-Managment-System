@@ -28,17 +28,21 @@ import {
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
-const RevenueChart = dynamic(() => import("@/components/charts/revenue-chart").then((m) => m.RevenueChart), {
-  ssr: false,
-  loading: () => <div className="h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" />,
-});
-const PaymentsByStatusChart = dynamic(
-  () => import("@/components/charts/payments-by-status-chart").then((m) => m.PaymentsByStatusChart),
-  { ssr: false, loading: () => <div className="h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" /> },
-);
-const StudentsByFieldChart = dynamic(
-  () => import("@/components/charts/students-by-field-chart").then((m) => m.StudentsByFieldChart),
-  { ssr: false, loading: () => <div className="h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" /> },
+const DashboardCharts = dynamic(
+  () => import("@/components/charts/dashboard-charts").then((m) => m.DashboardCharts),
+  {
+    ssr: false,
+    loading: () => (
+      <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="card">
+            <div className="h-5 w-40 animate-pulse rounded bg-neutral-soft dark:bg-white/10" />
+            <div className="mt-4 h-64 animate-pulse rounded bg-neutral-soft dark:bg-white/10" />
+          </div>
+        ))}
+      </section>
+    ),
+  },
 );
 
 export default function DashboardPage() {
@@ -223,20 +227,11 @@ export default function DashboardPage() {
       </section>
 
       {/* Charts */}
-      <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="card">
-          <h2 className="text-h4 font-bold text-text-primary mb-4">{t("dashboard.revenueByMonth")}</h2>
-          <RevenueChart data={revenueByMonth} />
-        </div>
-        <div className="card">
-          <h2 className="text-h4 font-bold text-text-primary mb-4">{t("dashboard.paymentsByStatus")}</h2>
-          <PaymentsByStatusChart data={paymentsByStatus} />
-        </div>
-        <div className="card">
-          <h2 className="text-h4 font-bold text-text-primary mb-4">{t("dashboard.studentsPerField")}</h2>
-          <StudentsByFieldChart data={studentsByField} />
-        </div>
-      </section>
+      <DashboardCharts
+        revenueByMonth={revenueByMonth}
+        paymentsByStatus={paymentsByStatus}
+        studentsByField={studentsByField}
+      />
 
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="card">

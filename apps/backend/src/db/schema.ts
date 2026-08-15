@@ -635,6 +635,24 @@ export const attendanceSheets = pgTable("attendance_sheets", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
+export const whiteboards = pgTable("whiteboards", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	owner_id: uuid("owner_id").notNull(),
+	title: text().notNull().default('Nouveau tableau'),
+	scene: jsonb().notNull(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
+	last_edited_at: timestamp("last_edited_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("whiteboards_owner_id_idx").using("btree", table.owner_id.asc().nullsLast()),
+	index("whiteboards_updated_at_idx").using("btree", table.updated_at.asc().nullsLast()),
+	foreignKey({
+			columns: [table.owner_id],
+			foreignColumns: [users.id],
+			name: "whiteboards_owner_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
 export const systemSettings = pgTable("system_settings", {
 	singleton: text().default('global').primaryKey().notNull(),
 	system_name: text("system_name").default('IQ Academy').notNull(),

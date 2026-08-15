@@ -2,14 +2,22 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookieParser from "cookie-parser";
+import { json } from "express";
 import { AppModule } from "./app.module";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 import { AllExceptionsFilter } from "./common/filters/http-exception.filter";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // The whiteboard save path posts full Excalidraw scenes, which can embed
+  // images as data URLs and regularly exceed the 100 kB Express default.
+  app.use(json({ limit: "5mb" }));
   app.enableCors({
-    origin: /http:\/\/localhost:\d+/,
+    // Both spellings of the loopback host must pass: the frontend default API
+    // URL is http://127.0.0.1:3001, and a tab opened on http://127.0.0.1:3000
+    // sends that Origin. Whitelisting only `localhost` made the login POST
+    // fail its preflight (OPTIONS 204, request blocked) for such tabs.
+    origin: /http:\/\/(localhost|127\.0\.0\.1):\d+/,
     credentials: true,
   });
   app.use(cookieParser());

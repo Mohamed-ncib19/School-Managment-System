@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { students, studentPayments, users, groups, fields, professors, levels, auditLogs, professorCompensations, paymentTransactions, payrollPayments, studentAssignments, payrollDocuments, attendanceSheets, classrooms, timeSlots, scheduleEntries, studentScheduleExceptions, scheduleEntryExceptions } from "./schema";
+import { students, studentPayments, users, groups, fields, professors, levels, auditLogs, professorCompensations, paymentTransactions, payrollPayments, studentAssignments, payrollDocuments, attendanceSheets, classrooms, timeSlots, scheduleEntries, studentScheduleExceptions, scheduleEntryExceptions, whiteboards } from "./schema";
 
 export const studentPaymentsRelations = relations(studentPayments, ({one, many}) => ({
 	student: one(students, {
@@ -34,6 +34,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	paymentTransactions: many(paymentTransactions),
 	payrollPayments: many(payrollPayments),
 	payrollDocuments: many(payrollDocuments),
+	whiteboards: many(whiteboards),
 }));
 
 export const groupsRelations = relations(groups, ({one, many}) => ({
@@ -174,6 +175,13 @@ export const scheduleEntriesRelations = relations(scheduleEntries, ({one, many})
 	}),
 	studentExceptions: many(studentScheduleExceptions),
 	exceptions: many(scheduleEntryExceptions),
+}));
+
+export const whiteboardsRelations = relations(whiteboards, ({one}) => ({
+	owner: one(users, {
+		fields: [whiteboards.owner_id],
+		references: [users.id]
+	}),
 }));
 
 export const studentScheduleExceptionsRelations = relations(studentScheduleExceptions, ({one}) => ({

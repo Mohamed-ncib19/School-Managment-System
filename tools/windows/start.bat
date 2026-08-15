@@ -17,6 +17,11 @@ chcp 65001 >nul
 set "CMD=%~1"
 if "%CMD%"=="" set "CMD=start"
 
+REM The original arguments are forwarded to launcher.ps1 on the start path
+REM (e.g. -Prod). `restart` is a batch-level subcommand, not a launcher
+REM argument, so the restart path blanks it before falling through to start.
+set "LAUNCH_ARGS=%*"
+
 REM Backward compatibility: if the first arg is not a known subcommand,
 REM pass everything straight to launcher.ps1 (e.g. start.bat -Prod).
 if /i not "%CMD%"=="start" if /i not "%CMD%"=="stop" if /i not "%CMD%"=="restart" if /i not "%CMD%"=="status" (
@@ -82,7 +87,7 @@ if %errorlevel%==0 (
 )
 
 REM --- launch ---------------------------------------------------------------
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\launcher.ps1" %*
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\launcher.ps1" %LAUNCH_ARGS%
 if errorlevel 1 (
   title SCHOOL MANAGEMENT SYSTEM - Startup failed
   echo.
@@ -103,8 +108,10 @@ REM ============================================================
 :DO_RESTART
 echo.
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0\scripts\stop.ps1" -StopDatabase
-timeout /t 2 /nobreak >nul
+REM 2s pause for the ports to release (ping works with redirected stdin, unlike timeout).
+ping -n 3 127.0.0.1 >nul
 echo.
+set "LAUNCH_ARGS="
 goto :DO_START
 
 REM ============================================================

@@ -18,6 +18,8 @@ import { AttendanceSheetsModule } from "./attendance-sheets/attendance-sheets.mo
 import { UpdatesModule } from "./updates/updates.module";
 import { SystemModule } from "./system/system.module";
 import { SchedulingModule } from "./scheduling/scheduling.module";
+import { WhiteboardsModule } from "./whiteboards/whiteboards.module";
+import { DataTransferModule } from "./data-transfer/data-transfer.module";
 import { MachineBindingService } from "./machine/machine-binding.service";
 
 @Module({
@@ -41,6 +43,8 @@ import { MachineBindingService } from "./machine/machine-binding.service";
     UpdatesModule,
     SystemModule,
     SchedulingModule,
+    WhiteboardsModule,
+    DataTransferModule,
   ],
   providers: [MachineBindingService],
 })

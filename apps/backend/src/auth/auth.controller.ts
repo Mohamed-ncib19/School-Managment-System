@@ -142,12 +142,18 @@ export class AuthController {
     return this.authService.me(req.user.id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  /**
+   * Unconditional logout: the session cookie is cleared even when the token is
+   * already dead (expired, secret changed, user deleted). A guard here would
+   * reject before the cookies could be cleared, leaving the browser stuck in
+   * the /dashboard <-> /login redirect loop — the one state this endpoint must
+   * always be able to escape from.
+   */
   @Post("logout")
   @HttpCode(HttpStatus.OK)
   async logout(@Req() req: any, @Res({ passthrough: true }) res: Response) {
-    const userId = req.user.id;
-    await this.authService.log(userId, "auth.logout");
+    const userId = req.user?.id;
+    if (userId) await this.authService.log(userId, "auth.logout");
     res.clearCookie(SESSION_COOKIE, { path: "/" });
     res.clearCookie(REFRESH_COOKIE, { path: "/" });
     return { message: "Logged out successfully" };

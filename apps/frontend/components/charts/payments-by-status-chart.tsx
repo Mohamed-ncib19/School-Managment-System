@@ -1,6 +1,6 @@
 "use client";
 
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
+import { DonutChartSvg } from "./svg-charts";
 import { useTranslation } from "@/lib/i18n/context";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -38,35 +38,16 @@ export function PaymentsByStatusChart({ data }: PaymentsByStatusChartProps) {
   const chartData = data
     .filter((d) => d.count > 0)
     .map((d) => ({
-      name: t(STATUS_LABEL_KEYS[d.status] ?? "") || d.status,
+      label: t(STATUS_LABEL_KEYS[d.status] ?? "") || d.status,
       value: d.count,
-      status: d.status,
+      color: STATUS_COLORS[d.status] ?? "var(--chart-pending)",
     }));
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <PieChart>
-        <Pie
-          data={chartData}
-          cx="50%"
-          cy="50%"
-          innerRadius={60}
-          outerRadius={100}
-          paddingAngle={3}
-          dataKey="value"
-        >
-          {chartData.map((entry) => (
-            <Cell key={entry.status} fill={STATUS_COLORS[entry.status] ?? "var(--chart-pending)"} />
-          ))}
-        </Pie>
-        <Tooltip
-          formatter={(value: number) => [value, t("charts.paymentsTooltip")]}
-          contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
-        />
-        <Legend
-          formatter={(value) => <span className="text-xs text-text-secondary">{value}</span>}
-        />
-      </PieChart>
-    </ResponsiveContainer>
+    <DonutChartSvg
+      data={chartData}
+      formatValue={(v) => String(v)}
+      ariaLabel={t("dashboard.paymentsByStatus")}
+    />
   );
 }

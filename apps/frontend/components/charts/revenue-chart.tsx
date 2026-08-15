@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
+import { BarChartSvg } from "./svg-charts";
 import { formatCurrency } from "@/lib/utils/format";
 import { useTranslation } from "@/lib/i18n/context";
 
@@ -37,21 +28,12 @@ export function RevenueChart({ data }: RevenueChartProps) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="month" tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fontSize: 12, fill: "var(--chart-axis)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v}`} />
-        <Tooltip
-          formatter={(value: number) => [formatCurrency(value), t("charts.revenueTooltip")]}
-          contentStyle={{ borderRadius: 10, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-dropdown)" }}
-        />
-        <Bar dataKey="revenue" radius={[6, 6, 0, 0]} maxBarSize={40}>
-          {data.map((_, index) => (
-            <Cell key={index} fill={COLORS[index % COLORS.length]} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <BarChartSvg
+      data={data.map((d) => ({ label: d.month, value: d.revenue }))}
+      colors={COLORS}
+      formatValue={formatCurrency}
+      formatTick={(v) => `$${v}`}
+      ariaLabel={t("dashboard.revenueByMonth")}
+    />
   );
 }

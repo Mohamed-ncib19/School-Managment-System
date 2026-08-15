@@ -5,7 +5,9 @@ import { schoolInitials, schoolMarkSvg } from "@/lib/brand";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
+// Server-side fetches need the absolute backend URL: NEXT_PUBLIC_API_URL is
+// the browser-facing relative /api (proxied by next.config.js).
+const API_BASE = process.env.BACKEND_API_URL ?? "http://127.0.0.1:3001/api";
 
 /**
  * The browser-tab icon. The uploaded academy logo wins when one is set; the

@@ -718,3 +718,30 @@ export interface MultiGroupCheck {
   groupCount: number;
   eligible: boolean;
 }
+
+/**
+ * A saved whiteboard / notes workspace.
+ *
+ * `scene` holds the full serialized Excalidraw document
+ * (`{ type, version, source, elements, appState, files }`) so a board reopens
+ * fully editable. The history list omits `scene`; it is fetched with the board.
+ */
+export interface WhiteboardScene {
+  type: string;
+  version: number;
+  source: string;
+  elements: unknown[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+}
+
+export interface Whiteboard {
+  id: string;
+  ownerId: string;
+  title: string;
+  /** Present on single-board reads; undefined in history listings. */
+  scene?: WhiteboardScene;
+  createdAt: string;
+  updatedAt: string;
+  lastEditedAt: string;
+}

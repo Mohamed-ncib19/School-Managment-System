@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ============================================================
 #  SCHOOL MANAGEMENT SYSTEM - Stop engine (macOS / Linux)
 #

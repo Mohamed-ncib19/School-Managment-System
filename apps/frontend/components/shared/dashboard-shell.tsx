@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import type { ReactNode } from "react";
@@ -8,6 +8,7 @@ import Navbar from "@/components/shared/navbar";
 import PageBreadcrumbs from "@/components/shared/page-breadcrumbs";
 import ShutdownFailedBanner from "@/components/shared/shutdown-failed-banner";
 import { AnimatedPage } from "@/components/shared/animated-page";
+import WhiteboardFab from "@/components/shared/whiteboard-fab";
 
 /** Most specific route first — the first match wins. */
 const TITLES: ReadonlyArray<[RegExp, string]> = [
@@ -71,6 +72,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           <AnimatedPage>{children}</AnimatedPage>
         </main>
       </div>
+      <WhiteboardFab />
     </div>
   );
 }

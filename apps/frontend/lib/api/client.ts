@@ -3,8 +3,8 @@ import { useAuthStore } from "@/hooks/use-auth-store";
 
 let apiClient: AxiosInstance | undefined;
 
-/** Backend mounts every route under `setGlobalPrefix("api")`. */
-const DEFAULT_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
+/** Backend mounts every route under `setGlobalPrefix("api")`; the Next server proxies /api to it (see next.config.js). */
+const DEFAULT_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
 /** The API base, for building absolute asset URLs (logo, exports) at runtime. */
 export function apiBaseUrl(): string {
@@ -21,14 +21,29 @@ export function initApi(baseURL: string = DEFAULT_BASE_URL): AxiosInstance {
 
   apiClient.interceptors.response.use(
     (response) => response,
-    (error: AxiosError) => {
+    async (error: AxiosError) => {
       // The logout call itself 401s when the session is already invalid;
       // skipping it here prevents the redirect loop (logout 401 -> logout -> ...).
       const skipAuthHandling = Boolean((error.config as any)?.skipAuthHandling);
       if (error.response?.status === 401 && !skipAuthHandling) {
         const { clearSession } = useAuthStore.getState();
-        clearSession();
-        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        // A /auth/me sent before a login completed can 401 *after* the login
+        // already established the session (it rode the pre-login cookies).
+        // Treating it as a dead session would wipe the marker cookie and send
+        // the fresh login bouncing straight back to /login.
+        const isStaleMe = error.config?.url === "/auth/me" && useAuthStore.getState().status === "authenticated";
+        if (!isStaleMe) clearSession();
+        if (!isStaleMe && typeof window !== "undefined" && window.location.pathname !== "/login") {
+          // Clear the httpOnly cookies server-side before leaving. The logout
+          // endpoint clears them even when the token is already dead; without
+          // this a stale cookie makes the middleware bounce /login -> /dashboard
+          // forever, so the login form can never be reached again.
+          try {
+            await getApiClient().post("/auth/logout", undefined, { skipAuthHandling: true } as any);
+          } catch {
+            // Backend unreachable: the non-httpOnly marker cookie was already
+            // cleared by clearSession, so the middleware lets /login through.
+          }
           window.location.href = "/login";
         }
       }

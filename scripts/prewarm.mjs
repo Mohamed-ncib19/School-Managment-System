@@ -8,6 +8,7 @@
  */
 
 const DEFAULT_PORT = 3000;
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:3001/api/system-settings";
 const DEFAULT_ROUTES = [
   "/login",
   "/dashboard",
@@ -52,7 +53,31 @@ async function waitForServer(port, timeoutMs) {
   throw new Error(`[prewarm] server did not become ready within ${timeoutMs}ms`);
 }
 
+/**
+ * The dashboard's server-rendered metadata (logo version, school name) fetches
+ * the backend from the Next process; warming routes before the API is up
+ * spews `fetch failed: connect ECONNREFUSED ::1:3001` into the dev log. Wait
+ * for the backend first, so the first SSR pass succeeds.
+ */
+async function waitForBackend(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        console.log(`[prewarm] backend ready (${res.status} on ${url})`);
+        return;
+      }
+    } catch {
+      // not up yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  console.warn(`[prewarm] backend not ready within ${timeoutMs}ms; warming anyway`);
+}
+
 export async function warm(port = DEFAULT_PORT, routes = DEFAULT_ROUTES) {
+  await waitForBackend(DEFAULT_BACKEND_URL, READY_TIMEOUT_MS);
   await waitForServer(port, READY_TIMEOUT_MS);
   const results = [];
   for (const route of routes) {

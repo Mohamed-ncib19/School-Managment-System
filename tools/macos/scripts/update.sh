@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ============================================================
 #  SCHOOL MANAGEMENT SYSTEM - Update Script (macOS / Linux)
 #

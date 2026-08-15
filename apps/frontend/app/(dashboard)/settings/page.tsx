@@ -42,6 +42,7 @@ Palette,
   Receipt,
   SlidersHorizontal,
   Headset,
+  FileJson,
 } from "lucide-react";
 import { usersApi } from "@/lib/api/users.api";
 import { authApi } from "@/lib/api/auth.api";
@@ -56,6 +57,7 @@ import { useSystemSettings, useUpdateSystemSettings, isFeatureEnabled, FEATURE_K
 import { useAppearance, ACCENT_PRESETS, ACCENT_IDS } from "@/hooks/use-appearance";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import UpdateProgressTracker from "@/components/shared/update-progress";
+import DataTransferSection from "@/components/settings/data-transfer-section";
 import { SettingsSkeleton, PageLoader } from "@/components/shared/skeletons";
 import BrandMark from "@/components/shared/brand-mark";
 import { apiBaseUrl } from "@/lib/api/client";
@@ -82,7 +84,7 @@ const passwordSchema = z.object({
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
-type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "support" | "features" | "hierarchy" | "updates" | "backups";
+type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "support" | "features" | "hierarchy" | "updates" | "backups" | "data";
 
 const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   fields: BookOpen,
@@ -372,6 +374,7 @@ export default function SettingsPage() {
     ...(isFeatureEnabled(system?.features, "backups")
       ? [{ id: "backups" as SectionId, icon: Database, label: t("settings.backupTitle", "Database Backup"), description: t("settings.backupDescription", "Create, list, and restore versioned database backups") }]
       : []),
+    { id: "data", icon: FileJson, label: t("settings.dataTitle", "Données"), description: t("settings.dataDescription", "Exporter ou importer l'intégralité des données du système") },
   ];
   const goTo = (id: SectionId) => {
     setActive(id);
@@ -1340,6 +1343,8 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {active === "data" && <DataTransferSection />}
 
             {active === "updates" && (
               <div className="card max-w-xl">

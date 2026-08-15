@@ -37,11 +37,12 @@ function run(name, cwd, cmd, args) {
     env: {
       ...process.env,
       FORCE_COLOR: "1",
-      // The nest watch mode grows without bound; give every spawned node
-      // (CLI, watcher, app) a bigger heap so it survives long sessions.
+      // Cap the heap so a runaway dev process can't starve the machine
+      // (a webpack dev server once ballooned past 3.7 GB with 1.3 GB free
+      // RAM left). Turbo dev stays well under 3 GB.
       NODE_OPTIONS: process.env.NODE_OPTIONS
-        ? `${process.env.NODE_OPTIONS} --max-old-space-size=6144`
-        : "--max-old-space-size=6144",
+        ? `${process.env.NODE_OPTIONS} --max-old-space-size=3072`
+        : "--max-old-space-size=3072",
     },
   });
   children.add(child);

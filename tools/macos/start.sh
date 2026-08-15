@@ -1,14 +1,12 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ============================================================
-#  School Management System - Start All Servers (macOS / Linux)
-#
-#  Usage:  ./tools/macos/start.sh [start^|stop^|restart^|status]
-#  Double-click or no argument = start.
-#
-#  On first run it asks for the school name and admin account,
-#  generates the database credentials and secrets, then starts
-#  PostgreSQL, installs dependencies, applies migrations, seeds
-#  the admin account, and launches the API + web portal.
+#  SCHOOL MANAGEMENT SYSTEM - Unified Launcher
+#  Double-click to start, or pass a subcommand:
+#    start.sh            start the servers (default)
+#    start.sh start      start the servers
+#    start.sh stop       stop the servers
+#    start.sh restart    restart the servers
+#    start.sh status     show running status
 # ============================================================
 set -euo pipefail
 
@@ -114,15 +112,71 @@ read_pid() {
 }
 
 # ===========================================================================
+#  PREFLIGHT (mirrors tools/windows/start.bat: node first, then pnpm, then
+#  the build-dependency check - so the launcher below only starts what can run)
+# ===========================================================================
+do_preflight() {
+  # Node first: without it nothing below can run, and the message it fails with
+  # otherwise ("command not found: node") does not say what to install.
+  if ! command -v node &>/dev/null; then
+    echo ""
+    echo "  [preflight] Node.js is not installed."
+    echo ""
+    echo "  Install Node.js 20 LTS or newer, then run start.sh again:"
+    echo "    brew install node@20        (macOS)"
+    echo "    sudo apt install nodejs     (Debian/Ubuntu)"
+    echo "  or download it from https://nodejs.org"
+    echo ""
+    exit 1
+  fi
+
+  if command -v pnpm &>/dev/null; then
+    if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
+      echo "  [preflight] Installing dependencies (first run)..."
+      if ! (cd "$ROOT_DIR" && pnpm install); then
+        echo ""
+        echo "  [preflight] Dependency installation failed."
+        echo "  Check your internet connection, then run start.sh again."
+        echo ""
+        exit 1
+      fi
+    else
+      echo "  [preflight] Dependencies present"
+      echo "  [preflight] Checking build dependencies..."
+      node "$ROOT_DIR/scripts/check-builds.mjs"
+    fi
+  else
+    # The start sequence enables pnpm via corepack, so a missing pnpm here is
+    # not fatal - it just means the dependency check is deferred to that step.
+    echo "  [preflight] pnpm not found - the launcher will install it"
+  fi
+}
+
+# ===========================================================================
 #  START SEQUENCE
 # ===========================================================================
 run_start_sequence() {
+
+# Flags passed through from the command line (backward compatibility with
+# start.bat, e.g. "start.sh -Prod"). Unknown arguments are ignored.
+PROD=0
+for arg in "$@"; do
+  case "${arg,,}" in
+    -prod|--prod) PROD=1 ;;
+  esac
+done
+
+step_total=$(( PROD ? 7 : 6 ))
 
 # ===========================================================================
 #  BANNER
 # ===========================================================================
 clear 2>/dev/null || true
-banner "$(school_name)" "School Management System"
+if [[ "$PROD" == "1" ]]; then
+  banner "$(school_name)" "School Management System   -   production mode"
+else
+  banner "$(school_name)" "School Management System"
+fi
 
 # ===========================================================================
 #  1. TOOLCHAIN
@@ -400,11 +454,49 @@ fi
 ok "Administrator account ready"
 
 # ===========================================================================
-#  6. START SERVERS
+#  6. BUILD (production mode only)
+# ===========================================================================
+if [[ "$PROD" == "1" ]]; then
+  write_step "Building the application"
+
+  # Skip the full nest+next rebuild when no source file has changed since the
+  # last build; dist/.next are left untouched in that case. The hash covers
+  # sources and the lockfile only - node_modules/.next/dist/public etc. are
+  # build outputs or dependencies, not inputs.
+  BUILD_STATE="$LOG_DIR/build.hash"
+  BUILD_HASH="$(find "$BACKEND_DIR" "$FRONTEND_DIR" -type f \
+    \( -path '*/node_modules/*' -o -path '*/.next/*' -o -path '*/dist/*' \
+       -o -path '*/logs/*' -o -path '*/backups/*' -o -path '*/.postgres/*' \
+       -o -path '*/public/*' \) -prune -o -type f -print0 2>/dev/null | \
+    sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)"
+  rebuild_needed=true
+  if [[ -n "$BUILD_HASH" && -f "$BUILD_STATE" ]] && [[ "$(cat "$BUILD_STATE")" == "$BUILD_HASH" ]]; then
+    rebuild_needed=false
+  fi
+
+  if [[ "$rebuild_needed" == "true" ]]; then
+    (cd "$ROOT_DIR" && pnpm build) || fail "Build failed." "Run 'pnpm build' to see the error, or start without -Prod."
+    echo "$BUILD_HASH" > "$BUILD_STATE"
+    ok "Build complete"
+  else
+    ok "Build is up to date" "sources unchanged - build skipped"
+  fi
+fi
+
+# ===========================================================================
+#  7. START SERVERS
 # ===========================================================================
 write_step "Starting servers"
 
 cleanup_stale_pids
+
+if [[ "$PROD" == "1" ]]; then
+  backend_cmd="pnpm run start:prod"
+  frontend_cmd="pnpm run start"
+else
+  backend_cmd="pnpm run start:dev"
+  frontend_cmd="pnpm run dev"
+fi
 
 api_up=false; web_up=false
 test_port "$BACKEND_PORT" && api_up=true
@@ -413,7 +505,7 @@ test_port "$FRONTEND_PORT" && web_up=true
 if [[ "$api_up" == "true" ]]; then
   ok "API already running" "port $BACKEND_PORT"
 else
-  (cd "$BACKEND_DIR" && nohup pnpm run start:dev > "$LOG_DIR/backend.log" 2>&1 &)
+  (cd "$BACKEND_DIR" && nohup $backend_cmd > "$LOG_DIR/backend.log" 2>&1 &)
   echo $! > "$LOG_DIR/backend.pid"
   ok "API starting" "port $BACKEND_PORT"
 fi
@@ -421,7 +513,7 @@ fi
 if [[ "$web_up" == "true" ]]; then
   ok "Web portal already running" "port $FRONTEND_PORT"
 else
-  (cd "$FRONTEND_DIR" && nohup pnpm run dev > "$LOG_DIR/frontend.log" 2>&1 &)
+  (cd "$FRONTEND_DIR" && nohup $frontend_cmd > "$LOG_DIR/frontend.log" 2>&1 &)
   echo $! > "$LOG_DIR/frontend.pid"
   ok "Web portal starting" "port $FRONTEND_PORT"
 fi
@@ -443,7 +535,7 @@ if [[ "$web_up" == "false" ]]; then
 fi
 
 # ===========================================================================
-#  7. READY
+#  8. READY
 # ===========================================================================
 ADMIN_EMAIL=$(get_env "$BACKEND_ENV" "SEED_ADMIN_EMAIL")
 ADMIN_EMAIL="${ADMIN_EMAIL:-see apps/backend/.env (SEED_ADMIN_EMAIL)}"
@@ -499,15 +591,33 @@ do_status() {
 }
 
 # ===========================================================================
-#  MAIN - dispatch on the first argument
+#  MAIN - dispatch on the first argument (mirrors tools/windows/start.bat)
 # ===========================================================================
-case "${1:-start}" in
-  start)   run_start_sequence ;;
-  stop)    do_stop ;;
-  restart) do_stop 2>/dev/null || true; sleep 2; run_start_sequence ;;
-  status)  do_status ;;
+CMD="${1:-start}"
+
+case "$CMD" in
+  start)
+    # Backward compatibility: everything after "start" goes to the sequence
+    # as flags (e.g. "start.sh start -Prod").
+    do_preflight
+    run_start_sequence "${@:2}"
+    ;;
+  stop)
+    do_stop
+    ;;
+  restart)
+    do_stop 2>/dev/null || true
+    sleep 2
+    do_preflight
+    run_start_sequence
+    ;;
+  status)
+    do_status
+    ;;
   *)
-    echo "Usage: $0 [start^|stop^|restart^|status]"
-    exit 1
+    # Backward compatibility (matching start.bat): if the first argument is
+    # not a known subcommand, pass everything straight to the start sequence
+    # (e.g. "start.sh -Prod").
+    run_start_sequence "$@"
     ;;
 esac
