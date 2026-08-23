@@ -14,6 +14,7 @@ import { CredentialStoreService } from "../credential-store/credential-store.ser
 import { SyncWorkerService } from "../worker/sync-worker.service";
 import { SnapshotService } from "../worker/snapshot.service";
 import { InstanceRegistryService } from "../registry/instance-registry.service";
+import { SyncQueueService } from "../queue/sync-queue.service";
 import { createDriver, DriverConfigRecord } from "../drivers/driver-registry";
 import { RedactingLogger } from "../redaction/redaction";
 import { Readable } from "node:stream";
@@ -43,6 +44,7 @@ export class CloudSetupService {
     private readonly worker: SyncWorkerService,
     private readonly snapshots: SnapshotService,
     private readonly registry: InstanceRegistryService,
+    private readonly queue: SyncQueueService,
   ) {}
 
   /** Generates a fresh 12-word phrase. Never stored server-side. */
@@ -150,23 +152,24 @@ export class CloudSetupService {
       ok: !t.last_error && t.last_success_at !== null,
       lastError: t.last_error,
     }));
-    const pending = (await this.db.client.select().from(cloudTargets).where(eq(cloudTargets.enabled, true))).length
-      ? await this.pendingCount()
-      : 0;
+    const pending = await this.pendingCount();
     return {
-      ok: targetStatus.every((t) => t.ok) && pending === 0,
+      ok: targetStatus.length > 0 && targetStatus.every((t) => t.ok) && pending === 0,
       drained,
       pending,
       targets: targetStatus,
     };
   }
 
+  /**
+   * Rows still waiting in the sync queue.
+   *
+   * This counted `cloud_targets` — so `pending` was the number of configured
+   * destinations, and `ok: pending === 0` could never be true on an install
+   * that had any. Setup step 2 always reported failure.
+   */
   private async pendingCount(): Promise<number> {
-    const { count } = await import("drizzle-orm");
-    const rows = await this.db.client
-      .select({ c: count() })
-      .from(cloudTargets);
-    return rows[0]?.c ?? 0;
+    return (await this.queue.stats()).pending;
   }
 
   /** Step 3 — first full snapshot + claim the instance. */

@@ -53,4 +53,17 @@ export class AuditController {
   async options() {
     return this.auditService.listFilterOptions();
   }
+
+  @Get("summary")
+  @ApiOperation({ summary: "Counts per action and a daily series for the audit overview, with the same filters as the list" })
+  async summary(
+    @Query("entityType") entityType?: string,
+    @Query("action") action?: string,
+    @Query("actorUserId") actorUserId?: string,
+    @Query("search") search?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.auditService.summary({ entityType, action, actorUserId, search, from, to });
+  }
 }

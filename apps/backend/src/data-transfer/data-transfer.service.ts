@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { eq, getTableColumns } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
-import { DbService, Tx } from "../db/db.service";
+import { DbService } from "../db/db.service";
 import { AuditService } from "../audit/audit.service";
 import {
   attendanceSheets,
@@ -219,6 +219,7 @@ export class DataTransferService {
     buffer: Buffer,
     fills: Record<string, Record<string, string>>,
     actorUserId: string,
+    fileName?: string,
   ): Promise<ImportResult> {
     const document = this.parseDocument(buffer);
     const fillsSafe = fills && typeof fills === "object" ? fills : {};
@@ -313,8 +314,9 @@ const current = getTableColumns(def.table) as Record<string, any>;
     });
 
     await this.audit.createLog(actorUserId, "system.data-import", "system", null, {
-      file: document.exportedAt,
-      sourceVersion: document.sourceVersion,
+      fileName: fileName ?? null,
+      exportedAt: document.exportedAt ?? null,
+      sourceVersion: document.sourceVersion ?? null,
       imported,
     });
 

@@ -20,6 +20,7 @@ import { SystemModule } from "./system/system.module";
 import { SchedulingModule } from "./scheduling/scheduling.module";
 import { WhiteboardsModule } from "./whiteboards/whiteboards.module";
 import { DataTransferModule } from "./data-transfer/data-transfer.module";
+import { CloudBackupModule } from "./cloud-backup/cloud-backup.module";
 import { MachineBindingService } from "./machine/machine-binding.service";
 
 @Module({
@@ -45,6 +46,7 @@ import { MachineBindingService } from "./machine/machine-binding.service";
     SchedulingModule,
     WhiteboardsModule,
     DataTransferModule,
+    CloudBackupModule,
   ],
   providers: [MachineBindingService],
 })

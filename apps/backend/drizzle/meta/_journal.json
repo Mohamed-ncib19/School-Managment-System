@@ -50,6 +50,20 @@
       "when": 1786724802085,
       "tag": "0006_striped_surge",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787233703570,
+      "tag": "0007_volatile_changeling",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787270400000,
+      "tag": "0008_cloud_state_columns",
+      "breakpoints": true
     }
   ]
 }

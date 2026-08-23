@@ -210,8 +210,14 @@ export class AuditService {
     });
   }
 
-  async listLogs(params: ListLogsParams) {
-    const { page, limit, entityType, action, actorUserId, search, from, to } = params;
+  /**
+   * Shared WHERE clause for the list and the summary endpoint, so the overview
+   * cards always describe exactly the rows the page is showing.
+   */
+  private async buildConditions(
+    params: Pick<ListLogsParams, "entityType" | "action" | "actorUserId" | "search" | "from" | "to">,
+  ): Promise<SQL[]> {
+    const { entityType, action, actorUserId, search, from, to } = params;
 
     const conditions: SQL[] = [];
 
@@ -265,6 +271,13 @@ export class AuditService {
       conditions.push(or(...searchGroups) as SQL);
     }
 
+    return conditions;
+  }
+
+  async listLogs(params: ListLogsParams) {
+    const { page, limit } = params;
+
+    const conditions = await this.buildConditions(params);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const sortable = SORTABLE.has(params.sortBy ?? "") ? params.sortBy! : "created_at";
@@ -321,6 +334,88 @@ export class AuditService {
       data,
       meta: { total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) },
     };
+  }
+
+  /**
+   * Aggregates for the audit page overview: one count per distinct action plus
+   * a daily activity series. Both answer the same filters as `listLogs`, so
+   * the stat cards and the chart describe the exact set of rows below them.
+   *
+   * The frontend classifies `byAction` into tones (success / danger / warning)
+   * with the same rules it uses to tint the feed badges — keeping the tone
+   * decision in one place instead of duplicating string matching in SQL.
+   */
+  async summary(
+    params: Pick<ListLogsParams, "entityType" | "action" | "actorUserId" | "search" | "from" | "to">,
+  ) {
+    const conditions = await this.buildConditions(params);
+
+    const [byAction, totalRow, series] = await Promise.all([
+      this.db.client
+        .select({ action: auditLogs.action, count: sql<number>`count(*)::int` })
+        .from(auditLogs)
+        .where(and(...conditions))
+        .groupBy(auditLogs.action)
+        .orderBy(desc(sql`count(*)`)),
+      this.db.client
+        .select({ count: sql<number>`count(*)::int` })
+        .from(auditLogs)
+        .where(and(...conditions)),
+      this.dailySeries(conditions, params.from, params.to),
+    ]);
+
+    const [countRow] = totalRow;
+    return { total: countRow.count, byAction, series };
+  }
+
+  /**
+   * One bucket per day for the activity chart: the last 30 days (server-local,
+   * the same machine the browser is on for self-hosted installs), narrowed to
+   * the requested `from`/`to` window and capped at 31 bars so a multi-month
+   * filter still draws a readable chart.
+   */
+  private async dailySeries(conditions: SQL[], from?: string, to?: string) {
+    const end = new Date();
+    if (to) {
+      const parsed = new Date(to);
+      if (!isNaN(parsed.getTime())) end.setTime(parsed.getTime());
+    }
+    // A bare date means "through the end of that day", like in buildConditions.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to ?? "")) end.setHours(23, 59, 59, 999);
+
+    const start = new Date(end);
+    start.setDate(start.getDate() - 29);
+    start.setHours(0, 0, 0, 0);
+
+    if (from) {
+      const parsed = new Date(from);
+      if (!isNaN(parsed.getTime()) && parsed > start) {
+        start.setTime(parsed.getTime());
+        start.setHours(0, 0, 0, 0);
+      }
+    }
+    if (end.getTime() - start.getTime() > 31 * 86_400_000) {
+      start.setTime(end.getTime() - 30 * 86_400_000);
+      start.setHours(0, 0, 0, 0);
+    }
+
+    const rows = await this.db.client
+      .select({
+        day: sql<string>`to_char(date_trunc('day', ${auditLogs.created_at}), 'YYYY-MM-DD')`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(auditLogs)
+      .where(and(...conditions, gte(auditLogs.created_at, start), lte(auditLogs.created_at, end)))
+      .groupBy(sql`date_trunc('day', ${auditLogs.created_at})`);
+
+    const counts = new Map(rows.map((r) => [r.day, r.count]));
+    const series: { day: string; count: number }[] = [];
+    const pad = (n: number) => String(n).padStart(2, "0");
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      series.push({ day: key, count: counts.get(key) ?? 0 });
+    }
+    return series;
   }
 
   /**

@@ -1,4 +1,4 @@
-import { pgTable, timestamp, text, integer, index, uniqueIndex, foreignKey, uuid, numeric, boolean, jsonb, check, pgEnum, time } from "drizzle-orm/pg-core"
+import { pgTable, timestamp, text, integer, index, uniqueIndex, foreignKey, uuid, numeric, boolean, jsonb, check, pgEnum, time, bigint, bigserial } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const compensationModel = pgEnum("CompensationModel", ['percentage', 'fixed_salary', 'fixed_per_student', 'fixed_per_group', 'hybrid', 'custom'])
@@ -664,4 +664,101 @@ export const systemSettings = pgTable("system_settings", {
 	support_whatsapp: text("support_whatsapp"),
 }, () => [
 	check("system_settings_singleton_check", sql`singleton = 'global'::text`),
+]);
+
+/**
+ * Cloud disaster-recovery tables.
+ *
+ * These four tables back the cloud-backup subsystem: an append-only, encrypted
+ * mirror of the school's data pushed to one or more user-chosen storage
+ * targets. They are deliberately excluded from the sync triggers below.
+ */
+export const syncQueue = pgTable("sync_queue", {
+	id: bigserial("id", { mode: "number" }).primaryKey().notNull(),
+	entity_table: text("entity_table").notNull(),
+	entity_id: text("entity_id").notNull(),
+	operation: text("operation").notNull(),
+	payload_json: jsonb("payload_json").notNull(),
+	occurred_at: timestamp("occurred_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	actor_user_id: uuid("actor_user_id"),
+	status: text("status").default('pending').notNull(),
+	attempts: integer("attempts").default(0).notNull(),
+	batch_id: uuid("batch_id"),
+	last_error: text("last_error"),
+	processed_at: timestamp("processed_at", { precision: 3, mode: 'date' }),
+}, (table) => [
+	index("sync_queue_status_id_idx").using("btree", table.status.asc().nullsLast(), table.id.asc().nullsLast()),
+	index("sync_queue_occurred_at_idx").using("btree", table.occurred_at.asc().nullsLast()),
+]);
+
+export const cloudTargets = pgTable("cloud_targets", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	driver: text("driver").notNull(),
+	display_label: text("display_label").notNull(),
+	config_ref: text("config_ref").notNull(),
+	enabled: boolean("enabled").default(true).notNull(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	last_success_at: timestamp("last_success_at", { precision: 3, mode: 'date' }),
+	last_error: text("last_error"),
+	consecutive_failures: integer("consecutive_failures").default(0).notNull(),
+});
+
+export const backupManifest = pgTable("backup_manifest", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	target_id: uuid("target_id").notNull(),
+	object_key: text("object_key").notNull(),
+	kind: text("kind").notNull(),
+	covers_from_seq: bigint("covers_from_seq", { mode: "number" }),
+	covers_to_seq: bigint("covers_to_seq", { mode: "number" }),
+	uncompressed_sha256: text("uncompressed_sha256").notNull(),
+	uncompressed_bytes: bigint("uncompressed_bytes", { mode: "number" }).notNull(),
+	stored_bytes: bigint("stored_bytes", { mode: "number" }).notNull(),
+	format_version: integer("format_version").notNull().default(1),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("backup_manifest_target_created_idx").using("btree", table.target_id.asc().nullsLast(), table.created_at.asc().nullsLast()),
+	index("backup_manifest_kind_seq_idx").using("btree", table.kind.asc().nullsLast(), table.covers_to_seq.asc().nullsLast()),
+]);
+
+/**
+ * Local state for the cloud-backup subsystem. A singleton row holds the
+ * school identity, the instance UUID and the setup/verification flags; the
+ * KDF salt for the recovery phrase lives here too (the cloud copy of it is
+ * what makes old backups restorable after a reinstall).
+ */
+export const cloudState = pgTable("cloud_state", {
+	singleton: text().default('global').primaryKey().notNull(),
+	school_id: text("school_id").notNull(),
+	instance_uuid: uuid("instance_uuid").notNull().defaultRandom(),
+	hostname: text("hostname").notNull(),
+	setup_complete: boolean("setup_complete").default(false).notNull(),
+	verify_complete: boolean("verify_complete").default(false).notNull(),
+	recovery_phrase_hash: text("recovery_phrase_hash"),
+	kdf_salt: text("kdf_salt"),
+	wrapped_key: text("wrapped_key"),
+	wrap_salt: text("wrap_salt"),
+	schema_hash: text("schema_hash"),
+	quiet_hour: integer("quiet_hour").default(3).notNull(),
+	drain_interval_seconds: integer("drain_interval_seconds").default(60).notNull(),
+	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
+	last_manifest_at: timestamp("last_manifest_at", { precision: 3, mode: 'date' }),
+}, () => [
+	check("cloud_state_singleton_check", sql`singleton = 'global'::text`),
+]);
+
+/**
+ * Restore progress for resumable replays. Written locally during a restore so
+ * an interrupted rebuild resumes from the last applied event rather than
+ * restarting (or worse, presenting a half-populated database as complete).
+ */
+export const restoreProgress = pgTable("restore_progress", {
+	id: uuid().primaryKey().notNull().defaultRandom(),
+	job_id: text("job_id").notNull(),
+	snapshot_key: text("snapshot_key").notNull(),
+	applied_through_seq: bigint("applied_through_seq", { mode: "number" }).default(0).notNull(),
+	state: text("state").notNull(),
+	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("restore_progress_job_key").using("btree", table.job_id.asc().nullsLast()),
 ]);

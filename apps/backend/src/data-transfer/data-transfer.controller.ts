@@ -59,6 +59,6 @@ export class DataTransferController {
     const actor = req?.user;
     if (!actor?.id) throw new BadRequestException("Utilisateur non identifié.");
 
-    return this.dataTransfer.importAll(file.buffer, fills, actor.id);
+    return this.dataTransfer.importAll(file.buffer, fills, actor.id, file.originalname);
   }
 }

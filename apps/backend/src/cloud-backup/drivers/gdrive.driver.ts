@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { google, drive_v3, Auth } from "googleapis";
+import type { drive_v3, Auth } from "googleapis";
 import type {
   DriverOptions,
   ObjectMeta,
@@ -34,11 +34,33 @@ export interface GDriveConfig {
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const BACKUP_FOLDER_PREFIX = "iq-academy-backup-";
 
-function driveClient(auth: Auth.OAuth2Client): drive_v3.Drive {
+/**
+ * Lazy googleapis loader.
+ *
+ * `googleapis` bundles every Google API surface and costs ~1.5 s to require.
+ * A static import made every backend boot — and every test that touches the
+ * driver registry — pay that, on installs that will never configure a Drive
+ * target. Types are still imported statically; only the runtime module is
+ * deferred to the first Drive call.
+ */
+let googleapisPromise: Promise<typeof import("googleapis")> | null = null;
+
+async function loadGoogleapis(): Promise<typeof import("googleapis")> {
+  if (!googleapisPromise) googleapisPromise = import("googleapis");
+  return googleapisPromise;
+}
+
+async function driveClient(auth: Auth.OAuth2Client): Promise<drive_v3.Drive> {
+  const { google } = await loadGoogleapis();
   return google.drive({ version: "v3", auth });
 }
 
-export function buildOAuthClient(clientId: string, clientSecret: string, redirectUri: string): Auth.OAuth2Client {
+export async function buildOAuthClient(
+  clientId: string,
+  clientSecret: string,
+  redirectUri: string,
+): Promise<Auth.OAuth2Client> {
+  const { google } = await loadGoogleapis();
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }
 
@@ -54,7 +76,8 @@ export class GDriveDriver implements StorageDriver {
     this.options = { ...DEFAULT_DRIVER_OPTIONS, ...options };
   }
 
-  private auth(): Auth.OAuth2Client {
+  private async auth(): Promise<Auth.OAuth2Client> {
+    const { google } = await loadGoogleapis();
     const auth = new google.auth.OAuth2(this.config.clientId, this.config.clientSecret);
     auth.setCredentials({ refresh_token: this.config.refreshToken });
     return auth;
@@ -105,7 +128,7 @@ export class GDriveDriver implements StorageDriver {
     // Cached: every put/get/list used to spend an extra files.list call
     // resolving the same folder.
     if (this.resolvedFolderId) return this.resolvedFolderId;
-    const drive = driveClient(auth);
+    const drive = await driveClient(auth);
     const folderName = `${BACKUP_FOLDER_PREFIX}${schoolId}`;
     const res = await drive.files.list({
       q: `name = '${folderName.replace(/'/g, "\\'")}' and mimeType = '${FOLDER_MIME}' and trashed = false`,
@@ -124,13 +147,13 @@ export class GDriveDriver implements StorageDriver {
   }
 
   async testConnection(): Promise<{ ok: true; latencyMs: number; probe: string }> {
-    const auth = this.auth();
+    const auth = await this.auth();
     const probe = Buffer.from(`iq-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const key = `__iq_probe__/${probe.toString("base64url").slice(0, 40)}.bin`;
     const started = Date.now();
     try {
       await withRetry(async () => {
-        const drive = driveClient(auth);
+        const drive = await driveClient(auth);
         // The probe must land in the same folder real uploads use. Testing
         // against a "__probe__" folder let a broken config pass the test and
         // fail every actual backup, and littered the user's Drive.
@@ -161,10 +184,10 @@ export class GDriveDriver implements StorageDriver {
   }
 
   async put(key: string, stream: Readable, sizeHint?: number, opts?: PutOptions): Promise<PutResult> {
-    const auth = this.auth();
+    const auth = await this.auth();
     try {
       await withRetry(async () => {
-        const drive = driveClient(auth);
+        const drive = await driveClient(auth);
         const folderId = await this.rootFolder(auth, key.split("/")[0]);
         const name = this.fileName(key);
         if (opts?.overwrite) {
@@ -200,10 +223,10 @@ export class GDriveDriver implements StorageDriver {
   }
 
   async get(key: string): Promise<Readable> {
-    const auth = this.auth();
+    const auth = await this.auth();
     try {
       const stream = await withRetry(async () => {
-        const drive = driveClient(auth);
+        const drive = await driveClient(auth);
         const folderId = await this.rootFolder(auth, key.split("/")[0]);
         const res = await drive.files.list({
           q: `name = '${this.fileName(key).replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
@@ -222,11 +245,11 @@ export class GDriveDriver implements StorageDriver {
   }
 
   async list(prefix: string): Promise<ObjectMeta[]> {
-    const auth = this.auth();
+    const auth = await this.auth();
     const items: ObjectMeta[] = [];
     try {
       await withRetry(async () => {
-        const drive = driveClient(auth);
+        const drive = await driveClient(auth);
         const folderId = await this.rootFolder(auth, prefix.split("/")[0]);
         let pageToken: string | undefined;
         const encodedPrefix = this.fileName(prefix);
