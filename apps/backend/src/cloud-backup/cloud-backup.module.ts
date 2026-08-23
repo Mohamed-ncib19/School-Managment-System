@@ -11,7 +11,6 @@ import { CredentialStoreService } from "./credential-store/credential-store.serv
 import { RestoreService } from "./restore/restore.service";
 import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
 import { CloudSetupService } from "./setup/setup.service";
-import { MachineBindingService } from "../machine/machine-binding.service";
 
 @Module({
   imports: [ScheduleModule.forRoot()],
@@ -27,7 +26,6 @@ import { MachineBindingService } from "../machine/machine-binding.service";
     RestoreService,
     RestoreThrottleGuard,
     CloudSetupService,
-    MachineBindingService,
   ],
   exports: [
     SyncWorkerService,
@@ -36,6 +34,8 @@ import { MachineBindingService } from "../machine/machine-binding.service";
     CredentialStoreService,
   ],
 })
+// MachineBindingService is deliberately NOT provided here. AppModule already
+// provides it, and being in two modules gave it two instances — so its
+// onApplicationBootstrap (which shells out to `reg query` and can call
+// process.exit(1)) ran twice on every start.
 export class CloudBackupModule {}
-
-export { MachineBindingService };

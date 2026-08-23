@@ -411,7 +411,11 @@ export class AuditService {
     const counts = new Map(rows.map((r) => [r.day, r.count]));
     const series: { day: string; count: number }[] = [];
     const pad = (n: number) => String(n).padStart(2, "0");
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const days = Math.round((end.getTime() - start.getTime()) / 86_400_000);
+    for (let i = 0; i <= days; i++) {
+      // Rebuilt from `start` each step: mutating a single cursor with setDate
+      // drifts by a day across a DST change.
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
       const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       series.push({ day: key, count: counts.get(key) ?? 0 });
     }

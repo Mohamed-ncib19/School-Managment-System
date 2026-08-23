@@ -11,6 +11,9 @@ import { RedactingLogger } from "../redaction/redaction";
  */
 export const MAX_ATTEMPTS = 10;
 
+/** Shipped rows are kept this long as a local audit trail, then pruned. */
+export const SENT_RETENTION_DAYS = 30;
+
 export interface PendingBatch {
   rows: Array<{
     id: number;
@@ -124,6 +127,23 @@ export class SyncQueueService {
       .update(syncQueue)
       .set({ status: "pending" })
       .where(and(eq(syncQueue.status, "failed"), lt(syncQueue.attempts, maxAttempts)))
+      .returning({ id: syncQueue.id });
+    return rows.length;
+  }
+
+  /**
+   * Deletes rows that were shipped more than `days` ago.
+   *
+   * The cloud copy is append-only and authoritative; the local queue is a
+   * shipping buffer. Keeping every row forever grew the table without bound —
+   * years of a school's writes with their full JSON payloads — for no
+   * recovery benefit, since a pruned row is already inside an event batch.
+   */
+  async pruneSent(days: number = SENT_RETENTION_DAYS): Promise<number> {
+    const cutoff = new Date(Date.now() - days * 86_400_000);
+    const rows = await this.db.client
+      .delete(syncQueue)
+      .where(and(eq(syncQueue.status, "sent"), lt(syncQueue.occurred_at, cutoff)))
       .returning({ id: syncQueue.id });
     return rows.length;
   }

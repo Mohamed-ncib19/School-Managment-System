@@ -8,13 +8,15 @@ import {
   Body,
   Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
   BadRequestException,
   NotFoundException,
   Res,
 } from "@nestjs/common";
 import { Response } from "express";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { DbService } from "../db/db.service";
 import { cloudState, cloudTargets, backupManifest } from "../db/schema";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -27,7 +29,7 @@ import { RestoreService, RestoreInput } from "./restore/restore.service";
 import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
 import { SnapshotService } from "./worker/snapshot.service";
 import { DRIVER_DEFINITIONS, DriverConfigRecord, createDriver } from "./drivers/driver-registry";
-import { redactLogError } from "./redaction/redaction";
+import { redactLogError, RedactingLogger } from "./redaction/redaction";
 
 interface TargetBody {
   driverId: string;
@@ -37,6 +39,8 @@ interface TargetBody {
 
 @Controller("cloud-backup")
 export class CloudBackupController {
+  private readonly logger = new RedactingLogger(CloudBackupController.name);
+
   constructor(
     private readonly db: DbService,
     private readonly worker: SyncWorkerService,
@@ -142,7 +146,9 @@ export class CloudBackupController {
     const rows = await this.db.client
       .select({ at: backupManifest.created_at })
       .from(backupManifest)
-      .orderBy(backupManifest.created_at)
+      // Ascending returned the FIRST backup ever taken and labelled it
+      // "last sync" — a value that never changed again.
+      .orderBy(desc(backupManifest.created_at))
       .limit(1);
     return rows[0]?.at?.toISOString() ?? null;
   }
@@ -268,13 +274,22 @@ export class CloudBackupController {
 
   @Post("backup/now")
   @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.ACCEPTED)
   async backupNow() {
     const state = await this.db.client.query.cloudState.findFirst({ where: eq(cloudState.singleton, "global") });
     if (!state?.wrapped_key || !state.wrap_salt || !state.kdf_salt) throw new BadRequestException("Sauvegarde cloud non configurée.");
     const key = await this.keys.unwrap(state.wrapped_key, state.wrap_salt);
     const kdf = JSON.parse(state.kdf_salt) as Parameters<typeof import("./crypto/object-codec").encodeObject>[0]["kdf"];
     const targets = await this.setup.enabledTargetDrivers();
-    return this.snapshots.runSnapshot(targets, key, state.school_id, kdf, "manual");
+
+    // Fire and report progress through /status. A full dump plus upload is
+    // minutes of work; awaiting it held the request open past any proxy
+    // timeout and gave the user no way to see how it went.
+    void this.snapshots
+      .runSnapshot(targets, key, state.school_id, kdf, "manual")
+      .catch((err) => this.logger.error(`Manual snapshot failed: ${redactLogError(err)}`));
+
+    return { accepted: true };
   }
 
   // ---------------------------------------------------------------------------

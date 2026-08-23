@@ -43,6 +43,7 @@ Palette,
   SlidersHorizontal,
   Headset,
   FileJson,
+  Cloud,
 } from "lucide-react";
 import { usersApi } from "@/lib/api/users.api";
 import { authApi } from "@/lib/api/auth.api";
@@ -58,6 +59,7 @@ import { useAppearance, ACCENT_PRESETS, ACCENT_IDS } from "@/hooks/use-appearanc
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import UpdateProgressTracker from "@/components/shared/update-progress";
 import DataTransferSection from "@/components/settings/data-transfer-section";
+import DataSafetySection from "@/components/settings/data-safety-section";
 import { SettingsSkeleton, PageLoader } from "@/components/shared/skeletons";
 import BrandMark from "@/components/shared/brand-mark";
 import { apiBaseUrl } from "@/lib/api/client";
@@ -84,7 +86,7 @@ const passwordSchema = z.object({
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
-type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "support" | "features" | "hierarchy" | "updates" | "backups" | "data";
+type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "support" | "features" | "hierarchy" | "updates" | "backups" | "data" | "datasafety";
 
 const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   fields: BookOpen,
@@ -375,6 +377,7 @@ export default function SettingsPage() {
       ? [{ id: "backups" as SectionId, icon: Database, label: t("settings.backupTitle", "Database Backup"), description: t("settings.backupDescription", "Create, list, and restore versioned database backups") }]
       : []),
     { id: "data", icon: FileJson, label: t("settings.dataTitle", "Données"), description: t("settings.dataDescription", "Exporter ou importer l'intégralité des données du système") },
+    { id: "datasafety", icon: Cloud, label: t("cloudSafeSave.title", "Sauvegarde cloud"), description: t("cloudSafeSave.sectionDescription", "Sauvegarde chiffrée automatique sur vos propres espaces cloud") },
   ];
   const goTo = (id: SectionId) => {
     setActive(id);
@@ -1345,6 +1348,8 @@ export default function SettingsPage() {
             )}
 
             {active === "data" && <DataTransferSection />}
+
+            {active === "datasafety" && <DataSafetySection />}
 
             {active === "updates" && (
               <div className="card max-w-xl">

@@ -233,6 +233,11 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
         .update(cloudState)
         .set({ last_manifest_at: new Date() })
         .where(eq(cloudState.singleton, "global"));
+
+      // A shipped row older than the newest snapshot is definitively covered
+      // by it, so this is the safe moment to trim the local buffer.
+      const pruned = await this.queue.pruneSent();
+      if (pruned > 0) this.logger.log(`Pruned ${pruned} shipped queue rows older than 30 days.`);
     } catch (err) {
       this.logger.error(`Daily snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
     }

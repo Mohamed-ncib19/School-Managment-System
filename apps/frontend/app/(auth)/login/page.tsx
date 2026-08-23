@@ -11,6 +11,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { authApi } from "@/lib/api/auth.api";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { FormButton } from "@/components/forms/form-helpers";
+import RestoreFlow from "@/components/auth/restore-flow";
 import { useTranslation } from "@/lib/i18n/context";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { LoginSkeleton } from "@/components/shared/skeletons";
@@ -119,6 +120,7 @@ export default function LoginPage() {
             {t("auth.signIn")}
           </FormButton>
           </form>
+          <RestoreFlow />
       </div>
       </div>
     </div>

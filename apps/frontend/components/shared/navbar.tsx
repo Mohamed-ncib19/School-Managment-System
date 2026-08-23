@@ -6,6 +6,7 @@ import { Menu, Sun, Moon } from "lucide-react";
 import { useAppearance, initAppearance } from "@/hooks/use-appearance";
 import ShutdownButton from "./shutdown-button";
 import UpdateIndicator from "./update-indicator";
+import CloudSyncIndicator from "./cloud-sync-indicator";
 
 interface NavbarProps {
   onToggleSidebar: () => void;
@@ -37,6 +38,7 @@ export default function Navbar({ onToggleSidebar, title, breadcrumb }: NavbarPro
 
       <div className="flex items-center gap-3">
         <UpdateIndicator />
+        <CloudSyncIndicator />
         <ShutdownButton />
         <button
           onClick={toggleTheme}

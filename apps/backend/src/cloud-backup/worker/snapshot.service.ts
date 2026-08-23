@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { DbService } from "../../db/db.service";
+import { parsePgUrl } from "../../common/pg-url";
 import { backupManifest, cloudState, syncQueue } from "../../db/schema";
 import { eq, max } from "drizzle-orm";
 import type { StorageDriver } from "../drivers/storage-driver";
@@ -14,6 +15,7 @@ import { compressionAlgorithm } from "../crypto/compression";
 import type { KdfParams } from "../crypto/kdf";
 import { RedactingLogger } from "../redaction/redaction";
 import { findPgBin } from "./pg-bin";
+import { computeSchemaHash } from "./schema-hash";
 import { Readable } from "node:stream";
 
 const PG_TIMEOUT_MS = 30 * 60_000;
@@ -34,31 +36,13 @@ export class SnapshotService {
 
   constructor(private readonly db: DbService) {}
 
-  private async dbConfig(): Promise<{
-    user: string;
-    password: string;
-    host: string;
-    port: number;
-    database: string;
-  }> {
-    const url = process.env.DATABASE_URL ?? "";
-    const m = url.match(/^postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
-    if (!m) throw new Error("DATABASE_URL n'est pas une chaîne de connexion PostgreSQL valide");
-    return {
-      user: m[1],
-      password: m[2],
-      host: m[3],
-      port: parseInt(m[4], 10),
-      database: m[5].split("?")[0],
-    };
-  }
 
   private findPgDump(): string | null {
     return findPgBin("pg_dump");
   }
 
   private async dumpToFile(targetPath: string): Promise<void> {
-    const cfg = await this.dbConfig();
+    const cfg = parsePgUrl(process.env.DATABASE_URL ?? "");
     const pgDump = this.findPgDump();
     if (!pgDump) {
       // Fall back to pg_dump on PATH (docker/dev machines).
@@ -241,14 +225,8 @@ compression: compressionAlgorithm(),
     }
   }
 
-  /** Sha256 of the schema file — compared at boot to detect a migration. */
+  /** Fingerprint of the schema, compared at boot to detect a migration. */
   async schemaHash(): Promise<string> {
-    const schemaPath = join(process.cwd(), "src", "db", "schema.ts");
-    try {
-      const content = await readFile(schemaPath, "utf8");
-      return createHash("sha256").update(content).digest("hex");
-    } catch {
-      return "";
-    }
+    return computeSchemaHash();
   }
 }

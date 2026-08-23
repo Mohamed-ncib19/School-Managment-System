@@ -22,6 +22,13 @@ export interface AuditFilterOptions {
   actors: { id: string; full_name: string; email: string }[];
 }
 
+/** Counts for the overview cards and the daily activity chart. */
+export interface AuditSummary {
+  total: number;
+  byAction: { action: string; count: number }[];
+  series: { day: string; count: number }[];
+}
+
 /** Drops empty values so the query string stays clean and cache keys stay stable. */
 const compact = (params: object) =>
   Object.fromEntries(
@@ -34,4 +41,7 @@ export const auditApi = {
     ApiClient.getPaginated<AuditLog>("/audit-logs", { params: compact(params ?? {}) }),
 
   options: () => ApiClient.get<AuditFilterOptions>("/audit-logs/options"),
+
+  summary: (params?: AuditListParams) =>
+    ApiClient.get<AuditSummary>("/audit-logs/summary", { params: compact(params ?? {}) }),
 };

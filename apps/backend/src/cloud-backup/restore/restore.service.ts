@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { eq, sql, param } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
+import { parsePgUrl } from "../../common/pg-url";
 import { cloudState, restoreProgress } from "../../db/schema";
 import type { StorageDriver } from "../drivers/storage-driver";
 import { createDriver, DriverConfigRecord } from "../drivers/driver-registry";
@@ -20,6 +21,7 @@ import { InstanceRegistryService } from "../registry/instance-registry.service";
 import { SYNCED_TABLES } from "../queue/sync-trigger-bootstrap";
 import { withSyncDisabled } from "../queue/sync-context";
 import { findPgBin } from "../worker/pg-bin";
+import { computeSchemaHash } from "../worker/schema-hash";
 import { RedactingLogger } from "../redaction/redaction";
 
 /**
@@ -94,22 +96,36 @@ export class RestoreService {
     return createDriver({ driver: input.driverId as DriverConfigRecord["driver"], config: input.config });
   }
 
-  /** Reads just the plaintext header of an object without downloading the body. */
+  /** Reads just the plaintext header of an object, then releases the stream. */
   private async readHeader(driver: StorageDriver, key: string): Promise<ObjectHeader> {
     const stream = await driver.get(key);
-    const chunks: Buffer[] = [];
-    let total = 0;
-    for await (const chunk of stream) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-      chunks.push(buf);
-      total += buf.length;
-      if (total >= 4) {
-        const length = chunks[0].readUInt32BE(0);
-        if (total >= 4 + length) break;
+    try {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      let needed = 4;
+      for await (const chunk of stream) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        chunks.push(buf);
+        total += buf.length;
+        if (total >= 4 && needed === 4) {
+          // Concatenate before reading: the length can straddle two chunks,
+          // and `chunks[0]` alone may be shorter than four bytes — reading it
+          // directly threw RangeError on a small first chunk.
+          needed = 4 + Buffer.concat(chunks).readUInt32BE(0);
+          if (needed > 1_000_000) {
+            throw new Error(`Object header length is implausible (${needed - 4} bytes); object is corrupt.`);
+          }
+        }
+        if (needed > 4 && total >= needed) break;
       }
+      const { header } = splitObject(Buffer.concat(chunks));
+      return header;
+    } finally {
+      // Abandoning a driver stream without destroying it holds an HTTP
+      // connection open for the life of the process — one per batch, and
+      // discovery reads a header for every batch in the namespace.
+      stream.destroy();
     }
-    const { header } = splitObject(Buffer.concat(chunks));
-    return header;
   }
 
   private async saltFromCloud(driver: StorageDriver, schoolId: string): Promise<KdfParams> {
@@ -239,7 +255,7 @@ export class RestoreService {
   }
 
   private async loadSqlFile(path: string): Promise<void> {
-    const cfg = await this.dbConfig();
+    const cfg = parsePgUrl(process.env.DATABASE_URL ?? "");
     const run = (binary: string) =>
       new Promise<void>((resolve, reject) => {
         const child = spawn(
@@ -320,22 +336,29 @@ export class RestoreService {
       const bytes = await this.readWhole(driver, batch.key);
       const decoded = await decodeObject(bytes, key);
       const lines = decoded.plaintext.toString("utf8").split("\n").filter(Boolean);
-      for (const line of lines) {
-        const event = JSON.parse(line) as {
-          seq: number;
-          entity_table: string;
-          entity_id: string;
-          operation: "insert" | "update" | "delete";
-          payload: Record<string, unknown>;
-          occurred_at?: string;
-          actor_user_id?: string | null;
-        };
-        if (event.seq <= job.applied_through_seq) continue;
-        await withSyncDisabled(this.db, async (tx) => {
+
+      // One transaction per BATCH, not per row. Per-row transactions meant a
+      // hundred thousand commits for a modest school's history, and left the
+      // batch half-applied if the process died mid-way. Because
+      // applied_through_seq only advances after this commits, an interrupted
+      // restore now resumes at a batch boundary with nothing partial behind
+      // it — which is what the resumability comment always claimed.
+      await withSyncDisabled(this.db, async (tx) => {
+        for (const line of lines) {
+          const event = JSON.parse(line) as {
+            seq: number;
+            entity_table: string;
+            entity_id: string;
+            operation: "insert" | "update" | "delete";
+            payload: Record<string, unknown>;
+            occurred_at?: string;
+            actor_user_id?: string | null;
+          };
+          if (event.seq <= job.applied_through_seq) continue;
           await this.applyEvent(tx, event);
-        });
-        applied++;
-      }
+          applied++;
+        }
+      });
       await this.db.client
         .update(restoreProgress)
         .set({ applied_through_seq: batch.to, state: "replaying" })
@@ -437,25 +460,34 @@ export class RestoreService {
     if (insertColumns.length === 0) return;
 
     if (event.operation === "delete") {
-      const pkVal = toDbValue(event.payload[pks[0]]);
-      if (pkVal == null) return;
+      // Every PK column, not just the first: a composite key matched on one
+      // column deleted far more rows than the event described.
+      const conditions = pks.map((pk) => {
+        const value = toDbValue(event.payload[pk]);
+        if (value == null) throw new Error(`Replay: missing primary key value ${pk} for ${table}`);
+        return sql`${sql.raw(`"${pk}"`)} = ${param(value)}`;
+      });
       await tx.execute(
-        sql`DELETE FROM ${sql.raw(`public."${table}"`)} WHERE ${sql.raw(`"${pks[0]}"`)} = ${param(pkVal)}`,
+        sql`DELETE FROM ${sql.raw(`public."${table}"`)} WHERE ${sql.join(conditions, sql.raw(" AND "))}`,
       );
       return;
     }
 
     const values = insertColumns.map((c) => toDbValue(event.payload[c]));
-    const setClause = insertColumns
-      .filter((c) => !pks.includes(c))
-      .map((c) => `"${c}" = EXCLUDED."${c}"`)
-      .join(", ");
+    const setColumns = insertColumns.filter((c) => !pks.includes(c));
+    // A payload whose every column is part of the key has nothing to update,
+    // and an empty SET list produced `DO UPDATE SET ` — a syntax error.
+    const conflictAction =
+      setColumns.length === 0
+        ? sql`DO NOTHING`
+        : sql`DO UPDATE SET ${sql.raw(setColumns.map((c) => `"${c}" = EXCLUDED."${c}"`).join(", "))}`;
+
     const stmt = sql`
       INSERT INTO ${sql.raw(`public."${table}"`)}
         (${sql.raw(insertColumns.map((c) => `"${c}"`).join(", "))})
       VALUES (${sql.join(values.map((v) => param(v)), sql.raw(", "))})
       ON CONFLICT (${sql.raw(pks.map((c) => `"${c}"`).join(", "))})
-      DO UPDATE SET ${sql.raw(setClause)}
+      ${conflictAction}
     `;
     await tx.execute(stmt);
   }
@@ -463,8 +495,15 @@ export class RestoreService {
   private async pkColumns(tx: DbService["client"], table: string): Promise<string[]> {
     const cached = this.pkCache.get(table);
     if (cached) return cached;
+    // Ordered by key position: `= ANY(i.indkey)` returned the columns in
+    // arbitrary order, which matters for the composite delete above.
     const result = (await tx.execute(
-      sql`SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = ${sql.raw(`'public.${table}'`)}::regclass AND i.indisprimary`,
+      sql`SELECT a.attname
+          FROM pg_index i
+          JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+          JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+          WHERE i.indrelid = ${sql.raw(`'public.${table}'`)}::regclass AND i.indisprimary
+          ORDER BY k.ord`,
     )) as unknown as { rows?: Array<{ attname: string }> };
     const names = result.rows?.map((r) => r.attname) ?? [];
     this.pkCache.set(table, names);
@@ -485,26 +524,9 @@ export class RestoreService {
     return Buffer.concat(chunks);
   }
 
-  private async dbConfig(): Promise<{ user: string; password: string; host: string; port: number; database: string }> {
-    const url = process.env.DATABASE_URL ?? "";
-    const m = url.match(/^postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
-    if (!m) throw new Error("DATABASE_URL n'est pas une chaîne de connexion PostgreSQL valide");
-    return {
-      user: m[1],
-      password: m[2],
-      host: m[3],
-      port: parseInt(m[4], 10),
-      database: m[5].split("?")[0],
-    };
-  }
 
   private async schemaHash(): Promise<string> {
-    try {
-      const content = await readFile(join(process.cwd(), "src", "db", "schema.ts"), "utf8");
-      return createHash("sha256").update(content).digest("hex");
-    } catch {
-      return "";
-    }
+    return computeSchemaHash();
   }
 
   async cancel(jobId: string): Promise<void> {
