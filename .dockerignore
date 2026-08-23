@@ -16,6 +16,7 @@ backups
 **/backups
 uploads
 **/uploads
+.cloud-creds
 machine.lock
 .env
 .env.*

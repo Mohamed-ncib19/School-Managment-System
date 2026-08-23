@@ -11,6 +11,7 @@
     "dev:warm": "node scripts/prewarm.mjs",
     "lint": "pnpm -r run lint",
     "test": "pnpm -C apps/backend run test",
+    "verify": "pnpm -C apps/backend run verify",
     "test:watch": "pnpm -C apps/backend run test:watch",
     "test:cov": "pnpm -C apps/backend run test:cov",
     "db:generate": "pnpm -C apps/backend run db:generate",

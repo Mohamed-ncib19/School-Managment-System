@@ -37,6 +37,9 @@ logs/
 .postgres/
 uploads/
 
+# Cloud backup target credentials (DPAPI / machine-key encrypted, still secrets)
+.cloud-creds/
+
 # Machine binding (anti-copy protection) - created on first run, machine-specific
 machine.lock
 
