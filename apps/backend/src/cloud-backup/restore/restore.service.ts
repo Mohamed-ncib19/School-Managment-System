@@ -207,6 +207,11 @@ export class RestoreService {
 
   /** Step 2 — download the latest snapshot and load it into this database. */
   async applySnapshot(jobId: string, target: RestoreTargetInput, schoolId: string, phrase: string): Promise<void> {
+    // Re-checked on every step, not just startRestore: these endpoints are
+    // unauthenticated by design (the old machine is gone, there is no
+    // session), so this is the only thing standing between a public POST and
+    // psql running over a live school database.
+    await this.assertDbIsFresh();
     const job = await this.db.client.query.restoreProgress.findFirst({ where: eq(restoreProgress.job_id, jobId) });
     if (!job) throw new NotFoundException("Travail de restauration inconnu.");
     if (!job.snapshot_key) throw new BadRequestException("Aucune capture à restaurer.");
@@ -270,6 +275,7 @@ export class RestoreService {
     schoolId: string,
     phrase: string,
   ): Promise<{ appliedThroughSeq: number; appliedCount: number }> {
+    await this.assertDbIsFresh();
     const job = await this.db.client.query.restoreProgress.findFirst({ where: eq(restoreProgress.job_id, jobId) });
     if (!job) throw new NotFoundException("Travail de restauration inconnu.");
 
@@ -332,6 +338,7 @@ export class RestoreService {
     schoolId: string,
     phrase: string,
   ): Promise<{ instanceUuid: string; hostname: string }> {
+    await this.assertDbIsFresh();
     const job = await this.db.client.query.restoreProgress.findFirst({ where: eq(restoreProgress.job_id, jobId) });
     if (!job) throw new NotFoundException("Travail de restauration inconnu.");
     if (job.state !== "replayed") {
@@ -470,6 +477,7 @@ export class RestoreService {
   }
 
   async cancel(jobId: string): Promise<void> {
+    await this.assertDbIsFresh();
     await this.db.client.delete(restoreProgress).where(eq(restoreProgress.job_id, jobId));
   }
 }

@@ -24,6 +24,7 @@ import { CredentialStoreService } from "./credential-store/credential-store.serv
 import { CloudKeyService } from "./credential-store/cloud-key.service";
 import { CloudSetupService } from "./setup/setup.service";
 import { RestoreService, RestoreInput } from "./restore/restore.service";
+import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
 import { SnapshotService } from "./worker/snapshot.service";
 import { DRIVER_DEFINITIONS, DriverConfigRecord, createDriver } from "./drivers/driver-registry";
 import { redactLogError } from "./redaction/redaction";
@@ -276,7 +277,7 @@ export class CloudBackupController {
 
   private readonly pendingOAuth = new Map<
     string,
-    { clientId: string; clientSecret: string; redirectUri: string }
+    { clientId: string; clientSecret: string; redirectUri: string; createdAt: number }
   >();
 
   @Post("oauth/gdrive/url")
@@ -288,10 +289,16 @@ export class CloudBackupController {
     const { google } = await import("googleapis");
     const oauth2 = new google.auth.OAuth2(body.clientId, body.clientSecret, body.redirectUri);
     const state = randomUUID();
+    // Abandoned handshakes hold a client secret in memory; sweep them.
+    const now = Date.now();
+    for (const [key, entry] of this.pendingOAuth) {
+      if (now - entry.createdAt > 10 * 60_000) this.pendingOAuth.delete(key);
+    }
     this.pendingOAuth.set(state, {
       clientId: body.clientId,
       clientSecret: body.clientSecret,
       redirectUri: body.redirectUri,
+      createdAt: now,
     });
     const url = oauth2.generateAuthUrl({
       access_type: "offline",
@@ -311,12 +318,21 @@ export class CloudBackupController {
   ) {
     const pending = state ? this.pendingOAuth.get(state) : undefined;
     this.pendingOAuth.delete(state ?? "");
-    if (error || !pending || !code) {
+    // The popup was opened by the SPA at this origin; the refresh token goes
+    // there and nowhere else. The wildcard `"*"` this used to pass handed a
+    // long-lived Google credential to any window listening.
+    const appOrigin = pending ? new URL(pending.redirectUri).origin : "null";
+    const reply = (payload: Record<string, unknown>) =>
       res
         .set("Content-Type", "text/html; charset=utf-8")
         .send(
-          `<script>if(window.opener){window.opener.postMessage({type:"iq-gdrive-oauth",ok:false,error:"denied"},"*");}setTimeout(()=>window.close(),500);</script>`,
+          `<script>if(window.opener){window.opener.postMessage(${JSON.stringify(payload)},${JSON.stringify(
+            appOrigin,
+          )});}setTimeout(()=>window.close(),500);</script>`,
         );
+
+    if (error || !pending || !code) {
+      reply({ type: "iq-gdrive-oauth", ok: false, error: "denied" });
       return;
     }
     try {
@@ -326,19 +342,9 @@ export class CloudBackupController {
       if (!tokens.refresh_token) {
         throw new Error("Aucun refresh token renvoyé — autorisez le compte avec le mode hors ligne.");
       }
-      res
-        .set("Content-Type", "text/html; charset=utf-8")
-        .send(
-          `<script>if(window.opener){window.opener.postMessage({type:"iq-gdrive-oauth",ok:true,refreshToken:${JSON.stringify(tokens.refresh_token)}},"*");}setTimeout(()=>window.close(),500);</script>`,
-        );
+      reply({ type: "iq-gdrive-oauth", ok: true, refreshToken: tokens.refresh_token });
     } catch (err) {
-      res
-        .set("Content-Type", "text/html; charset=utf-8")
-        .send(
-          `<script>if(window.opener){window.opener.postMessage({type:"iq-gdrive-oauth",ok:false,error:${JSON.stringify(
-            redactLogError(err),
-          )}},"*");}setTimeout(()=>window.close(),500);</script>`,
-        );
+      reply({ type: "iq-gdrive-oauth", ok: false, error: redactLogError(err) });
     }
   }
 
@@ -353,6 +359,7 @@ export class CloudBackupController {
   }
 
   @Post("restore/start")
+  @UseGuards(RestoreThrottleGuard)
   async restoreStart(@Body() body: RestoreInput) {
     return this.restore.startRestore(body);
   }
@@ -363,6 +370,7 @@ export class CloudBackupController {
   }
 
   @Post("restore/:jobId/snapshot")
+  @UseGuards(RestoreThrottleGuard)
   async restoreSnapshot(@Param("jobId") jobId: string, @Body() body: { target: RestoreInput["target"]; schoolId: string; phrase: string }) {
     if (!body.target || !body.schoolId || !body.phrase) throw new BadRequestException("Paramètres de restauration incomplets.");
     await this.restore.applySnapshot(jobId, body.target, body.schoolId, body.phrase);
@@ -370,18 +378,21 @@ export class CloudBackupController {
   }
 
   @Post("restore/:jobId/replay")
+  @UseGuards(RestoreThrottleGuard)
   async restoreReplay(@Param("jobId") jobId: string, @Body() body: { target: RestoreInput["target"]; schoolId: string; phrase: string }) {
     if (!body.target || !body.schoolId || !body.phrase) throw new BadRequestException("Paramètres de restauration incomplets.");
     return this.restore.replayEvents(jobId, body.target, body.schoolId, body.phrase);
   }
 
   @Post("restore/:jobId/finish")
+  @UseGuards(RestoreThrottleGuard)
   async restoreFinish(@Param("jobId") jobId: string, @Body() body: { target: RestoreInput["target"]; schoolId: string; phrase: string }) {
     if (!body.target || !body.schoolId || !body.phrase) throw new BadRequestException("Paramètres de restauration incomplets.");
     return this.restore.finishRestore(jobId, body.target, body.schoolId, body.phrase);
   }
 
   @Post("restore/:jobId/cancel")
+  @UseGuards(RestoreThrottleGuard)
   async restoreCancel(@Param("jobId") jobId: string) {
     await this.restore.cancel(jobId);
     return { ok: true };

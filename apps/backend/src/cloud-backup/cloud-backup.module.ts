@@ -9,6 +9,7 @@ import { InstanceRegistryService } from "./registry/instance-registry.service";
 import { CloudKeyService } from "./credential-store/cloud-key.service";
 import { CredentialStoreService } from "./credential-store/credential-store.service";
 import { RestoreService } from "./restore/restore.service";
+import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
 import { CloudSetupService } from "./setup/setup.service";
 import { MachineBindingService } from "../machine/machine-binding.service";
 
@@ -24,6 +25,7 @@ import { MachineBindingService } from "../machine/machine-binding.service";
     CloudKeyService,
     CredentialStoreService,
     RestoreService,
+    RestoreThrottleGuard,
     CloudSetupService,
     MachineBindingService,
   ],
