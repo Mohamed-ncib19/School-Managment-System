@@ -98,6 +98,9 @@ export class CloudBackupController {
       syncState = "disabled";
     } else if (allFailed) {
       syncState = "offline";
+    } else if (queueStats.failed > 0) {
+      // A row past the retry ceiling needs a human, not another cycle.
+      syncState = "attention";
     } else if (queueStats.pending > ATTENTION_PENDING_ROWS || pendingOlder > 0) {
       syncState = "attention";
     } else {
@@ -241,9 +244,13 @@ export class CloudBackupController {
 
   @Post("setup/step-1")
   @UseGuards(JwtAuthGuard)
-  step1(@Body() body: { schoolId?: string; phrase?: string }) {
+  step1(@Body() body: { schoolId?: string; phrase?: string; confirmReplaceExisting?: boolean }) {
     if (!body.schoolId || !body.phrase) throw new BadRequestException("Identifiant d'école et phrase requis.");
-    return this.setup.step1({ schoolId: body.schoolId, phrase: body.phrase });
+    return this.setup.step1({
+      schoolId: body.schoolId,
+      phrase: body.phrase,
+      confirmReplaceExisting: body.confirmReplaceExisting === true,
+    });
   }
 
   @Post("setup/verify")

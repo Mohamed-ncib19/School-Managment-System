@@ -42,6 +42,16 @@ export interface ClaimResult {
 
 const REGISTRY_KEY = "meta/instances.json";
 
+/**
+ * How long an `active` record is believed without a fresh heartbeat.
+ *
+ * Without this, a machine that died mid-term stays "active" forever and
+ * blocks its own replacement — the exact situation the restore flow exists
+ * for. The worker heartbeats every drain cycle (60 s by default), so three
+ * hours is many missed beats, not a flap.
+ */
+export const ACTIVE_TTL_MS = 3 * 60 * 60 * 1000;
+
 @Injectable()
 export class InstanceRegistryService {
   private readonly logger = new RedactingLogger(InstanceRegistryService.name);
@@ -69,7 +79,11 @@ export class InstanceRegistryService {
 
   async write(driver: StorageDriver, schoolId: string, registry: InstanceRegistry): Promise<void> {
     const bytes = Buffer.from(JSON.stringify(registry, null, 2), "utf8");
-    await driver.put(this.key(schoolId), streamFrom(bytes), bytes.length);
+    // The registry is the one mutable object in the namespace. Without the
+    // overwrite flag, WebDAV's `overwrite: false` default meant it could
+    // never be rewritten after the first claim — silently disabling
+    // split-brain detection on that driver entirely.
+    await driver.put(this.key(schoolId), streamFrom(bytes), bytes.length, { overwrite: true });
   }
 
   /** Appends this instance's active record and checks for a collision. */
@@ -94,7 +108,15 @@ export class InstanceRegistryService {
     await this.write(driver, schoolId, current);
 
     const latest = latestPerInstance(current.instances);
-    const conflict = latest.find((i) => i.instance_uuid !== instanceUuid && i.status === "active") ?? null;
+    const now = Date.now();
+    const conflict =
+      latest.find(
+        (i) =>
+          i.instance_uuid !== instanceUuid &&
+          i.status === "active" &&
+          // A claim without a recent heartbeat is a dead machine, not a rival.
+          now - new Date(i.claimed_at).getTime() < ACTIVE_TTL_MS,
+      ) ?? null;
 
     this.logger.log(
       conflict

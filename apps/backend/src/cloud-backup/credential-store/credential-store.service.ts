@@ -48,6 +48,11 @@ export class CredentialStoreService {
     return dir;
   }
 
+  /** The credential directory, also the machine-key fallback location. */
+  get directory(): string {
+    return this.dir;
+  }
+
   /** True when a secret is stored for this entry (never the secret itself). */
   has(entryId: string): boolean {
     return existsSync(this.path(entryId));
@@ -71,7 +76,7 @@ export class CredentialStoreService {
         this.logger.warn(`DPAPI unavailable, falling back to machine-key file: ${(err as Error).message}`);
       }
     }
-    const key = machineKey();
+    const key = machineKey(this.dir);
     if (!key) {
       throw new Error(
         "Impossible de dériver une clé liée à la machine — aucun identifiant machine lisible. " +
@@ -105,7 +110,7 @@ export class CredentialStoreService {
       const nonce = payload.subarray(16, 28);
       const tag = payload.subarray(28, 44);
       const encrypted = payload.subarray(44);
-      const key = machineKey();
+      const key = machineKey(this.dir);
       if (!key) throw new Error("No machine key available");
       const storeKey = deriveStoreKey(key, salt);
       const decipher = createDecipheriv("aes-256-gcm", storeKey, nonce);

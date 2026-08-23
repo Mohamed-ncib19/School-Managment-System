@@ -4,6 +4,13 @@ import { DbService } from "../../db/db.service";
 import { syncQueue } from "../../db/schema";
 import { RedactingLogger } from "../redaction/redaction";
 
+/**
+ * How many times a row may fail before it stops being retried automatically.
+ * A row that hits the ceiling stays `failed` and is surfaced in Settings →
+ * Data safety, because at that point the problem is not transient.
+ */
+export const MAX_ATTEMPTS = 10;
+
 export interface PendingBatch {
   rows: Array<{
     id: number;
@@ -103,13 +110,22 @@ export class SyncQueueService {
       .where(inArray(syncQueue.id, ids));
   }
 
-  /** Re-queues failed rows so a later drain retries them in order. */
-  async retryFailed(ids: number[]): Promise<void> {
-    if (ids.length === 0) return;
-    await this.db.client
+  /**
+   * Returns failed rows under the attempt ceiling to `pending` so the next
+   * drain retries them in sequence order.
+   *
+   * This is what keeps the event stream contiguous. The previous method took
+   * an explicit id list and was called by nothing, so one network blip parked
+   * rows in `failed` permanently while later batches marched on — leaving a
+   * gap that the restore replay skips silently.
+   */
+  async requeueRetryable(maxAttempts: number = MAX_ATTEMPTS): Promise<number> {
+    const rows = await this.db.client
       .update(syncQueue)
       .set({ status: "pending" })
-      .where(inArray(syncQueue.id, ids));
+      .where(and(eq(syncQueue.status, "failed"), lt(syncQueue.attempts, maxAttempts)))
+      .returning({ id: syncQueue.id });
+    return rows.length;
   }
 
   async stats(): Promise<QueueStats> {

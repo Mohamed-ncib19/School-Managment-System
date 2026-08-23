@@ -53,7 +53,16 @@ export class CloudSetupService {
   }
 
   /** Step 1 — establish school identity, wrap the key, seed the cloud. */
-  async step1(input: { schoolId: string; phrase: string }): Promise<{
+  async step1(input: {
+    schoolId: string;
+    phrase: string;
+    /**
+     * Required to overwrite a configured install's KDF salt. Doing so
+     * re-keys the namespace: every object already in the cloud was encrypted
+     * under the old key and becomes permanently unreadable.
+     */
+    confirmReplaceExisting?: boolean;
+  }): Promise<{
     schoolId: string;
     instanceUuid: string;
     kdf: KdfParams;
@@ -65,13 +74,23 @@ export class CloudSetupService {
       );
     }
 
+    const configured = await this.db.client.query.cloudState.findFirst({
+      where: eq(cloudState.singleton, "global"),
+    });
+    if (configured?.setup_complete && configured.kdf_salt && !input.confirmReplaceExisting) {
+      throw new BadRequestException(
+        "Cette installation a déjà une sauvegarde cloud configurée. Reconfigurer génère une nouvelle clé : " +
+          "toutes les sauvegardes déjà envoyées deviendraient définitivement illisibles, y compris tout l'historique. " +
+          "Cette action est irréversible — confirmez explicitement pour continuer.",
+      );
+    }
+
     const kdf = makeSchoolSalt();
     const wrapped = await this.keys.wrapFromPhrase(input.phrase, kdf);
     const instanceUuid = randomUUID();
     const hostname = osHostname() || "unknown-host";
 
-    const existing = await this.db.client.query.cloudState.findFirst({ where: eq(cloudState.singleton, "global") });
-    if (existing) {
+    if (configured) {
       await this.db.client
         .update(cloudState)
         .set({

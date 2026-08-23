@@ -19,10 +19,12 @@ import { DbService } from "../../db/db.service";
  * re-runs safely after a restore (where the triggers may have been dropped
  * with the old schema).
  *
- * Actor attribution: an interceptor sets `app.actor_user_id` (a session-level
- * `set_config`) for the lifetime of each request; the trigger reads it via
- * `current_setting`. The restore/seed/import paths set `app.sync_disabled` (or
- * simply never set the actor) so their writes are attributed to the system.
+ * Actor attribution: writes that want an attributed actor wrap themselves in
+ * `withActor(db, userId, tx => ...)`, which sets `app.actor_user_id`
+ * transaction-locally; the trigger reads it via `current_setting`. Writes that
+ * do not are attributed to the system (null actor) — which is every write
+ * today. The restore/seed/import paths set `app.sync_disabled` instead, so
+ * their writes produce no queue rows at all.
  */
 
 /** Business tables mirrored to the cloud. Adding one is a conscious act.

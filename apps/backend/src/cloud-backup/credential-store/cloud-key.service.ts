@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { createCipheriv, createDecipheriv } from "node:crypto";
 import { deriveKey, KdfParams, newSalt } from "../crypto/kdf";
 import { machineKey, deriveStoreKey } from "./machine-key";
+import { CredentialStoreService } from "./credential-store.service";
 import { RedactingLogger } from "../redaction/redaction";
 
 /**
@@ -24,7 +25,7 @@ export class CloudKeyService {
   private readonly logger = new RedactingLogger(CloudKeyService.name);
   private cached: Buffer | null = null;
 
-  constructor() {}
+  constructor(private readonly creds: CredentialStoreService) {}
 
   /** Derives the master key from the phrase and wraps it for this machine. */
   async wrapFromPhrase(phrase: string, params: KdfParams): Promise<{
@@ -32,7 +33,7 @@ export class CloudKeyService {
     wrapSalt: string;
   }> {
     const masterKey = await deriveKey(phrase, params);
-    const key = machineKey();
+    const key = machineKey(this.creds.directory);
     if (!key) {
       throw new Error("Impossible d'obtenir une clé liée à la machine — la phrase de récupération ne peut pas être protégée localement.");
     }
@@ -51,7 +52,7 @@ export class CloudKeyService {
 
   /** Unwraps the stored master key using this machine's key. */
   async unwrap(wrappedB64: string, wrapSaltB64: string): Promise<Buffer> {
-    const key = machineKey();
+    const key = machineKey(this.creds.directory);
     if (!key) throw new Error("Clé machine indisponible — impossible de déchiffrer la clé maîtresse.");
     const payload = Buffer.from(wrappedB64, "base64");
     const nonce = payload.subarray(0, 12);

@@ -245,10 +245,30 @@ export class RestoreService {
         const child = spawn(
           binary,
           ["-U", cfg.user, "-h", cfg.host, "-p", String(cfg.port), "-d", cfg.database, "-v", "ON_ERROR_STOP=1", "-f", path],
-          { env: { ...process.env, PGPASSWORD: cfg.password }, windowsHide: true, stdio: ["ignore", "pipe", "inherit"] },
+          { env: { ...process.env, PGPASSWORD: cfg.password }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
         );
+
+        // psql writes one command tag per statement. A piped stdout that
+        // nobody reads fills its 64 KB buffer and blocks the child forever —
+        // the restore hung with no error and no output on any real dump.
+        let tail = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", () => {
+          /* drained and discarded: the tags are noise, the exit code is truth */
+        });
+        // stderr was inherited, so ON_ERROR_STOP failures vanished into the
+        // parent console with no way to tell the admin why the restore stopped.
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => {
+          tail = (tail + chunk).slice(-4_000);
+        });
+
         child.on("error", reject);
-        child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`psql exited with code ${code}`))));
+        child.on("close", (code) =>
+          code === 0
+            ? resolve()
+            : reject(new Error(`psql exited with code ${code}${tail ? `: ${tail.trim()}` : ""}`)),
+        );
       });
 
     const psql = findPgBin("psql");
@@ -353,6 +373,18 @@ export class RestoreService {
     const hostname = osHostname() || "unknown-host";
     const schemaHash = await this.schemaHash();
 
+    // Claim BEFORE adopting the state below: the old code called claim() and
+    // discarded its result, so restoring onto a second machine silently
+    // created the split-brain the registry exists to prevent — and marked
+    // this install setup_complete on the way.
+    const claim = await this.registry.claim(driver, schoolId, instanceUuid, hostname);
+    if (claim.conflict) {
+      throw new BadRequestException(
+        `Une autre installation (${claim.conflict.hostname}) sauvegarde encore cette école. ` +
+          "Retirez-la d'abord depuis Paramètres → Sécurité des données, puis relancez la restauration.",
+      );
+    }
+
     // The snapshot restores a cloud_state row from the old machine; adopt it.
     const existing = await this.db.client.query.cloudState.findFirst({ where: eq(cloudState.singleton, "global") });
     if (existing) {
@@ -383,7 +415,6 @@ export class RestoreService {
       });
     }
 
-    await this.registry.claim(driver, schoolId, instanceUuid, hostname);
     await this.db.client.update(restoreProgress).set({ state: "complete" }).where(eq(restoreProgress.job_id, jobId));
     this.logger.log(`Restore complete: instance ${instanceUuid} is now active for school ${schoolId}.`);
     return { instanceUuid, hostname };

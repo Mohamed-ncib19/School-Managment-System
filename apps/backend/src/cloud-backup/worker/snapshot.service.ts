@@ -81,16 +81,44 @@ export class SnapshotService {
       const child = spawn(
         pgDump,
         ["-U", cfg.user, "-h", cfg.host, "-p", String(cfg.port), "-d", cfg.database, "--format=plain", "--no-owner", "--no-privileges"],
-        { env: { ...process.env, PGPASSWORD: cfg.password }, windowsHide: true, stdio: ["ignore", "pipe", "inherit"] },
+        { env: { ...process.env, PGPASSWORD: cfg.password }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
       );
       const out = createWriteStream(targetPath, { flags: "w" });
+
+      let stderrTail = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderrTail = (stderrTail + chunk).slice(-4_000);
+      });
+
+      let exitCode: number | null = null;
+      let closed = false;
+      let flushed = false;
+
+      const settle = () => {
+        if (!closed || !flushed) return;
+        if (exitCode !== 0) {
+          reject(new Error(`pg_dump exited with code ${exitCode}${stderrTail ? `: ${stderrTail.trim()}` : ""}`));
+        } else {
+          resolve();
+        }
+      };
+
+      // `pipe` ends `out` itself; the previous manual out.end() plus an
+      // immediate resolve() on the child's close meant statSync could measure
+      // a still-flushing file and the encoder could read a truncated dump.
+      // Both the child exiting AND the file finishing must happen first.
       child.stdout.pipe(out);
       child.on("error", reject);
       out.on("error", reject);
+      out.on("finish", () => {
+        flushed = true;
+        settle();
+      });
       child.on("close", (code) => {
-        out.end();
-        if (code !== 0) reject(new Error(`pg_dump exited with code ${code}`));
-        else resolve();
+        exitCode = code;
+        closed = true;
+        settle();
       });
     });
   }

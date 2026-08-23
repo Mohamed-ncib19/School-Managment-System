@@ -241,6 +241,10 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
   /** Drains the queue once. Returns true when work was done. */
   async drainOnce(state?: LoadedState): Promise<boolean> {
     if (this.syncing) return false;
+    // A standing conflict means another machine claims this namespace;
+    // syncing anyway is exactly the divergent history the guard exists to
+    // prevent.
+    if (this.conflict) return false;
     const st = state ?? (await this.loadState());
     if (!st || !this.keys.getRuntimeKey()) return false;
 
@@ -249,6 +253,15 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
 
     this.syncing = true;
     try {
+      // Bring back anything a previous cycle failed on, BEFORE reading the
+      // next batch. Without this a transient failure became a permanent gap
+      // in the sequence the restore replay depends on — and replay skips a
+      // gap silently rather than reporting it.
+      const requeued = await this.queue.requeueRetryable();
+      if (requeued > 0) {
+        this.logger.log(`Requeued ${requeued} previously failed rows for retry.`);
+      }
+
       const batch = await this.queue.nextBatch(BATCH_MAX_ROWS, BATCH_MAX_BYTES);
       if (batch.rows.length === 0) {
         this.lastDrainAt = new Date();
@@ -322,6 +335,10 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
       } else {
         await this.queue.markFailed(batch.rows.map((r) => r.id), "Toutes les destinations ont échoué.");
       }
+      // Keep this instance's claim fresh. Without a heartbeat the claim ages
+      // past ACTIVE_TTL_MS and a second machine is allowed to start syncing
+      // alongside this one.
+      await this.heartbeatAll(st, targets);
       this.lastDrainAt = new Date();
       return true;
     } catch (err) {
@@ -330,6 +347,44 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
     } finally {
       this.syncing = false;
     }
+  }
+
+  /**
+   * Re-asserts this instance's claim on every reachable target.
+   *
+   * `heartbeat()` existed but was called from nowhere, so a claim written at
+   * boot aged forever: a dead machine blocked its replacement, and a live one
+   * could not tell a rival from a ghost.
+   */
+  private async heartbeatAll(
+    state: LoadedState,
+    targets: Array<{ id: string; driver: StorageDriver }>,
+  ): Promise<void> {
+    for (const target of targets) {
+      try {
+        const result = await this.registry.heartbeat(
+          target.driver,
+          state.schoolId,
+          state.instanceUuid,
+          state.hostname,
+        );
+        if (result.conflict) {
+          this.conflict = {
+            hostname: result.conflict.hostname,
+            instance_uuid: result.conflict.instance_uuid,
+            claimed_at: result.conflict.claimed_at,
+          };
+          this.logger.error(
+            `Split-brain detected during heartbeat: ${result.conflict.hostname} also claims school ${state.schoolId}. Sync paused.`,
+          );
+          return;
+        }
+      } catch {
+        // An unreachable target is an offline condition, not a conflict.
+        this.logger.warn(`Heartbeat against ${target.id} failed — retrying next cycle.`);
+      }
+    }
+    this.conflict = null;
   }
 
   /** Connectivity probe (lightweight) — a single target's reachability. */
