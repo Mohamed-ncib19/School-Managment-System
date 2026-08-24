@@ -28,7 +28,16 @@ import { CloudSetupService } from "./setup/setup.service";
 import { RestoreService, RestoreInput } from "./restore/restore.service";
 import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
 import { SnapshotService } from "./worker/snapshot.service";
-import { DRIVER_DEFINITIONS, DriverConfigRecord, createDriver } from "./drivers/driver-registry";
+import {
+  DRIVER_DEFINITIONS,
+  DriverConfigRecord,
+  createDriver,
+  driverFields,
+  isRecommended,
+  driverSetupHelp,
+} from "./drivers/driver-registry";
+import { appGoogleOAuth, hasAppGoogleOAuth, withAppGoogleOAuth } from "./drivers/google-oauth-app";
+import { appDropbox, hasAppDropbox, withAppDropbox } from "./drivers/dropbox-app";
 import { redactLogError, RedactingLogger } from "./redaction/redaction";
 
 interface TargetBody {
@@ -63,7 +72,16 @@ export class CloudBackupController {
       displayName: d.displayName,
       description: d.description,
       requiresOAuth: d.requiresOAuth ?? false,
-      fields: d.fields.map((f) => ({
+      // Free, no card, under a minute — shown on the first screen. Google
+      // Drive qualifies only when this server actually has an OAuth client.
+      recommended: isRecommended(d),
+      freeTier: d.freeTier ?? null,
+      // Where to click in the provider's own site to get these values.
+      setupHelp: driverSetupHelp(d),
+      // True when the admin can connect in one click and type nothing at all.
+      oauthReady:
+        d.id === "gdrive" ? hasAppGoogleOAuth() : d.id === "dropbox" ? hasAppDropbox() : false,
+      fields: driverFields(d).map((f) => ({
         name: f.name,
         type: f.type,
         label: f.label,
@@ -153,6 +171,21 @@ export class CloudBackupController {
     return rows[0]?.at?.toISOString() ?? null;
   }
 
+  /**
+   * Completes a driver config with what the customer should not have to type.
+   *
+   * For Google Drive that is the app's own OAuth client credentials — the
+   * administrator only ever supplies a refresh token, by clicking "Se
+   * connecter avec Google". The school namespace is NOT stamped here: the
+   * wizard configures a destination before the school id exists, so the
+   * driver derives it from the object key instead.
+   */
+  private prepareConfig(driverId: string, config: Record<string, string>): Record<string, string> {
+    if (driverId === "gdrive") return withAppGoogleOAuth(config);
+    if (driverId === "dropbox") return withAppDropbox(config);
+    return config;
+  }
+
   @Post("targets")
   @UseGuards(JwtAuthGuard)
   async createTarget(@Body() body: TargetBody) {
@@ -160,8 +193,11 @@ export class CloudBackupController {
     const def = DRIVER_DEFINITIONS.find((d) => d.id === body.driverId);
     if (!def) throw new BadRequestException("Type de destination inconnu.");
 
+    // Fills in the app's Google OAuth client, so the browser never sent one.
+    const config = this.prepareConfig(body.driverId, body.config);
+
     // Test the connection before persisting anything.
-    const driver = createDriver({ driver: body.driverId, config: body.config } as DriverConfigRecord);
+    const driver = createDriver({ driver: body.driverId, config } as DriverConfigRecord);
     try {
       await driver.testConnection();
     } catch (err) {
@@ -169,7 +205,7 @@ export class CloudBackupController {
     }
 
     const configRef = randomUUID();
-    await this.creds.save(configRef, JSON.stringify({ driver: body.driverId, config: body.config } as DriverConfigRecord));
+    await this.creds.save(configRef, JSON.stringify({ driver: body.driverId, config } as DriverConfigRecord));
 
     const [row] = await this.db.client
       .insert(cloudTargets)
@@ -192,14 +228,15 @@ export class CloudBackupController {
 
     let configRef = row.config_ref;
     if (body.config) {
-      const driver = createDriver({ driver: row.driver, config: body.config } as DriverConfigRecord);
+      const config = this.prepareConfig(row.driver, body.config);
+      const driver = createDriver({ driver: row.driver, config } as DriverConfigRecord);
       try {
         await driver.testConnection();
       } catch (err) {
         throw new BadRequestException(`Connexion impossible : ${redactLogError(err)}`);
       }
       configRef = randomUUID();
-      await this.creds.save(configRef, JSON.stringify({ driver: row.driver, config: body.config } as DriverConfigRecord));
+      await this.creds.save(configRef, JSON.stringify({ driver: row.driver, config } as DriverConfigRecord));
       await this.creds.delete(row.config_ref);
     }
 
@@ -240,6 +277,16 @@ export class CloudBackupController {
     } catch (err) {
       throw new BadRequestException(`Connexion impossible : ${redactLogError(err)}`);
     }
+  }
+
+  /**
+   * What to prefill the wizard with. Saves asking the administrator to invent
+   * a namespace id when the install already knows the school's name.
+   */
+  @Get("setup/suggestion")
+  @UseGuards(JwtAuthGuard)
+  setupSuggestion() {
+    return this.setup.suggestedSchoolId();
   }
 
   @Post("setup/generate-phrase")
@@ -299,17 +346,170 @@ export class CloudBackupController {
 
   private readonly pendingOAuth = new Map<
     string,
-    { clientId: string; clientSecret: string; redirectUri: string; createdAt: number }
+    { clientId: string; clientSecret: string; redirectUri: string; provider: "gdrive" | "dropbox"; createdAt: number }
   >();
+
+  // --- Dropbox -------------------------------------------------------------
+
+  @Post("oauth/dropbox/url")
+  @UseGuards(JwtAuthGuard)
+  dropboxUrl(@Body() body: { appKey?: string; appSecret?: string; redirectUri?: string }) {
+    return this.buildDropboxConsentUrl(body);
+  }
+
+  /** The same URL from the login screen, for a restore on new hardware. */
+  @Post("restore/oauth/dropbox/url")
+  @UseGuards(RestoreThrottleGuard)
+  async restoreDropboxUrl(@Body() body: { appKey?: string; appSecret?: string; redirectUri?: string }) {
+    const state = await this.db.client.query.cloudState.findFirst({
+      where: eq(cloudState.singleton, "global"),
+    });
+    if (state?.setup_complete) {
+      throw new BadRequestException(
+        "Cette installation a déjà une sauvegarde active — la connexion Dropbox de restauration est réservée à un poste neuf.",
+      );
+    }
+    return this.buildDropboxConsentUrl(body);
+  }
+
+  private buildDropboxConsentUrl(body: { appKey?: string; appSecret?: string; redirectUri?: string }) {
+    if (!body.redirectUri) throw new BadRequestException("URI de redirection requise.");
+
+    const app = appDropbox();
+    const appKey = body.appKey?.trim() || app?.appKey;
+    const appSecret = body.appSecret?.trim() || app?.appSecret;
+    if (!appKey || !appSecret) {
+      throw new BadRequestException(
+        "Aucune application Dropbox n'est configurée sur ce serveur. " +
+          "Renseignez DROPBOX_APP_KEY et DROPBOX_APP_SECRET, ou saisissez vos propres identifiants.",
+      );
+    }
+
+    const state = randomUUID();
+    const now = Date.now();
+    for (const [key, entry] of this.pendingOAuth) {
+      if (now - entry.createdAt > 10 * 60_000) this.pendingOAuth.delete(key);
+    }
+    this.pendingOAuth.set(state, {
+      clientId: appKey,
+      clientSecret: appSecret,
+      redirectUri: body.redirectUri,
+      provider: "dropbox",
+      createdAt: now,
+    });
+
+    // `token_access_type=offline` is what makes Dropbox return a refresh
+    // token; without it the grant expires in four hours and the backup stops
+    // silently a day later.
+    const url =
+      "https://www.dropbox.com/oauth2/authorize?" +
+      new URLSearchParams({
+        client_id: appKey,
+        response_type: "code",
+        token_access_type: "offline",
+        redirect_uri: body.redirectUri,
+        state,
+      }).toString();
+    return { url, state };
+  }
+
+  @Get("oauth/dropbox/callback")
+  async dropboxCallback(
+    @Query("code") code: string | undefined,
+    @Query("state") state: string | undefined,
+    @Query("error") error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const pending = state ? this.pendingOAuth.get(state) : undefined;
+    this.pendingOAuth.delete(state ?? "");
+    const appOrigin = pending ? new URL(pending.redirectUri).origin : "null";
+    const reply = (payload: Record<string, unknown>) =>
+      res
+        .set("Content-Type", "text/html; charset=utf-8")
+        .send(
+          `<script>if(window.opener){window.opener.postMessage(${JSON.stringify(payload)},${JSON.stringify(
+            appOrigin,
+          )});}setTimeout(()=>window.close(),500);</script>`,
+        );
+
+    if (error || !pending || !code || pending.provider !== "dropbox") {
+      reply({ type: "iq-dropbox-oauth", ok: false, error: "denied" });
+      return;
+    }
+    try {
+      const auth = Buffer.from(`${pending.clientId}:${pending.clientSecret}`).toString("base64");
+      const tokenRes = await fetch("https://api.dropbox.com/oauth2/token", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: pending.redirectUri,
+        }),
+      });
+      const text = await tokenRes.text();
+      if (!tokenRes.ok) throw new Error(`Dropbox a refusé l'autorisation (${tokenRes.status}) : ${text}`);
+      const tokens = JSON.parse(text) as { refresh_token?: string };
+      if (!tokens.refresh_token) {
+        throw new Error("Dropbox n'a pas renvoyé de jeton d'actualisation — réessayez l'autorisation.");
+      }
+      reply({ type: "iq-dropbox-oauth", ok: true, refreshToken: tokens.refresh_token });
+    } catch (err) {
+      reply({ type: "iq-dropbox-oauth", ok: false, error: redactLogError(err) });
+    }
+  }
+
+  // --- Google Drive --------------------------------------------------------
 
   @Post("oauth/gdrive/url")
   @UseGuards(JwtAuthGuard)
-  async gdriveUrl(@Body() body: { clientId?: string; clientSecret?: string; redirectUri?: string }) {
-    if (!body.clientId || !body.clientSecret || !body.redirectUri) {
-      throw new BadRequestException("Client ID, client secret et URI de redirection requis.");
+  gdriveUrl(@Body() body: { clientId?: string; clientSecret?: string; redirectUri?: string }) {
+    return this.buildGdriveConsentUrl(body);
+  }
+
+  /**
+   * The same consent URL, reachable from the login screen during a restore.
+   *
+   * On new hardware there is no session, so the authenticated route above is
+   * unusable — and without this the administrator would be asked to paste a
+   * refresh token they have never seen, since the whole point of the app-level
+   * OAuth client is that they never handle one. Safe to expose: it is allowed
+   * only while this install has no backup configured (the same condition the
+   * restore endpoints enforce), it is throttled like them, and the client
+   * secret never leaves the server.
+   */
+  @Post("restore/oauth/gdrive/url")
+  @UseGuards(RestoreThrottleGuard)
+  async restoreGdriveUrl(@Body() body: { clientId?: string; clientSecret?: string; redirectUri?: string }) {
+    const state = await this.db.client.query.cloudState.findFirst({
+      where: eq(cloudState.singleton, "global"),
+    });
+    if (state?.setup_complete) {
+      throw new BadRequestException(
+        "Cette installation a déjà une sauvegarde active — la connexion Google de restauration est réservée à un poste neuf.",
+      );
+    }
+    return this.buildGdriveConsentUrl(body);
+  }
+
+  private async buildGdriveConsentUrl(body: { clientId?: string; clientSecret?: string; redirectUri?: string }) {
+    if (!body.redirectUri) {
+      throw new BadRequestException("URI de redirection requise.");
+    }
+    // The app's own client is the normal path — the administrator types
+    // nothing. Per-install credentials remain accepted for a self-hoster who
+    // registered their own OAuth client.
+    const app = appGoogleOAuth();
+    const clientId = body.clientId?.trim() || app?.clientId;
+    const clientSecret = body.clientSecret?.trim() || app?.clientSecret;
+    if (!clientId || !clientSecret) {
+      throw new BadRequestException(
+        "Aucun client OAuth Google n'est configuré sur ce serveur. " +
+          "Renseignez GOOGLE_OAUTH_CLIENT_ID et GOOGLE_OAUTH_CLIENT_SECRET, ou saisissez vos propres identifiants.",
+      );
     }
     const { google } = await import("googleapis");
-    const oauth2 = new google.auth.OAuth2(body.clientId, body.clientSecret, body.redirectUri);
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret, body.redirectUri);
     const state = randomUUID();
     // Abandoned handshakes hold a client secret in memory; sweep them.
     const now = Date.now();
@@ -317,9 +517,10 @@ export class CloudBackupController {
       if (now - entry.createdAt > 10 * 60_000) this.pendingOAuth.delete(key);
     }
     this.pendingOAuth.set(state, {
-      clientId: body.clientId,
-      clientSecret: body.clientSecret,
+      clientId,
+      clientSecret,
       redirectUri: body.redirectUri,
+      provider: "gdrive",
       createdAt: now,
     });
     const url = oauth2.generateAuthUrl({
@@ -353,7 +554,7 @@ export class CloudBackupController {
           )});}setTimeout(()=>window.close(),500);</script>`,
         );
 
-    if (error || !pending || !code) {
+    if (error || !pending || !code || pending.provider !== "gdrive") {
       reply({ type: "iq-gdrive-oauth", ok: false, error: "denied" });
       return;
     }

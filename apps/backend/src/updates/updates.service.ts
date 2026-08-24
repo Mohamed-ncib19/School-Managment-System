@@ -21,7 +21,7 @@ export interface UpdateStatus {
 
 /**
  * Mirror of the progress journal the update engines write
- * (tools\windows\scripts\do-update.ps1 / tools/macos/scripts/update.sh).
+ * (installer\engine\do-update.ps1 / installer/macos/scripts/update.sh).
  */
 export interface UpdateProgress {
   state: "idle" | "running" | "done" | "failed" | "stalled";
@@ -38,7 +38,7 @@ interface Cached {
 }
 
 /**
- * The app is distributed as a git clone (see tools\windows\scripts\do-update.ps1),
+ * The app is distributed as a git clone (see installer\engine\do-update.ps1),
  * so the "installed version" IS the local HEAD commit and "latest" means the
  * upstream repository on GitHub is ahead. The repo and owner are discovered from
  * the install's own git config — nothing is hard-coded — and the tracked branch
@@ -123,8 +123,8 @@ export class UpdatesService {
 
     const isWindows = process.platform === "win32";
     const script = isWindows
-      ? "tools\\windows\\scripts\\do-update.ps1"
-      : "tools/macos/scripts/update.sh";
+      ? "installer\\engine\\do-update.ps1"
+      : "installer/macos/scripts/update.sh";
 
     try {
       if (isWindows) {

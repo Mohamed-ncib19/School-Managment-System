@@ -1,14 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream, statSync } from "node:fs";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { DbService } from "../../db/db.service";
 import { parsePgUrl } from "../../common/pg-url";
-import { backupManifest, cloudState, syncQueue } from "../../db/schema";
-import { eq, max } from "drizzle-orm";
+import { backupManifest, syncQueue } from "../../db/schema";
+import { max } from "drizzle-orm";
 import type { StorageDriver } from "../drivers/storage-driver";
 import { encodeObject } from "../crypto/object-codec";
 import { compressionAlgorithm } from "../crypto/compression";
@@ -116,12 +115,6 @@ export class SnapshotService {
     return rows[0]?.m ?? 0;
   }
 
-  private async state(): Promise<{ schoolId: string; kdf: KdfParams; key: Buffer } | null> {
-    const row = await this.db.client.query.cloudState.findFirst({ where: eq(cloudState.singleton, "global") });
-    if (!row?.school_id || !row.kdf_salt) return null;
-    const params = JSON.parse(row.kdf_salt) as KdfParams;
-    return { schoolId: row.school_id, kdf: params, key: Buffer.alloc(0) };
-  }
 
   /**
    * Runs a full snapshot and uploads it to every enabled target.

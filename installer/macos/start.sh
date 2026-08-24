@@ -426,6 +426,9 @@ if [[ -n "$SCHEMA_HASH" && -f "$SCHEMA_STATE" ]] && [[ "$(cat "$SCHEMA_STATE")" 
 fi
 
 if [[ "$push_needed" == "true" ]]; then
+  # `push --force` applies destructive statements without asking. Take a dump
+  # first so a mistaken schema change is a restore, not a loss.
+  bash "$SCRIPT_DIR/scripts/backup-before-schema.sh" "$ROOT_DIR" || true
   (cd "$BACKEND_DIR" && pnpm exec drizzle-kit push --force 2>&1 | tail -5) || \
     fail "Database schema could not be applied - your data has NOT been changed."
   echo "$SCHEMA_HASH" > "$SCHEMA_STATE"

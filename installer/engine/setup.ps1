@@ -1,4 +1,4 @@
-<#
+﻿<#
   IQ School Manager - first-run setup wizard.
 
   Runs only when apps\backend\.env does not exist yet (brand-new installation).
@@ -28,7 +28,15 @@ param()
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$Root = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
 $BackendDir  = Join-Path $Root "apps\backend"
 $FrontendDir = Join-Path $Root "apps\frontend"
 $BackendEnv  = Join-Path $BackendDir ".env"

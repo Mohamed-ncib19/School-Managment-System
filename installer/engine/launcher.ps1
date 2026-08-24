@@ -8,7 +8,7 @@
   If migrations cannot be applied it stops and tells you, leaving the data
   exactly as it was. Backups are managed from the app (Settings -> Database Backup).
 
-  No Docker required. Run it via tools\windows\start.bat.
+  No Docker required. Started by the desktop control panel.
 #>
 [CmdletBinding()]
 param(
@@ -21,7 +21,15 @@ param(
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
-$Root        = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$Root        = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
 $RootScripts = $PSScriptRoot
 $BackendDir  = Join-Path $Root "apps\backend"
 $FrontendDir = Join-Path $Root "apps\frontend"
@@ -178,7 +186,7 @@ if ($machineCode -eq 2) {
   if ($machineCode -eq 0) {
     Write-Ok "Project bound to this computer" "running licence granted"
   } else {
-    Fail "Could not bind this project to the computer." "Close extra windows and run start.bat again; if it persists, contact support."
+    Fail "Could not bind this project to the computer." "Close extra windows and start again from the desktop shortcut; if it persists, contact support."
   }
 } elseif ($machineCode -eq 1) {
   Fail "THIS COPY OF THE PROJECT IS BOUND TO A DIFFERENT COMPUTER - startup blocked." "Copying the project to another computer (USB drive, hard disk) is not allowed. To run it on this computer, contact the project provider. (Deleting machine.lock in the project folder would rebind it to this machine - reserved for the manager.)"
@@ -215,7 +223,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Warn2 "winget could not install Node.js: $($_.Exception.Message)"
   }
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Fail "Node.js could not be installed automatically." "Run 'winget install OpenJS.NodeJS.LTS' in a terminal, or install Node.js 20 LTS from https://nodejs.org, then run tools\windows\start.bat again."
+    Fail "Node.js could not be installed automatically." "Run 'winget install OpenJS.NodeJS.LTS' in a terminal, or install Node.js 20 LTS from https://nodejs.org, then start the system again from the desktop shortcut."
   }
 }
 
@@ -236,7 +244,7 @@ try {
 } catch { }
 if ([version]($nodeVersion -replace "-.*$", "") -lt [version]$requiredNode) {
   Fail "Node.js $nodeVersion is too old - this project needs $requiredNode or newer." `
-       "Install Node.js 20 LTS (or newer): run 'winget install OpenJS.NodeJS.LTS' in a terminal, or download it from https://nodejs.org, then run tools\windows\start.bat again."
+       "Install Node.js 20 LTS (or newer): run 'winget install OpenJS.NodeJS.LTS' in a terminal, or download it from https://nodejs.org, then start the system again from the desktop shortcut."
 }
 Write-Ok "Node.js" "v$nodeVersion (>= $requiredNode)"
 
@@ -273,7 +281,7 @@ if (-not (Test-Path $backendEnv)) {
     & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $setupScript
     $setupExit = $LASTEXITCODE
     if ($setupExit -ne 0) {
-      Fail "Setup was not completed (setup.ps1 exited $setupExit)." "Run tools\windows\start.bat again and finish the school setup."
+      Fail "Setup was not completed (setup.ps1 exited $setupExit)." "Start the system again from the desktop shortcut and finish the school setup."
     }
     Write-Ok "School configuration created" (Get-EnvValue $backendEnv "SCHOOL_NAME")
   } else {
@@ -322,7 +330,7 @@ if (-not $superPassword) { $superPassword = "" }
 $pgBin = & (Join-Path $RootScripts "ensure-postgres.ps1") -Port $dbPort -SuperPassword $superPassword -Quiet:$pgAlreadyUp
 } catch {
   Fail "Could not start PostgreSQL: $($_.Exception.Message)" `
-       "Run tools\windows\start.bat again - it will resume automatically, or install PostgreSQL 16 from https://www.postgresql.org/download/windows/"
+       "Start the system again from the desktop shortcut - it will resume automatically, or install PostgreSQL 16 from https://www.postgresql.org/download/windows/"
 }
 if (-not (Test-Port $dbPort)) {
   Fail "Nothing is listening on port $dbPort." "PostgreSQL did not start. See the messages above."
@@ -434,7 +442,7 @@ if ($needsInstall) {
   pnpm install 2>$null | Out-Null
   $installExit = $LASTEXITCODE
   Pop-Location
-  if ($installExit -ne 0) { Fail "pnpm install failed." "Check your internet connection and run tools\windows\start.bat again." }
+  if ($installExit -ne 0) { Fail "pnpm install failed." "Check your internet connection and start the system again from the desktop shortcut." }
   Write-Ok "Packages installed"
 } else {
   Write-Ok "Packages up to date"
@@ -515,6 +523,10 @@ if ($pushNeeded) {
     }
   }
 
+  # `push --force` applies destructive statements without asking. Take a dump
+  # first so a mistaken schema change is a restore, not a loss.
+  & (Join-Path $PSScriptRoot "backup-before-schema.ps1") -Root $Root
+
   Push-Location $BackendDir
   $pushOutput = pnpm exec drizzle-kit push --force 2>&1
   $pushExit = $LASTEXITCODE
@@ -543,7 +555,7 @@ if ($pushNeeded) {
   if ($pushExit -ne 0) {
     $pushOutput | ForEach-Object { Write-Info "  $_" }
     Fail "Database schema could not be applied - your data has NOT been changed." `
-         "Fix the error above, then run tools\windows\start.bat again. If you need to restore data, use the Database Backup page in the app."
+         "Fix the error above, then start the system again from the desktop shortcut. If you need to restore data, use the Database Backup page in the app."
   }
   Set-Content -Path $schemaState -Value $schemaHash
   Write-Ok "Database schema is up to date"
@@ -638,7 +650,7 @@ foreach ($check in @(
 
   $owner = Get-PortOwner -Port $check.Port
   $who = if ($owner) { ": $owner" } else { "" }
-  $hint = "Close that program and run tools\windows\start.bat again, or free the port with:  npx kill-port $($check.Port)"
+  $hint = "Close that program and start again from the desktop shortcut, or free the port with:  npx kill-port $($check.Port)"
   if ($check.Kind -eq "api") {
     $hint += "  |  To move the API instead, set PORT in apps\backend\.env and NEXT_PUBLIC_API_URL in apps\frontend\.env.local to match."
   }

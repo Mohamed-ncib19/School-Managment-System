@@ -55,6 +55,17 @@ export interface DriverDefinition {
   displayName: string;
   description: string;
   requiresOAuth: boolean;
+  /**
+   * True when the server ships its own Google OAuth client, so connecting is
+   * one button and the client id / secret fields are not sent at all.
+   */
+  oauthReady?: boolean;
+  /** Free, no card, under a minute — shown on the first screen. */
+  recommended?: boolean;
+  /** What the school gets for nothing, stated plainly on the card. */
+  freeTier?: string | null;
+  /** Where to click in the provider's own site to obtain these values. */
+  setupHelp?: string | null;
   fields: DriverFieldDef[];
 }
 
@@ -105,7 +116,20 @@ export const cloudBackupApi = {
 
   generatePhrase: () => ApiClient.post<RecoveryPhrase>("/cloud-backup/setup/generate-phrase", {}),
 
-  step1: (body: { schoolId: string; phrase: string }) =>
+  /** Prefill for the wizard, derived from the school's own name. */
+  setupSuggestion: () =>
+    ApiClient.get<{ schoolId: string; source: "existing" | "name" | "fallback" }>(
+      "/cloud-backup/setup/suggestion",
+    ),
+
+  /**
+   * `confirmReplaceExisting` is required by the backend to re-key an install
+   * that is already configured: doing so makes every object already in the
+   * cloud permanently unreadable. The wizard is hidden once `configured` is
+   * true, so nothing sends it today — it exists so a deliberate re-key has a
+   * way to say so explicitly rather than happening by accident.
+   */
+  step1: (body: { schoolId: string; phrase: string; confirmReplaceExisting?: boolean }) =>
     ApiClient.post<{ schoolId: string; instanceUuid: string }>("/cloud-backup/setup/step-1", body),
 
   verifySetup: () =>
@@ -120,8 +144,29 @@ export const cloudBackupApi = {
 
   // --- GDrive OAuth (loopback) ---
 
-  gdriveOAuthUrl: (body: { clientId: string; clientSecret: string; redirectUri: string }) =>
+  /**
+   * `clientId` / `clientSecret` are omitted in the normal case — the server
+   * uses the OAuth client the app ships with, so the administrator only picks
+   * a Google account. They are sent only by a self-hoster who registered
+   * their own client.
+   */
+  gdriveOAuthUrl: (body: { clientId?: string; clientSecret?: string; redirectUri: string }) =>
     ApiClient.post<{ url: string; state: string }>("/cloud-backup/oauth/gdrive/url", body),
+
+  /**
+   * Same consent URL, from the login screen during a restore — there is no
+   * session on new hardware. Allowed only while this install has no backup
+   * configured.
+   */
+  restoreGdriveOAuthUrl: (body: { clientId?: string; clientSecret?: string; redirectUri: string }) =>
+    ApiClient.post<{ url: string; state: string }>("/cloud-backup/restore/oauth/gdrive/url", body),
+
+  /** Dropbox consent URL. The app supplies its own key/secret server-side. */
+  dropboxOAuthUrl: (body: { appKey?: string; appSecret?: string; redirectUri: string }) =>
+    ApiClient.post<{ url: string; state: string }>("/cloud-backup/oauth/dropbox/url", body),
+
+  restoreDropboxOAuthUrl: (body: { appKey?: string; appSecret?: string; redirectUri: string }) =>
+    ApiClient.post<{ url: string; state: string }>("/cloud-backup/restore/oauth/dropbox/url", body),
 
   // --- Restore (public) ---
 

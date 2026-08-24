@@ -27,20 +27,28 @@ one lockfile, and type changes stay in sync by construction.
 apps/backend      NestJS API — one module per entity
 apps/frontend     Next.js App Router, nested routes mirroring the hierarchy
 packages/shared   Enums shared by both sides (UserRole, PaymentStatus, …)
-tools/windows/    start.bat + stop.bat entry points, PowerShell helpers in scripts/
-tools/macos/      start.sh entry point for macOS & Linux, helpers in scripts/
+installer/        Windows installer (Inno Setup), the desktop control panel,
+                  and the engine scripts it drives — see installer/BUILD.md
+installer/macos/  start.sh entry point for macOS & Linux, helpers in scripts/
 backups/          Timestamped database dumps (git-ignored)
 docker-compose.yml  PostgreSQL 16 — alternative to a native install
 ```
 
 ## Daily use
 
-**Windows — double-click `tools\windows\start.bat`.**
-**macOS / Linux — run `./tools/macos/start.sh`.**
+**Windows — double-click the “Système de gestion scolaire” shortcut on the desktop.**
+**macOS / Linux — run `./installer/macos/start.sh`.**
 
-That's the whole workflow. It installs anything missing (Node.js, pnpm, packages), starts
-PostgreSQL if it isn't running, creates the database and role on first run, applies
-migrations, builds if needed, starts both servers and opens the portal.
+On Windows the shortcut opens a small control panel: it shows whether the web portal, the
+API and the database are running, and offers **Démarrer**, **Arrêter**, **Redémarrer**,
+**Ouvrir le portail** and **Aide et assistance**. Starting from there installs anything
+missing (Node.js, pnpm, packages), starts PostgreSQL if it isn't running, creates the
+database and role on first run, applies migrations, builds if needed and starts both
+servers.
+
+The control panel is the only thing a school ever double-clicks. There are no batch files
+and no scripts to find: it is installed by `SystemeGestionScolaire-Setup.exe`, which also
+runs the first-run wizard. Building that installer is documented in `installer/BUILD.md`.
 
 ### First run — the setup wizard
 
@@ -58,25 +66,24 @@ PostgreSQL superuser password, both JWT secrets — is random and stored in
 
 | Platform | How the wizard asks |
 |---|---|
-| Windows | Native dialog, written by `tools/windows/scripts/setup.ps1` (Node.js is auto-installed via winget when missing) |
-| macOS / Linux | Terminal prompts in `tools/macos/start.sh` |
+| Windows | Native dialog, written by `installer/engine/setup.ps1` (Node.js is auto-installed via winget when missing) |
+| macOS / Linux | Terminal prompts in `installer/macos/start.sh` |
 
 **Upgrading an existing installation** changes nothing: when `apps/backend/.env` already
 contains a `DATABASE_URL`, the wizard is skipped and the previous database and credentials
 keep working. No wizard, no restart, no data migration.
 
-| File | What it does |
+| Entry point | What it does |
 |---|---|
-| `tools/windows/start.bat`  /  `tools/macos/start.sh` | Start everything (also the installer on first run) |
+| Desktop shortcut (Windows) | Opens the control panel — status, start, stop, restart, help |
+| `installer/macos/start.sh` | Start everything on macOS and Linux |
 
-That single file is the only one you ever click: **stopping**, **updating** and
-**backing up** all happen inside the logged-in web app. The navbar's power
-button shuts the system down (API + web portal, and on Windows the local
-database too); the "new update" dialog finds and applies newer versions; and
-the Database Backup page manages `pg_dump` backups. The `update` entry point
-was removed — every school gets one file to run, and the rest lives in the app
-where settings and data belong. `tools\windows\stop.bat` is kept as a way out
-when the portal itself will not load; nothing in normal use needs it.
+**Updating** and **backing up** happen inside the logged-in web app: the "new
+update" dialog finds and applies newer versions, and the Database Backup page
+manages `pg_dump` backups. **Stopping** can be done either from the navbar's
+power button or from the control panel — the control panel matters because it
+still works when the portal itself will not load, which is exactly when
+somebody needs it.
 
 **In-app update notifications** — while logged in, the app quietly compares the
 installed git commit against the release repository (every 30 minutes). When a new
@@ -97,7 +104,7 @@ limit when many installations share one repo.
   re-checks on click; **Settings → System updates** shows the full status
   (branch, installed vs. latest commit, last check) with *Check now* / *Update now*.
 
-`start.bat` runs watch-mode dev servers by default. `start.bat -Prod` builds and runs the
+The control panel runs watch-mode dev servers by default. `installer/engine/launcher.ps1 -Prod` builds and runs the
 production servers instead. Backups are managed from the logged-in app:
 Settings → **Database Backup** (create versioned backups, restore, safety dump included).
 
@@ -107,7 +114,7 @@ API docs (Swagger): <http://localhost:3001/api/docs>. All routes sit under `/api
 ### Requirements
 
 **Windows 10/11 and an internet connection. Nothing else.** Clone the repository,
-double-click `tools\windows\start.bat`, and it installs whatever is missing:
+run the installer, and it provides whatever is missing:
 
 | Component | How it's obtained |
 |---|---|
@@ -132,7 +139,7 @@ folder.
 ## Manual setup (for development)
 
 Requires Node.js 20.9 or newer (see `engines` in the root `package.json`) and a
-reachable PostgreSQL 16. On Windows, `tools\windows\start.bat` does all of this
+reachable PostgreSQL 16. On Windows, the control panel's **Démarrer** button does all of this
 for you — including installing Node and creating the database — so this section
 is for non-Windows machines and for working on the project itself.
 
@@ -191,7 +198,7 @@ typing `RESTORE`.
 ## Machine binding (anti-copy protection)
 
 The project is bound to the computer it is first started on. On every launch,
-`start.bat` – and the backend itself at boot – compare a SHA256 of
+The launcher – and the backend itself at boot – compare a SHA256 of
 the Windows `MachineGuid` (`HKLM\SOFTWARE\Microsoft\Cryptography`) against
 `machine.lock` in the project root. Copying the folder to another computer
 (USB drive, hard disk) therefore **refuses to start** on the target machine,
@@ -201,7 +208,7 @@ since the identifier never travels with the files.
 - `machine.lock` is machine-specific and git-ignored – never commit it.
 - Legitimate moves (new computer, Windows reinstall): the manager deletes
   `machine.lock`; the next start binds the project to that machine.
-- Script: `tools/windows/scripts/machine-id.ps1` (`check` / `bind` / `info`).
+- Script: `installer/engine/machine-id.ps1` (`check` / `bind` / `info`).
   macOS/Linux dev hosts skip the check (no MachineGuid).
 
 ## Importing students from Excel

@@ -12,8 +12,8 @@ import { UpdatesService, UpdateStatus, UpdateProgress } from "./updates.service"
  * GET /api/updates/progress — live state of the update engine's progress
  *                           journal (public: step labels only).
  * POST /api/updates/apply — super_admin only. Spawns the platform's update
- *                           engine (tools\windows\scripts\do-update.ps1 or
- *                           tools/macos/scripts/update.sh) as a separate
+ *                           engine (installer\engine\do-update.ps1 or
+ *                           installer/macos/scripts/update.sh) as a separate
  *                           process so the operator watches it do the work.
  */
 @Controller("updates")

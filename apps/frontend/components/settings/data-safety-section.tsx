@@ -14,8 +14,11 @@ import {
   TestTube2,
   UploadCloud,
   Database,
+  ChevronRight,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
+import GoogleMark from "@/components/shared/google-mark";
+import DriverCard from "@/components/settings/driver-card";
 import { cn } from "@/lib/utils/format";
 import {
   cloudBackupApi,
@@ -235,6 +238,24 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
   });
   const [confirmed, setConfirmed] = useState(false);
 
+  // Prefill the school id from the name this install already carries, so the
+  // wizard shows an answer instead of asking a question about namespaces.
+  // Only ever fills an untouched field — never overwrites typing.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const suggestion = await cloudBackupApi.setupSuggestion();
+        if (!cancelled) setSchoolId((current) => current || suggestion.schoolId);
+      } catch {
+        /* the field stays empty and editable */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const next = () => setStep((s) => s + 1);
 
   return (
@@ -350,30 +371,50 @@ function StepTargets({
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [showOthers, setShowOthers] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const def = drivers.find((d) => d.id === picked) ?? null;
 
+  /**
+   * Connect an account for an OAuth destination.
+   *
+   * The server holds the app credentials for both providers, so this asks the
+   * administrator for nothing — they pick an account and approve. `values`
+   * only carries credentials when a self-hoster registered their own app.
+   */
   const runOAuth = async (fieldName: string) => {
-    const clientId = values["clientId"];
-    const clientSecret = values["clientSecret"];
-    if (!clientId || !clientSecret) return;
+    if (!def) return;
+    const isDropbox = def.id === "dropbox";
+    const messageType = isDropbox ? "iq-dropbox-oauth" : "iq-gdrive-oauth";
     setSaving(true);
     setError(null);
     try {
-      const { url } = await cloudBackupApi.gdriveOAuthUrl({
-        clientId,
-        clientSecret,
-        redirectUri: `${window.location.origin}/api/cloud-backup/oauth/gdrive/callback`,
-      });
-      const popup = window.open(url, "iq-gdrive-oauth", "width=560,height=720");
+      const redirectUri = `${window.location.origin}/api/cloud-backup/oauth/${
+        isDropbox ? "dropbox" : "gdrive"
+      }/callback`;
+      const { url } = isDropbox
+        ? await cloudBackupApi.dropboxOAuthUrl({
+            appKey: values["appKey"] || undefined,
+            appSecret: values["appSecret"] || undefined,
+            redirectUri,
+          })
+        : await cloudBackupApi.gdriveOAuthUrl({
+            clientId: values["clientId"] || undefined,
+            clientSecret: values["clientSecret"] || undefined,
+            redirectUri,
+          });
+
+      const popup = window.open(url, messageType, "width=560,height=720");
       if (!popup) {
         setError(t("cloudSafeSave.popupBlocked", "Autorisez les fenêtres pop-up pour ce site."));
         setSaving(false);
         return;
       }
       const onMessage = (ev: MessageEvent) => {
-        if (ev.data?.type !== "iq-gdrive-oauth") return;
+        // The callback posts to this exact origin; anything else is not ours.
+        if (ev.origin !== window.location.origin) return;
+        if (ev.data?.type !== messageType) return;
         window.removeEventListener("message", onMessage);
         setSaving(false);
         if (ev.data.ok) {
@@ -405,6 +446,12 @@ function StepTargets({
     }
   };
 
+  const recommended = drivers.filter((d) => d.recommended);
+  // If a build ever ships without the flag, show everything rather than an
+  // empty screen.
+  const others = recommended.length > 0 ? drivers.filter((d) => !d.recommended) : [];
+  const primary = recommended.length > 0 ? recommended : drivers;
+
   return (
     <div className="space-y-5">
       <div>
@@ -413,30 +460,64 @@ function StepTargets({
           {t("cloudSafeSave.step1Subtitle", "La sauvegarde est dupliquée sur chaque destination active. Vous pouvez en ajouter plusieurs — au moins une est requise.")}
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {drivers.map((d) => (
-            <button
+        {/* Two choices, not six. Both free, neither needs a payment card, and
+            either is done in under a minute. Everything else is real and still
+            reachable, but a school that has no opinion should not have to
+            form one. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {primary.map((d) => (
+            <DriverCard
               key={d.id}
-              type="button"
-              onClick={() => {
+              driver={d}
+              selected={picked === d.id}
+              onSelect={() => {
                 setPicked(d.id);
                 setError(null);
               }}
-              className={cn(
-                "rounded-btn border p-4 text-left transition-colors",
-                picked === d.id
-                  ? "border-primary bg-primary-50 dark:bg-primary/10 ring-1 ring-primary"
-                  : "border-border bg-background hover:border-primary/50",
-              )}
-            >
-              <p className="text-sm font-semibold text-text-primary mb-1">{d.displayName}</p>
-              <p className="text-xs text-text-secondary">{d.description}</p>
-            </button>
+            />
           ))}
         </div>
 
+        {others.length > 0 && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setShowOthers((v) => !v)}
+              className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-primary transition-colors"
+            >
+              <ChevronRight size={13} className={cn("transition-transform", showOthers && "rotate-90")} />
+              {showOthers
+                ? t("cloudSafeSave.hideOtherOptions", "Masquer les autres options")
+                : t("cloudSafeSave.showOtherOptions", "Autres options (Backblaze, Nextcloud, S3…)")}
+            </button>
+
+            {showOthers && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {others.map((d) => (
+                  <DriverCard
+                    key={d.id}
+                    driver={d}
+                    selected={picked === d.id}
+                    onSelect={() => {
+                      setPicked(d.id);
+                      setError(null);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {def && (
           <div className="mt-4 space-y-4 rounded-btn border border-border bg-background p-4">
+            {def.setupHelp && (
+              // Where to click in the provider's own site. For someone who has
+              // never created a bucket this is the most useful thing here.
+              <div className="rounded-btn border border-primary/30 bg-primary-50 dark:bg-primary/10 px-4 py-3">
+                <p className="text-xs leading-relaxed text-text-secondary whitespace-pre-line">{def.setupHelp}</p>
+              </div>
+            )}
             {def.fields.map((field) => (
               <div key={field.name}>
                 <label htmlFor={`tgt-${field.name}`} className="block text-sm font-medium text-text-primary mb-1.5">
@@ -457,20 +538,55 @@ function StepTargets({
                       </option>
                     ))}
                   </select>
+                ) : field.type === "folder" ? (
+                  <input
+                    id={`tgt-${field.name}`}
+                    type="text"
+                    className="input font-mono text-sm"
+                    placeholder={field.placeholder}
+                    value={values[field.name] ?? ""}
+                    onChange={(e) => setValues((v) => ({ ...v, [field.name]: e.target.value }))}
+                  />
                 ) : field.type === "oauth" ? (
-                  <div className="flex items-center gap-3">
-                    <input
-                      id={`tgt-${field.name}`}
-                      className="input flex-1 font-mono text-xs"
-                      placeholder={t("cloudSafeSave.oauthTokenPlaceholder", "Jetons reçus après autorisation…")}
-                      readOnly
-                      value={values[field.name] ? t("cloudSafeSave.oauthReceived", "Autorisé ✓") : ""}
-                    />
-                    <button type="button" className="btn btn-secondary text-sm shrink-0" onClick={() => void runOAuth(field.name)} disabled={saving}>
-                      <RefreshCw size={14} className={saving ? "animate-spin" : ""} />
-                      {t("cloudSafeSave.authorize", "Autoriser")}
+                  // One button, no credentials to gather. The server holds the
+                  // OAuth client, so the administrator's whole job here is
+                  // "choose which Google account".
+                  values[field.name] ? (
+                    <div className="flex items-center gap-3 rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3">
+                      <CheckCircle2 size={16} className="shrink-0 text-success-strong dark:text-success-dark-strong" />
+                      <span className="text-sm text-success-strong dark:text-success-dark-strong flex-1">
+                        {def.id === "dropbox"
+                          ? t("cloudSafeSave.dropboxConnected", "Compte Dropbox connecté")
+                          : t("cloudSafeSave.googleConnected", "Compte Google connecté")}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs text-text-secondary hover:text-primary underline shrink-0"
+                        onClick={() => void runOAuth(field.name)}
+                        disabled={saving}
+                      >
+                        {t("cloudSafeSave.googleChangeAccount", "Changer de compte")}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-secondary w-full justify-center gap-2"
+                      onClick={() => void runOAuth(field.name)}
+                      disabled={saving}
+                    >
+                      {saving ? (
+                        <RefreshCw size={16} className="animate-spin" />
+                      ) : def.id === "dropbox" ? (
+                        <Cloud size={16} className="shrink-0 text-primary" />
+                      ) : (
+                        <GoogleMark className="h-4 w-4 shrink-0" />
+                      )}
+                      {def.id === "dropbox"
+                        ? t("cloudSafeSave.dropboxConnect", "Se connecter avec Dropbox")
+                        : t("cloudSafeSave.googleConnect", "Se connecter avec Google")}
                     </button>
-                  </div>
+                  )
                 ) : (
                   <input
                     id={`tgt-${field.name}`}

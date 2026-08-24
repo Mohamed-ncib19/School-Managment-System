@@ -8,7 +8,7 @@ import { ApiProperty } from "@nestjs/swagger";
  * accepted and hashed, and the 8-character minimum the setup wizard enforces
  * at install time could be dropped the first time the password was changed.
  *
- * `MIN_PASSWORD_LENGTH` is the wizard's rule (see tools/windows/scripts/setup.ps1),
+ * `MIN_PASSWORD_LENGTH` is the wizard's rule (see installer/engine/setup.ps1),
  * restated here so the two cannot drift apart silently.
  */
 export const MIN_PASSWORD_LENGTH = 8;

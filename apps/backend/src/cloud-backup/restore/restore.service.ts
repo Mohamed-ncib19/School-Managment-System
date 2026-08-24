@@ -2,16 +2,16 @@ import { Injectable, NotFoundException, BadRequestException } from "@nestjs/comm
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir, hostname as osHostname } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { eq, sql, param } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
 import { parsePgUrl } from "../../common/pg-url";
 import { cloudState, restoreProgress } from "../../db/schema";
 import type { StorageDriver } from "../drivers/storage-driver";
 import { createDriver, DriverConfigRecord } from "../drivers/driver-registry";
+import { withAppGoogleOAuth } from "../drivers/google-oauth-app";
 import type { KdfParams } from "../crypto/kdf";
 import { splitObject, ObjectHeader } from "../crypto/object-header";
 import { buildCheckPlaintext } from "../crypto/check-object";
@@ -93,7 +93,11 @@ export class RestoreService {
   }
 
   private makeDriver(input: RestoreTargetInput): StorageDriver {
-    return createDriver({ driver: input.driverId as DriverConfigRecord["driver"], config: input.config });
+    // Google Drive needs the app's own OAuth client, which the login screen
+    // never sends — the admin connects an account and nothing else. The
+    // school namespace comes from the object keys, not from config.
+    const config = input.driverId === "gdrive" ? withAppGoogleOAuth(input.config) : input.config;
+    return createDriver({ driver: input.driverId as DriverConfigRecord["driver"], config });
   }
 
   /** Reads just the plaintext header of an object, then releases the stream. */

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RotateCcw, X, ShieldCheck, Database, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
+import GoogleMark from "@/components/shared/google-mark";
 import { cn } from "@/lib/utils/format";
 import {
   cloudBackupApi,
@@ -73,11 +74,69 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [plan, setPlan] = useState<RestorePlan | null>(null);
   const [status, setStatus] = useState<RestoreStatus | null>(null);
   const [done, setDone] = useState(false);
 
+
+  const orderedDrivers = [...(drivers ?? [])].sort(
+    (a, b) => Number(b.recommended ?? false) - Number(a.recommended ?? false),
+  );
   const def = drivers?.find((d) => d.id === picked) ?? null;
+
+  /**
+   * Connect a Dropbox or Google account from the login screen.
+   *
+   * The server holds the app credentials, so this asks for nothing —
+   * without it the administrator would have to paste a refresh token they
+   * never saw, because the whole point of an app-level client is that they
+   * never handle one.
+   */
+  const runOAuth = async (fieldName: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const isDropbox = def?.id === "dropbox";
+      const messageType = isDropbox ? "iq-dropbox-oauth" : "iq-gdrive-oauth";
+      const redirectUri = `${window.location.origin}/api/cloud-backup/oauth/${
+        isDropbox ? "dropbox" : "gdrive"
+      }/callback`;
+      const { url } = isDropbox
+        ? await cloudBackupApi.restoreDropboxOAuthUrl({
+            appKey: values["appKey"] || undefined,
+            appSecret: values["appSecret"] || undefined,
+            redirectUri,
+          })
+        : await cloudBackupApi.restoreGdriveOAuthUrl({
+            clientId: values["clientId"] || undefined,
+            clientSecret: values["clientSecret"] || undefined,
+            redirectUri,
+          });
+      const popup = window.open(url, messageType, "width=560,height=720");
+      if (!popup) {
+        setError(t("cloudSafeSave.popupBlocked", "Autorisez les fenêtres pop-up pour ce site."));
+        setBusy(false);
+        return;
+      }
+      const onMessage = (ev: MessageEvent) => {
+        // The callback posts to this exact origin; anything else is not ours.
+        if (ev.origin !== window.location.origin) return;
+        if (ev.data?.type !== messageType) return;
+        window.removeEventListener("message", onMessage);
+        setBusy(false);
+        if (ev.data.ok) {
+          setValues((v) => ({ ...v, [fieldName]: ev.data.refreshToken }));
+        } else {
+          setError(ev.data.error ? String(ev.data.error) : t("cloudSafeSave.oauthDenied", "Autorisation refusée."));
+        }
+      };
+      window.addEventListener("message", onMessage);
+    } catch (err) {
+      setBusy(false);
+      setError(errorMessage(err));
+    }
+  };
   const canStart = picked && schoolId.trim() && phrase.trim() && (def?.fields.every((f) => !f.required || (values[f.name] ?? "").trim()) ?? false);
 
   const targetInput = def
@@ -182,8 +241,12 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
           <div className="space-y-5">
             <div>
               <p className="text-sm font-medium text-text-primary mb-2">{t("cloudSafeSave.step1Title", "Choisissez une destination")}</p>
-              <div className="grid grid-cols-3 gap-3">
-                {drivers?.map((d) => (
+              {/* Restore shows every destination, not just the recommended
+                  two: whoever is standing here already has a backup somewhere
+                  and needs to find that exact one. Recommended first, so the
+                  common cases still lead. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {orderedDrivers.map((d) => (
                   <button
                     key={d.id}
                     type="button"
@@ -204,6 +267,11 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
 
               {def && (
                 <div className="mt-4 space-y-3 rounded-btn border border-border bg-background p-4">
+                  {def.setupHelp && (
+                    <div className="rounded-btn border border-primary/30 bg-primary-50 dark:bg-primary/10 px-3 py-2">
+                      <p className="text-xs leading-relaxed text-text-secondary whitespace-pre-line">{def.setupHelp}</p>
+                    </div>
+                  )}
                   {/* No filter on `oauth`: there is no session on the login
                       screen, so the consent popup is unavailable here and the
                       refresh token has to be pasted in by hand. Hiding the
@@ -215,7 +283,42 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                           {field.label}
                           {field.required && <span className="text-danger"> *</span>}
                         </label>
-                        {field.type === "select" ? (
+                        {field.type === "oauth" ? (
+                          values[field.name] ? (
+                            <div className="flex items-center gap-3 rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3">
+                              <CheckCircle2 size={16} className="shrink-0 text-success-strong dark:text-success-dark-strong" />
+                              <span className="text-sm text-success-strong dark:text-success-dark-strong flex-1">
+                                {def?.id === "dropbox"
+                                  ? t("cloudSafeSave.dropboxConnected", "Compte Dropbox connecté")
+                                  : t("cloudSafeSave.googleConnected", "Compte Google connecté")}
+                              </span>
+                              <button
+                                type="button"
+                                className="text-xs text-text-secondary hover:text-primary underline shrink-0"
+                                onClick={() => void runOAuth(field.name)}
+                                disabled={busy}
+                              >
+                                {t("cloudSafeSave.googleChangeAccount", "Changer de compte")}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-secondary w-full justify-center gap-2"
+                              onClick={() => void runOAuth(field.name)}
+                              disabled={busy}
+                            >
+                              {busy ? (
+                                <RefreshCw size={16} className="animate-spin" />
+                              ) : (
+                                <GoogleMark className="h-4 w-4 shrink-0" />
+                              )}
+                              {def?.id === "dropbox"
+                                ? t("cloudSafeSave.dropboxConnect", "Se connecter avec Dropbox")
+                                : t("cloudSafeSave.googleConnect", "Se connecter avec Google")}
+                            </button>
+                          )
+                        ) : field.type === "select" ? (
                           <select
                             id={`res-${field.name}`}
                             className="input"
@@ -239,16 +342,7 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                             onChange={(e) => setValues((v) => ({ ...v, [field.name]: e.target.value }))}
                           />
                         )}
-                        {field.type === "oauth" ? (
-                          <p className="mt-1 text-xs text-text-secondary">
-                            {t(
-                              "cloudSafeSave.restoreRefreshToken",
-                              "Collez le jeton d'actualisation Google noté lors de la configuration — la connexion Google n'est pas disponible avant l'ouverture de session.",
-                            )}
-                          </p>
-                        ) : (
-                          field.help && <p className="mt-1 text-xs text-text-secondary">{field.help}</p>
-                        )}
+                        {field.help && <p className="mt-1 text-xs text-text-secondary">{field.help}</p>}
                       </div>
                     ))}
                 </div>

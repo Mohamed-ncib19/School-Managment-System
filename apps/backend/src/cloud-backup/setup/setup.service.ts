@@ -3,21 +3,18 @@ import { randomUUID } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import { eq } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
-import { cloudState, cloudTargets } from "../../db/schema";
+import { cloudState, cloudTargets, systemSettings } from "../../db/schema";
 import { generateRecoveryPhrase, RecoveryPhrase } from "../crypto/bip39";
-import { buildCheckPlaintext } from "../crypto/check-object";
 import { makeSchoolSalt, KdfParams } from "../crypto/kdf";
-import { encodeObject } from "../crypto/object-codec";
-import { compressionAlgorithm } from "../crypto/compression";
+import { writeMetaObjects } from "./meta-objects";
+import { slugifySchoolId, isValidSchoolId } from "./school-id";
 import { CloudKeyService } from "../credential-store/cloud-key.service";
 import { CredentialStoreService } from "../credential-store/credential-store.service";
 import { SyncWorkerService } from "../worker/sync-worker.service";
 import { SnapshotService } from "../worker/snapshot.service";
 import { InstanceRegistryService } from "../registry/instance-registry.service";
 import { SyncQueueService } from "../queue/sync-queue.service";
-import { createDriver, DriverConfigRecord } from "../drivers/driver-registry";
 import { RedactingLogger } from "../redaction/redaction";
-import { Readable } from "node:stream";
 
 /**
  * One-time setup orchestration (Settings → Data safety → Cloud safe save).
@@ -50,6 +47,27 @@ export class CloudSetupService {
   /** Generates a fresh 12-word phrase. Never stored server-side. */
   generatePhrase(): RecoveryPhrase {
     return generateRecoveryPhrase();
+  }
+
+  /**
+   * What to prefill the school id with, so the wizard stops asking.
+   *
+   * Derived from the name the install already carries. An administrator can
+   * still change it; most never should.
+   */
+  async suggestedSchoolId(): Promise<{ schoolId: string; source: "existing" | "name" | "fallback" }> {
+    const existing = await this.db.client.query.cloudState.findFirst({
+      where: eq(cloudState.singleton, "global"),
+    });
+    if (existing?.school_id) return { schoolId: existing.school_id, source: "existing" };
+
+    const settings = await this.db.client.query.systemSettings.findFirst({
+      where: eq(systemSettings.singleton, "global"),
+    });
+    const fromName = slugifySchoolId(settings?.system_name ?? "");
+    if (fromName && isValidSchoolId(fromName)) return { schoolId: fromName, source: "name" };
+
+    return { schoolId: "mon-ecole", source: "fallback" };
   }
 
   /** Step 1 — establish school identity, wrap the key, seed the cloud. */
@@ -126,35 +144,16 @@ export class CloudSetupService {
 
   /** Writes the salt and check objects to every enabled target. */
   private async seedCloud(schoolId: string, kdf: KdfParams, key: Buffer): Promise<void> {
-    const targets = await this.db.client
-      .select()
-      .from(cloudTargets)
-      .where(eq(cloudTargets.enabled, true));
+    const targets = await this.enabledTargetDrivers();
     if (targets.length === 0) {
       throw new BadRequestException("Configurez au moins une destination de sauvegarde avant de continuer.");
     }
-
-    const saltBytes = Buffer.from(
-      JSON.stringify({ school_id: schoolId, kdf }, null, 2),
-      "utf8",
-    );
-    const checkEncoded = await encodeObject({
+    await writeMetaObjects(
+      targets.map((t) => t.driver),
       schoolId,
-      objectKey: `${schoolId}/meta/check.json.enc`,
-      kind: "check",
       kdf,
       key,
-      compression: compressionAlgorithm(),
-      plaintext: () => Readable.from([Buffer.from(buildCheckPlaintext(schoolId), "utf8")]),
-    });
-
-    for (const target of targets) {
-      const secret = await this.creds.load(target.config_ref);
-      if (!secret) continue;
-      const driver = createDriver(JSON.parse(secret) as DriverConfigRecord);
-      await driver.put(`${schoolId}/meta/salt.json`, Readable.from([saltBytes]), saltBytes.length);
-      await driver.put(`${schoolId}/meta/check.json.enc`, checkEncoded.openStream(), checkEncoded.size);
-    }
+    );
   }
 
   /** Step 2 — live drain run + coverage check against every target. */
@@ -200,15 +199,30 @@ export class CloudSetupService {
     const key = await this.keys.unwrap(state.wrapped_key, state.wrap_salt);
     const kdf = JSON.parse(state.kdf_salt) as KdfParams;
     const targets = await this.enabledTargetDrivers();
-    const results = await this.snapshots.runSnapshot(targets, key, schoolId, kdf, "initial");
 
+    // Claim BEFORE the snapshot, and do not swallow a collision.
+    //
+    // This used to claim afterwards and discard the result, so setting up a
+    // second machine against a school id already in use completed happily and
+    // left two installs writing one namespace — the exact corruption the
+    // registry exists to prevent. An unreachable target is still tolerated;
+    // a live rival is not.
     for (const t of targets) {
       try {
-        await this.registry.claim(t.driver, schoolId, state.instance_uuid, state.hostname);
-      } catch {
-        /* one unreachable target must not fail finalization */
+        const claim = await this.registry.claim(t.driver, schoolId, state.instance_uuid, state.hostname);
+        if (claim.conflict) {
+          throw new BadRequestException(
+            `L'identifiant d'école « ${schoolId} » est déjà utilisé par une autre installation ` +
+              `(${claim.conflict.hostname}). Choisissez un autre identifiant, ou retirez d'abord cette installation.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+        /* unreachable target — the heartbeat re-checks every drain cycle */
       }
     }
+
+    const results = await this.snapshots.runSnapshot(targets, key, schoolId, kdf, "initial");
 
     await this.db.client
       .update(cloudState)
@@ -224,17 +238,14 @@ export class CloudSetupService {
     return { snapshotKey: ok[0]?.key ?? null };
   }
 
-  async enabledTargetDrivers(): Promise<Array<{ id: string; driver: import("../drivers/storage-driver").StorageDriver }>> {
-    const rows = await this.db.client
-      .select()
-      .from(cloudTargets)
-      .where(eq(cloudTargets.enabled, true));
-    const out: Array<{ id: string; driver: import("../drivers/storage-driver").StorageDriver }> = [];
-    for (const row of rows) {
-      const secret = await this.creds.load(row.config_ref);
-      if (!secret) continue;
-      out.push({ id: row.id, driver: createDriver(JSON.parse(secret) as DriverConfigRecord) });
-    }
-    return out;
+  /**
+   * Delegates to the worker's driver cache rather than building a second set.
+   *
+   * Constructing a driver decrypts its credentials, which on Windows spawns a
+   * PowerShell process — doing that twice for the same target is pure waste,
+   * and two live S3 clients per target leak two socket pools.
+   */
+  enabledTargetDrivers(): Promise<Array<{ id: string; driver: import("../drivers/storage-driver").StorageDriver }>> {
+    return this.worker.enabledTargets();
   }
 }

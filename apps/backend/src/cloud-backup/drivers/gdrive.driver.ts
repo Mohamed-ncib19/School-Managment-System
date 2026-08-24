@@ -25,9 +25,11 @@ export interface GDriveConfig {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
-  /** The school namespace, so the probe validates the folder uploads use. */
-  schoolId?: string;
-  /** School-scoped folder id. Resolved and cached on first use. */
+  /**
+   * School-scoped folder id. Resolved from the object key on first use and
+   * cached; there is deliberately no `schoolId` field, because during setup
+   * the destination is configured before the school id exists.
+   */
   rootFolderId?: string;
 }
 
@@ -154,12 +156,19 @@ export class GDriveDriver implements StorageDriver {
     try {
       await withRetry(async () => {
         const drive = await driveClient(auth);
-        // The probe must land in the same folder real uploads use. Testing
-        // against a "__probe__" folder let a broken config pass the test and
-        // fail every actual backup, and littered the user's Drive.
-        const folderId = await this.rootFolder(auth, this.config.schoolId ?? "default");
+        // No parent folder, and nothing left behind.
+        //
+        // The test runs during setup, BEFORE the school id exists — the
+        // wizard asks for a destination first — so it cannot probe the
+        // school's own folder without inventing a name. It used to invent
+        // "__probe__", creating a junk folder and validating a location no
+        // backup would ever use. What actually needs proving here is
+        // "these credentials can write to, read from and delete on Drive";
+        // the real folder is created on the first upload, from the object
+        // key. The `drive.file` scope means this file is invisible to
+        // everything but this app, and it is removed immediately.
         const created = await drive.files.create({
-          requestBody: { name: this.fileName(key), parents: [folderId] },
+          requestBody: { name: this.fileName(key) },
           media: { body: probe, mimeType: "application/octet-stream" },
           fields: "id",
         });

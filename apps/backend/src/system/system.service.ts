@@ -17,8 +17,8 @@ export interface ShutdownResult {
  * system down the way the old stop.bat used to. It finds the project root via
  * git, then launches the platform's stop ENGINE as a separate process:
  *
- *   Windows   -> tools\windows\scripts\stop.ps1 -StopDatabase
- *   macOS/Linux -> tools/macos/scripts/stop.sh
+ *   Windows   -> installer\engine\stop.ps1 -StopDatabase
+ *   macOS/Linux -> installer/macos/scripts/stop.sh
  *
  * The engine kills the API and web watchers by port, and on Windows also
  * shuts down the project's own portable PostgreSQL cluster (.postgres\data).
@@ -43,8 +43,8 @@ export class SystemService {
 
     const isWindows = process.platform === "win32";
     const script = isWindows
-      ? "tools\\windows\\scripts\\stop.ps1"
-      : "tools/macos/scripts/stop.sh";
+      ? "installer\\engine\\stop.ps1"
+      : "installer/macos/scripts/stop.sh";
 
     try {
       if (isWindows) {

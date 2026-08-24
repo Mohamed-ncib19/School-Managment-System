@@ -2,6 +2,11 @@ import type { DriverId, StorageDriver } from "./storage-driver";
 import { S3Driver, S3Config } from "./s3.driver";
 import { WebDavDriver, WebDavConfig } from "./webdav.driver";
 import { GDriveDriver, GDriveConfig } from "./gdrive.driver";
+import { FolderDriver, FolderConfig } from "./folder.driver";
+import { DropboxDriver, DropboxConfig } from "./dropbox.driver";
+import { hasAppGoogleOAuth, withAppGoogleOAuth } from "./google-oauth-app";
+import { hasAppDropbox, withAppDropbox } from "./dropbox-app";
+import { S3_PRESETS } from "./s3-presets";
 
 /** One field in a driver's setup form. Types mirror the frontend's input set. */
 export type DriverFieldType = "url" | "text" | "password" | "number" | "select" | "folder" | "oauth";
@@ -14,6 +19,8 @@ export interface DriverField {
   help?: string;
   required?: boolean;
   secret?: boolean;
+  /** Developer-level credential, hidden when the app supplies its own. */
+  advanced?: boolean;
   options?: Array<{ value: string; label: string }>;
 }
 
@@ -24,6 +31,24 @@ export interface DriverDefinition {
   description: string;
   /** Ordered form fields. */
   fields: DriverField[];
+  /**
+   * Plain-language instructions shown above the form: where to click in the
+   * provider's own site to obtain these values. The single most useful thing
+   * on the screen for someone who has never created a bucket.
+   */
+  setupHelp?: string;
+  /**
+   * Shown on the first screen, without the administrator opening anything.
+   *
+   * Exactly two destinations qualify: free, no payment card, and set up in
+   * under a minute by someone who has never heard of a bucket. Everything
+   * else is real but lives behind "Autres options" — a school that has a
+   * Nextcloud or a Backblaze account will go looking; a school that does not
+   * should never be asked to choose between six providers.
+   */
+  recommended?: boolean;
+  /** Free of charge for a school's data volume, with no card required. */
+  freeTier?: string;
   /** True when setup requires a two-step OAuth handshake instead of a form. */
   requiresOAuth?: boolean;
   create(config: unknown): StorageDriver;
@@ -35,12 +60,88 @@ export interface DriverConfigRecord {
   config: unknown;
 }
 
+/**
+ * One card per S3 provider, instead of one card asking for an endpoint URL.
+ *
+ * The driver underneath is identical — only the questions change. An
+ * administrator picks "Backblaze B2" and pastes the two values Backblaze gave
+ * them; the endpoint, region format and addressing style are the app's
+ * problem, not theirs.
+ */
+const PRESET_DEFINITIONS: DriverDefinition[] = S3_PRESETS.map((preset) => ({
+  id: `s3:${preset.id}` as DriverId,
+  displayName: preset.displayName,
+  description: preset.description,
+  freeTier: preset.freeTier,
+  recommended: preset.recommended,
+  fields: [
+    { name: "bucket", type: "text", label: "Nom du bucket", placeholder: "sauvegardes-ecole", required: true },
+    { name: "accessKeyId", type: "text", label: "Clé d'accès (Access Key ID)", required: true, secret: true },
+    { name: "secretAccessKey", type: "password", label: "Clé secrète", required: true, secret: true },
+    ...preset.extraFields.map((f) => ({
+      name: f.name,
+      type: (f.options ? "select" : "text") as DriverFieldType,
+      label: f.label,
+      placeholder: f.placeholder,
+      help: f.help,
+      required: true,
+      options: f.options,
+    })),
+  ],
+  setupHelp: preset.help,
+  create: (config) => new S3Driver(preset.toConfig(config as Record<string, string>)),
+}));
+
 export const DRIVER_DEFINITIONS: DriverDefinition[] = [
   {
+    id: "folder",
+    displayName: "Disque externe ou dossier réseau",
+    description: "Aucun compte, aucun identifiant. Indiquez un emplacement, c'est tout.",
+    recommended: true,
+    freeTier: "Gratuit",
+    fields: [
+      {
+        name: "basePath",
+        type: "folder",
+        label: "Emplacement de la sauvegarde",
+        placeholder: "D:\\Sauvegardes-Ecole",
+        required: true,
+        help:
+          "Un disque externe ou un dossier réseau (\\\\serveur\\partage\\sauvegardes). " +
+          "Le dossier est créé s'il n'existe pas. Les fichiers y sont chiffrés : un disque perdu reste illisible.",
+      },
+    ],
+    setupHelp:
+      "C'est l'option la plus simple et elle protège déjà contre la panne la plus fréquente — le disque du poste qui lâche. " +
+      "Elle ne protège pas contre un incendie ou un vol, puisque le disque est dans le même bâtiment : ajoutez ensuite une " +
+      "destination en ligne. Les deux fonctionnent en parallèle.",
+    create: (config) => new FolderDriver(config as FolderConfig),
+  },
+  {
+    id: "dropbox",
+    displayName: "Dropbox",
+    description: "Connectez votre compte Dropbox en un clic. Rien d'autre à saisir.",
+    recommended: true,
+    freeTier: "2 Go gratuits",
+    requiresOAuth: true,
+    fields: [
+      // App credentials, not customer input: filtered out whenever the app
+      // ships its own (see driverFields), which is the normal case.
+      { name: "appKey", type: "text", label: "App key Dropbox", required: true, advanced: true,
+        help: "Uniquement si vous utilisez votre propre application Dropbox." },
+      { name: "appSecret", type: "password", label: "App secret", required: true, secret: true, advanced: true },
+      { name: "refreshToken", type: "oauth", label: "Compte Dropbox", required: true,
+        help: "Cliquez pour vous connecter à votre compte Dropbox et autoriser la sauvegarde." },
+    ],
+    create: (config) =>
+      new DropboxDriver(withAppDropbox(config as Record<string, string>) as unknown as DropboxConfig),
+  },
+  ...PRESET_DEFINITIONS,
+  {
     id: "s3",
-    displayName: "S3 compatible",
+    displayName: "Autre service S3",
     description:
-      "Cloudflare R2, Backblaze B2, Wasabi, MinIO, AWS S3 — tout service compatible S3 avec une URL de endpoint personnalisée.",
+      "Pour un service déjà en place : MinIO, AWS S3, Wasabi, ou tout autre stockage compatible S3. Demande une URL de endpoint.",
     fields: [
       { name: "endpoint", type: "url", label: "Endpoint URL", placeholder: "https://s3.example.com", required: true, help: "L'adresse du service. Pour AWS S3 : https://s3.<région>.amazonaws.com" },
       { name: "region", type: "text", label: "Région", placeholder: "us-east-1", required: true, help: "Région du bucket (peut être us-east-1 pour MinIO/R2/B2)." },
@@ -75,16 +176,101 @@ export const DRIVER_DEFINITIONS: DriverDefinition[] = [
   {
     id: "gdrive",
     displayName: "Google Drive",
-    description: "Google Drive via OAuth2 — un dossier dédié à cette école est créé automatiquement.",
+    description: "Connectez votre compte Google en un clic. Un dossier dédié est créé automatiquement.",
+    recommended: true,
+    freeTier: "15 Go gratuits",
     requiresOAuth: true,
+    // setupHelp is resolved per request by driverSetupHelp(); it depends on
+    // env that is not reliably loaded when this module is first evaluated.
     fields: [
-      { name: "clientId", type: "text", label: "Client ID OAuth (Console Google Cloud)", required: true, help: "Créez un client OAuth de bureau dans Google Cloud Console (Identifiants → Créer des identifiants → ID client OAuth → Application de bureau)." },
-      { name: "clientSecret", type: "password", label: "Client Secret", required: true, secret: true },
-      { name: "refreshToken", type: "oauth", label: "Autorisation Google", required: true, help: "Après avoir rempli les identifiants, cliquez sur « Autoriser » pour vous connecter à votre compte Google." },
+      // These two are developer credentials, not customer input. They are
+      // filtered out of the form whenever the app ships its own OAuth client
+      // (see driverFields below), which is the normal case — an administrator
+      // should only ever see the "Se connecter avec Google" button.
+      {
+        name: "clientId",
+        type: "text",
+        label: "Client ID OAuth (Console Google Cloud)",
+        required: true,
+        advanced: true,
+        help: "Uniquement si vous utilisez votre propre client OAuth : Google Cloud Console → Identifiants → ID client OAuth → Application de bureau.",
+      },
+      { name: "clientSecret", type: "password", label: "Client Secret", required: true, secret: true, advanced: true },
+      {
+        name: "refreshToken",
+        type: "oauth",
+        label: "Compte Google",
+        required: true,
+        help: "Cliquez pour vous connecter à votre compte Google et autoriser la sauvegarde.",
+      },
     ],
-    create: (config) => new GDriveDriver(config as GDriveConfig),
+    create: (config) => new GDriveDriver(withAppGoogleOAuth(config as Record<string, string>) as unknown as GDriveConfig),
   },
 ];
+
+/**
+ * The fields a customer should actually be shown for a driver.
+ *
+ * Fields marked `advanced` exist only for a self-hoster using their own OAuth
+ * client; when the app has its own they are supplied server-side and must
+ * never appear in the UI.
+ */
+export function driverFields(def: DriverDefinition): DriverField[] {
+  const appProvides =
+    (def.id === "gdrive" && hasAppGoogleOAuth()) || (def.id === "dropbox" && hasAppDropbox());
+  return appProvides ? def.fields.filter((f) => !f.advanced) : def.fields;
+}
+
+/**
+ * Whether a destination belongs on the first screen, decided at request time.
+ *
+ * Google Drive is only a one-click option when the operator has registered an
+ * OAuth client and set GOOGLE_OAUTH_CLIENT_ID / _SECRET. Without them the
+ * consent endpoint can only return an error, so presenting it as a headline
+ * choice — with two developer credential fields under it — offers the
+ * administrator a door that does not open. It drops to "Autres options"
+ * instead, where its setup note explains what is missing.
+ */
+export function isRecommended(def: DriverDefinition): boolean {
+  if (!def.recommended) return false;
+  // An OAuth destination is only a one-click option when this server actually
+  // has an app registered; otherwise its button can only return an error.
+  if (def.id === "gdrive") return hasAppGoogleOAuth();
+  if (def.id === "dropbox") return hasAppDropbox();
+  return true;
+}
+
+/**
+ * What to tell whoever is looking at the Google Drive card.
+ *
+ * Two very different audiences: an administrator on a configured install (who
+ * needs nothing but the button), and whoever is setting the product up on a
+ * server that has no OAuth client yet (who needs to know that, and why the
+ * button returns an error otherwise).
+ */
+export function driverSetupHelp(def: DriverDefinition): string | null {
+  return def.id === "gdrive" ? googleSetupHelp() : (def.setupHelp ?? null);
+}
+
+function googleSetupHelp(): string {
+  if (hasAppGoogleOAuth()) {
+    return (
+      "Cliquez sur « Se connecter avec Google » et choisissez le compte à utiliser. " +
+      "L'application ne voit que les fichiers qu'elle a elle-même créés dans votre Drive.\n\n" +
+      "Note : la connexion Google doit se faire depuis le poste où le logiciel est installé " +
+      "(adresse localhost). Depuis un autre ordinateur du réseau, Google refuse l'autorisation — " +
+      "utilisez Backblaze B2 ou un disque externe dans ce cas."
+    );
+  }
+  return (
+    "Google Drive n'est pas encore activé sur ce serveur.\n\n" +
+    "Google impose qu'une application soit enregistrée avant d'autoriser un compte : cette étape est " +
+    "à faire UNE SEULE FOIS par l'éditeur du logiciel, pas par l'école. Tant qu'elle n'est pas faite, " +
+    "le bouton de connexion renvoie une erreur.\n\n" +
+    "En attendant, Backblaze B2 (10 Go gratuits) et le disque externe fonctionnent immédiatement, " +
+    "sans aucune configuration préalable."
+  );
+}
 
 const BY_ID = new Map(DRIVER_DEFINITIONS.map((d) => [d.id, d]));
 

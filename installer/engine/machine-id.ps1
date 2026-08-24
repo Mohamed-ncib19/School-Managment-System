@@ -25,7 +25,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$Root = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
 $LockFile = Join-Path $Root "machine.lock"
 
 function Get-MachineGuid {

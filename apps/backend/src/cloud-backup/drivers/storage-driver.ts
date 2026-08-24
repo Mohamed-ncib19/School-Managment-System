@@ -28,7 +28,11 @@ export interface PutResult {
   size: number;
 }
 
-export type DriverId = "s3" | "webdav" | "gdrive";
+/**
+ * `s3:<preset>` ids are the same S3 driver with the endpoint, region and
+ * addressing style supplied by the app instead of by the administrator.
+ */
+export type DriverId = "folder" | "dropbox" | "s3" | "webdav" | "gdrive" | `s3:${string}`;
 
 export interface PutOptions {
   /**

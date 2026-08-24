@@ -114,6 +114,9 @@ progress "running" "Installing dependencies" 5 8
 # Sync database schema (drizzle-kit push is idempotent and additive)
 echo ""
 echo "Syncing the database schema..."
+# An update is the likeliest moment for a schema change, and `push --force`
+# never asks before dropping something. Dump first.
+bash "$SCRIPT_DIR/backup-before-schema.sh" "$ROOT_DIR" || true
 (cd "$BACKEND_DIR" && pnpm exec drizzle-kit push --force 2>&1) || warn "Schema sync had issues (your data is safe)."
 progress "running" "Updating database schema" 6 8
 

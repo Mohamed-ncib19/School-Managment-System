@@ -1,4 +1,4 @@
-<#
+﻿<#
   SCHOOL MANAGEMENT SYSTEM - Update engine (Windows).
 
   Replaces the old update.bat: the in-app "Update now" dialog launches this.
@@ -26,7 +26,15 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$Root       = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$Root       = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
 $BackendDir = Join-Path $Root "apps\backend"
 $ScriptsDir = $PSScriptRoot
 
@@ -42,7 +50,7 @@ function Fail {
     $Message,
     "---",
     "Data|nothing was changed - no database writes were made",
-    "Restart|close this window, then run tools\windows\start.bat"
+    "Restart|close this window, then open the desktop shortcut"
   )
   Read-Host "  Press Enter to close"
   exit 1
@@ -188,7 +196,7 @@ if (-not ($wasApiUp -or $wasWebUp)) {
     if (-not $busy) { $stillBusy = $false; break }
   }
   if ($stillBusy) {
-    Write-Warn2 "Ports 3000/3001 still in use - continuing; start.bat will reuse them."
+    Write-Warn2 "Ports 3000/3001 still in use - continuing; the launcher will reuse them."
   } else {
     Write-Ok "Servers stopped" "ports 3000/3001 released"
   }
@@ -226,6 +234,10 @@ Write-Ok "Dependencies up to date"
 # 6. Database schema (drizzle-kit push is idempotent and additive)
 # ---------------------------------------------------------------------------
 Write-Step "Syncing the database schema"
+# An update is the likeliest moment for a schema change, and `push --force`
+# never asks before dropping something. Dump first.
+& (Join-Path $PSScriptRoot "backup-before-schema.ps1") -Root $Root
+
 Push-Location $BackendDir
 for ($attempt = 1; $attempt -le 5; $attempt++) {
   pnpm exec drizzle-kit push --force 2>&1 | Out-Null
@@ -244,10 +256,10 @@ Write-Ok "Database schema is up to date"
 Write-Step "Restarting the servers"
 if ($wasApiUp -or $wasWebUp) {
   Write-Info "Restarting what was running before the update..."
-  Start-Process (Join-Path $Root "tools\windows\start.bat")
+  Start-Process "wscript.exe" -ArgumentList ("`"" + (Join-Path $Root "installer\runtime\start-servers.vbs") + "`"")
 } else {
   Write-Info "No server was running before the update - not starting anything."
-  Write-Info "Start the system whenever you need it with tools\windows\start.bat"
+  Write-Info "Start it whenever you need it from the desktop shortcut."
 }
 
 Push-Location $Root
@@ -261,7 +273,7 @@ Write-Panel -Title "UPDATE COMPLETE" -Colour Green -Note ("done in " + (Get-UiEl
   "Branch|origin/$Branch",
   "Now at|$head",
   "---",
-  "Servers|$(if ($wasApiUp -or $wasWebUp) { 'restarting via start.bat' } else { 'were already shut down - not started' })",
+  "Servers|$(if ($wasApiUp -or $wasWebUp) { 'restarting via the launcher' } else { 'were already shut down - not started' })",
   "Data|untouched - additive migrations only",
   "Log|logs\update-*.log"
 )

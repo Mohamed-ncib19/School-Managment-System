@@ -27,7 +27,15 @@ $ErrorActionPreference = "Continue"
   brittle: the watcher reads 'nest.js" start --watch', which does not contain
   the literal 'nest start'.
 #>
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$ProjectRoot = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
 $RootPattern = "*" + [System.Management.Automation.WildcardPattern]::Escape($ProjectRoot) + "*"
 $LogDir      = Join-Path $ProjectRoot "logs"
 
@@ -69,7 +77,15 @@ function Get-TreeRoot {
   services are somebody else's territory and are never touched here.
 #>
 function Stop-PortablePostgres {
-  $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+  $root = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
   $dataDir = Join-Path $root ".postgres\data"
   if (-not (Test-Path (Join-Path $dataDir "PG_VERSION"))) { return $false }
 
@@ -163,16 +179,16 @@ if ($stopped -gt 0) {
   )
   if ($StopDatabase) {
     $pgStopped = Stop-PortablePostgres
-    if ($pgStopped) { $rows += @("Database|portable cluster stopped - can be restarted by start.bat") }
+    if ($pgStopped) { $rows += @("Database|portable cluster stopped - restart from the desktop shortcut") }
     else { $rows += @("Database|left running (native install or already stopped)") }
   } else {
     $rows += @("Database|still running - your data is untouched")
   }
-  $rows += @("Restart|tools\windows\start.bat")
+  $rows += @("Restart|open the desktop shortcut")
   Write-Panel -Title "SCHOOL MANAGEMENT SYSTEM STOPPED" -Colour DarkYellow -Note (Get-UiElapsed) -Rows $rows
 } else {
   Write-Panel -Title "NOTHING WAS RUNNING" -Colour DarkGray -Icon none -Rows @(
     "---",
-    "Start|tools\windows\start.bat"
+    "Start|open the desktop shortcut"
   )
 }

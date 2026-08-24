@@ -13,6 +13,7 @@ import { CloudKeyService } from "../credential-store/cloud-key.service";
 import { CredentialStoreService } from "../credential-store/credential-store.service";
 import { InstanceRegistryService } from "../registry/instance-registry.service";
 import { SnapshotService } from "./snapshot.service";
+import { checkObjectIsCurrent, writeMetaObjects } from "../setup/meta-objects";
 import { RedactingLogger } from "../redaction/redaction";
 import { Readable } from "node:stream";
 
@@ -113,6 +114,16 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
       }
       this.conflict = null;
 
+      // Self-heal the namespace's meta objects.
+      //
+      // The check object gained a `school_id` field, so an install seeded by
+      // an older build carries one that would reject a perfectly valid
+      // recovery phrase — the restore would fail at the only moment it
+      // matters. Rewriting it needs the master key, which this worker has
+      // just unwrapped, so it costs one small download per target at boot and
+      // spares the administrator a migration they would never know to run.
+      await this.ensureMetaObjects(state);
+
       // Migration detection: a changed schema means the snapshot is out of date
       // with the schema the backups describe — take one immediately.
       const hash = await this.snapshots.schemaHash();
@@ -137,6 +148,8 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
   async onApplicationShutdown(): Promise<void> {
     if (this.drainTimer) clearTimeout(this.drainTimer);
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+    for (const entry of this.driverCache.values()) this.disposeDriver(entry.driver);
+    this.driverCache.clear();
   }
 
   private async loadState(): Promise<LoadedState | null> {
@@ -165,24 +178,97 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
 
   private currentState: LoadedState | null = null;
 
-  private async enabledTargets(): Promise<Array<{ id: string; driver: StorageDriver }>> {
+  /**
+   * Live drivers, one per target, reused across drain cycles.
+   *
+   * Rebuilding them every cycle was expensive in three separate ways: a new
+   * S3Client (and its socket pool) every 60 s, a fresh Google Drive folder
+   * lookup on every call, and — worst — a decrypt of the stored credentials,
+   * which on Windows spawns a PowerShell process. Once a minute. Forever.
+   *
+   * The cache key is the target's `config_ref`, which `updateTarget` rotates
+   * whenever the configuration changes, so edited credentials are picked up
+   * on the next cycle without any explicit invalidation.
+   */
+  private readonly driverCache = new Map<string, { configRef: string; driver: StorageDriver }>();
+
+  /**
+   * The enabled targets, as live cached drivers. Public so the setup service
+   * shares this cache instead of building a second set of drivers (and, on
+   * Windows, spawning a second PowerShell decrypt) for the same targets.
+   */
+  async enabledTargets(): Promise<Array<{ id: string; driver: StorageDriver }>> {
     const rows = await this.db.client
       .select()
       .from(cloudTargets)
       .where(eq(cloudTargets.enabled, true))
       .orderBy(cloudTargets.created_at);
+
     const out: Array<{ id: string; driver: StorageDriver }> = [];
+    const seen = new Set<string>();
+
     for (const row of rows) {
+      seen.add(row.id);
+      const cached = this.driverCache.get(row.id);
+      if (cached && cached.configRef === row.config_ref) {
+        out.push({ id: row.id, driver: cached.driver });
+        continue;
+      }
+      if (cached) this.disposeDriver(cached.driver);
+
       const secret = await this.creds.load(row.config_ref);
       if (!secret) continue;
       try {
-        const parsed = JSON.parse(secret);
-        out.push({ id: row.id, driver: createDriver(parsed) });
+        const driver = createDriver(JSON.parse(secret));
+        this.driverCache.set(row.id, { configRef: row.config_ref, driver });
+        out.push({ id: row.id, driver });
       } catch {
+        this.driverCache.delete(row.id);
         this.logger.error(`Credential record for target ${row.id} is unreadable; skipping.`);
       }
     }
+
+    // A target that was disabled or removed should release its sockets.
+    for (const [id, entry] of this.driverCache) {
+      if (!seen.has(id)) {
+        this.disposeDriver(entry.driver);
+        this.driverCache.delete(id);
+      }
+    }
     return out;
+  }
+
+  /**
+   * Rewrites the salt and check objects on any target whose check object is
+   * missing or written in an older format. A no-op on a healthy install.
+   */
+  private async ensureMetaObjects(state: LoadedState): Promise<void> {
+    let targets: Array<{ id: string; driver: StorageDriver }>;
+    try {
+      targets = await this.enabledTargets();
+    } catch {
+      return;
+    }
+
+    for (const target of targets) {
+      try {
+        if (await checkObjectIsCurrent(target.driver, state.schoolId, state.key)) continue;
+        await writeMetaObjects([target.driver], state.schoolId, state.kdf, state.key);
+        this.logger.log(
+          `Recovery-phrase check object rewritten on ${target.id} — an older format would have rejected a valid phrase.`,
+        );
+      } catch (err) {
+        // Offline is the common case here; the next boot tries again.
+        this.logger.warn(
+          `Could not verify the check object on ${target.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  /** Releases a driver's transport, for the drivers that hold one. */
+  private disposeDriver(driver: StorageDriver): void {
+    (driver as { destroy?: () => void }).destroy?.();
   }
 
   private async claimAll(state: LoadedState): Promise<{ conflict: { hostname: string; instance_uuid: string; claimed_at: string } | null }> {

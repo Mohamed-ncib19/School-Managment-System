@@ -1,6 +1,6 @@
 # PostgreSQL for development, as an alternative to a native install.
 #
-# The Windows launcher (tools\windows\start.bat) does not use this: it finds an
+# The Windows launcher (installer\engine\launcher.ps1) does not use this: it finds an
 # existing server or downloads a private one into .postgres\. This file is for
 # working on the project on a machine where running Postgres in Docker is
 # simpler.

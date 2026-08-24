@@ -104,8 +104,18 @@ const source = (name: string) => readFileSync(join(__dirname, "..", "drivers", n
 describe("gdrive driver source", () => {
   const gdrive = source("gdrive.driver.ts");
 
-  it("tests the connection against the real school folder, not a __probe__ one", () => {
+  it("does not invent a folder name to test the connection", () => {
+    // The wizard configures a destination BEFORE the school id exists, so a
+    // connection test cannot know the school's folder. It used to invent
+    // "__probe__", creating a junk folder and validating a location no backup
+    // would ever write to.
     expect(gdrive).not.toContain('rootFolder(auth, "__probe__")');
+    expect(gdrive).not.toContain("this.config.schoolId");
+    const test = gdrive.slice(gdrive.indexOf("async testConnection"));
+    const body = test.slice(0, test.indexOf("\n  async put"));
+    expect(body).not.toContain("rootFolder(");
+    // …and it cleans up after itself.
+    expect(body).toContain("files.delete");
   });
 
   it("no longer carries the dead no-op files.update call", () => {
@@ -114,6 +124,29 @@ describe("gdrive driver source", () => {
 
   it("caches the resolved folder id", () => {
     expect(gdrive).toContain("resolvedFolderId");
+  });
+});
+
+describe("the sync worker reuses drivers", () => {
+  const worker = readFileSync(join(__dirname, "..", "worker", "sync-worker.service.ts"), "utf8");
+
+  it("caches a driver per target instead of rebuilding it each cycle", () => {
+    // Rebuilding meant a new S3Client every 60s AND a credential decrypt,
+    // which on Windows spawns a PowerShell process — once a minute, forever.
+    expect(worker).toContain("driverCache");
+    const fn = worker.slice(worker.indexOf("private async enabledTargets"));
+    const body = fn.slice(0, fn.indexOf("\n  /** Releases"));
+    expect(body).toContain("cached.configRef === row.config_ref");
+  });
+
+  it("keys the cache on config_ref so edited credentials are picked up", () => {
+    expect(worker).toMatch(/configRef: row\.config_ref/);
+  });
+
+  it("releases drivers for targets that went away, and on shutdown", () => {
+    expect(worker).toContain("disposeDriver");
+    const shutdown = worker.slice(worker.indexOf("async onApplicationShutdown"));
+    expect(shutdown.slice(0, 400)).toContain("disposeDriver");
   });
 });
 

@@ -30,7 +30,15 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$Root = $(
+  $__r = $PSScriptRoot
+  while ($__r -and -not (Test-Path (Join-Path $__r 'pnpm-workspace.yaml'))) {
+    $__p = Split-Path -Parent $__r
+    if (-not $__p -or $__p -eq $__r) { break }
+    $__r = $__p
+  }
+  $__r
+)
 $PgHome = Join-Path $Root ".postgres"
 $RuntimeDir = Join-Path $PgHome "runtime"
 $DataDir = Join-Path $PgHome "data"
@@ -242,7 +250,7 @@ if (-not (Find-NativePgBin)) {
         }
       }
       if (-not $installer) {
-        throw "The installer was not downloaded. Get it from https://www.postgresql.org/download/windows/, then run tools\windows\start.bat again."
+        throw "The installer was not downloaded. Get it from https://www.postgresql.org/download/windows/, then start the system again from the desktop shortcut."
       }
       Say "Found the installer: $(Split-Path $installer -Leaf)" "Green"
     }
@@ -309,7 +317,7 @@ if ($nativeInstallAttempted) {
     if ($bin) { return $bin }
     return ""
   } else {
-    throw "PostgreSQL could not be started after installation. Run tools\windows\start.bat again, or install PostgreSQL 16 from https://www.postgresql.org/download/windows/."
+    throw "PostgreSQL could not be started after installation. Start the system again from the desktop shortcut, or install PostgreSQL 16 from https://www.postgresql.org/download/windows/."
   }
 }
 

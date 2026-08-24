@@ -36,6 +36,58 @@ Each backend install registers itself in `meta/instances.json` (append-only). If
 
 The sync worker re-asserts its claim on every drain cycle. A claim with no heartbeat for three hours is treated as a dead machine and no longer blocks a replacement — otherwise a machine that died mid-term would block the very restore the phrase exists for.
 
+### Choosing a destination
+
+The wizard shows **two** destinations. Both are free, neither needs a payment card, and either is done in under a minute:
+
+| Destination | What the administrator provides | Cost |
+|---|---|---|
+| **Disque externe ou dossier réseau** | A path — a USB disk, a NAS, a mapped drive | Free |
+| **Dropbox** | One click on "Se connecter avec Dropbox" | 2 GB free |
+
+**Why Dropbox rather than Google Drive or Backblaze.** Every cloud provider requires a registered application — that is universal, not a Google quirk. The only question is whose clicks it costs. Backblaze spends the *school's*: an account, a bucket, an application key and a region, four screens deep in someone else's site. Google spends the *publisher's*, heavily: a Cloud project, a consent screen, and a redirect URI Google will only accept on `localhost`, which breaks every LAN-accessed install. Dropbox's registration is one form — name, "Scoped access", "App folder" — about two minutes, no review, done once for every school that will ever run this software.
+
+`App folder` scope also means the app can only ever see the directory it created. It cannot read the user's other files even in principle, which makes the consent screen honest.
+
+**Recommend one of each.** They fan out in parallel, and the pair covers both the failure that happens most often and the one that ends a school. A folder on its own is not off-site — a fire takes the computer and the USB drive in the drawer with it — and a cloud on its own is slower to restore from.
+
+Everything else sits behind **Autres options**, for a school that already has an account somewhere:
+
+| Destination | Cost | Note |
+|---|---|---|
+| **Backblaze B2** | 10 GB free | Bucket + application key, about 3 minutes |
+| **Google Drive** | 15 GB free | Needs an OAuth client from the publisher; `localhost` only |
+| **Cloudflare R2** | 10 GB free | Cloudflare requires a payment card to enable R2 |
+| **Nextcloud / WebDAV** | Free if self-hosted | URL, user, app password |
+| **Autre service S3** | Varies | The escape hatch: MinIO, AWS, Wasabi, anything S3 |
+
+Dropbox and Google Drive appear on the first screen **only when this server has app credentials configured** (`DROPBOX_APP_KEY` / `GOOGLE_OAUTH_CLIENT_ID`). Without them their connect button can only return an error, so they drop into *Autres options* with a note explaining that the missing step belongs to the publisher, not the school.
+
+Wasabi had its own entry and lost it: no free tier, only a 30-day trial. It is still reachable through the generic S3 entry for anyone who pays for it deliberately.
+
+Two questions the wizard no longer asks. The **school id** is derived from the name the install already has (`system_settings.system_name` → `iq-academy`) and shown filled in, editable — it used to be a free-text field with namespace rules. And the S3 entries no longer ask for an endpoint URL, a region format or an addressing style: those are constants per provider that a school administrator cannot answer, and getting one wrong surfaced as a connection error that read like a network fault.
+
+The S3 entries are one driver with the endpoint, region and addressing style supplied by the app. Those three questions are constants per provider and unanswerable by a school administrator, and getting any of them wrong surfaces as a connection error that reads like a network fault. Adding a provider is one entry in `drivers/s3-presets.ts` — no driver code, no UI change.
+
+Everything written to a folder is byte-identical to what goes to S3: same envelope, same AES-256-GCM, same recovery phrase. A lost USB drive is ciphertext.
+
+### Connecting Google Drive
+
+The administrator clicks **Se connecter avec Google**, picks an account, and is done. They never see a client id, a client secret, or a token.
+
+That works because the application ships its own Google OAuth client, set once in the release build:
+
+```
+GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=....
+```
+
+Create it at **console.cloud.google.com → APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop app**. A desktop client is designed to be distributed inside an installed application, which is why its "secret" is not treated as confidential ([RFC 8252 §8.5](https://datatracker.ietf.org/doc/html/rfc8252#section-8.5)) — the same pattern rclone and the gcloud CLI use. Security rests on the user's own consent and on the loopback redirect, not on hiding that value.
+
+The backup requests only the `drive.file` scope, which can see nothing but the files this app itself created. Google classifies it as non-sensitive, so no verification review is required and the quota is generous for a handful of objects a day per school.
+
+Leave both variables blank and the app falls back to asking each install for its own OAuth client — the old behaviour, kept for self-hosters who want it.
+
 ### Running in a container
 
 The wrapped master key is bound to a machine identity: the Windows MachineGuid, or `/etc/machine-id` on Linux. A container has neither — `node:22-alpine` ships no machine-id and no `hostid` — so one is generated on first run and stored at `/app/.cloud-creds/machine-key`.
