@@ -43,8 +43,11 @@ control panel, and `schema-push-safety.spec.ts`.
 
 ## Prerequisites
 
-- **Inno Setup 6** — <https://jrsoftware.org/isdl.php>. The compiler is
-  `ISCC.exe`, installed at `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`.
+- **Inno Setup 6** — `winget install --id JRSoftware.InnoSetup`, or
+  <https://jrsoftware.org/isdl.php>. The compiler is `ISCC.exe`. Note that
+  winget installs it **per user**, at
+  `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` — not under Program Files,
+  which is where the documentation usually points.
 - A **clean checkout**. The `[Files]` section excludes `node_modules`, build
   output, logs, backups, `.postgres`, `.cloud-creds`, `machine.lock` and the
   `.env` files — but it is far easier to reason about a tree that does not
@@ -53,8 +56,14 @@ control panel, and `schema-push-safety.spec.ts`.
 ## Compile
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\iq-academy.iss
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\iq-academy.iss
 ```
+
+A clean build ends with `Successful compile` and **no warnings**. Treat a
+warning as a failure: the one this script hit during development
+(`PrivilegesRequired=admin` with a per-user area) meant the "start at login"
+shortcut would have been created in the *administrator's* Startup folder and
+never fired for the school's own user.
 
 Output lands in `dist-installer\SystemeGestionScolaire-Setup-<version>.exe`.
 

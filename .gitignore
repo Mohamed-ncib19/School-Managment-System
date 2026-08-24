@@ -22,6 +22,9 @@ coverage
 # Build artifacts
 *.tsbuildinfo
 
+# Compiled Windows installer (built by installer/iq-academy.iss)
+dist-installer/
+
 # Logs (foreground log files, not just the logs/ directory)
 *.log
 
@@ -29,7 +32,7 @@ coverage
 apps/backend/check-data.js
 
 # WSL health-check diagnostics (environment-specific output)
-tools/windows/scripts/wsl-result*.txt
+installer/engine/wsl-result*.txt
 
 # Local operational data — never commit school records, logs, or the DB itself
 backups/

@@ -59,7 +59,11 @@ Name: "{group}\{#AppName}"; Filename: "{app}\installer\runtime\{#AppExeName}"; \
 Name: "{group}\Désinstaller {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\installer\runtime\{#AppExeName}"; \
   IconFilename: "{app}\installer\runtime\app.ico"; Tasks: desktopicon
-Name: "{userstartup}\{#AppName}"; Filename: "{app}\installer\runtime\start-servers.vbs"; \
+; {commonstartup}, not {userstartup}: this installer runs elevated, so a
+; per-user area resolves to the ADMINISTRATOR's Startup folder — the school
+; user would never see it fire. The machine is dedicated to the school, so
+; starting for whoever logs in is also the behaviour actually wanted.
+Name: "{commonstartup}\{#AppName}"; Filename: "{app}\installer\runtime\start-servers.vbs"; \
   IconFilename: "{app}\installer\runtime\app.ico"; Tasks: startup
 
 [Run]
