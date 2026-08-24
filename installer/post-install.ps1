@@ -44,6 +44,26 @@ function Fail {
 
 Log "Installation dans $AppRoot"
 
+# --- 0. Already configured? ------------------------------------------------
+# `apps\backend\.env` with a DATABASE_URL is the marker: it is written once by
+# the school-details wizard and never regenerated. Saying so plainly is the
+# point — a re-run that looked identical to a first install is exactly how
+# someone ends up unsure whether their data survived.
+$BackendEnv = Join-Path $AppRoot "apps\backend\.env"
+$AlreadyConfigured = (Test-Path $BackendEnv) -and
+                     ((Get-Content $BackendEnv -Raw -ErrorAction SilentlyContinue) -match "DATABASE_URL\s*=")
+
+if ($AlreadyConfigured) {
+  $schoolLine = Select-String -Path $BackendEnv -Pattern '^\s*SCHOOL_NAME\s*=\s*(.+)$' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+  $school = if ($schoolLine) { $schoolLine.Matches[0].Groups[1].Value.Trim().Trim('"') } else { "(nom inconnu)" }
+  Log "Système déjà installé et configuré pour : $school"
+  Log "La configuration existante est conservée — aucune donnée n'est touchée."
+  Log "Seuls les fichiers du programme et les dépendances sont mis à jour."
+} else {
+  Log "Aucune installation précédente détectée — installation complète."
+}
+
 # --- 1. Node.js ------------------------------------------------------------
 # Everything below needs it, and the error it produces otherwise ("'node' is
 # not recognized") tells a school nothing about what to install.
@@ -83,7 +103,9 @@ Log "pnpm : $(& pnpm --version)"
 # The wizard writes apps\backend\.env and exits 0 when one already exists, so
 # an upgrade never re-asks and never overwrites a school's configuration.
 $setup = Join-Path $EngineDir "setup.ps1"
-if (-not $Silent -and (Test-Path $setup)) {
+if ($AlreadyConfigured) {
+  Log "Configuration de l'école : déjà faite, ignorée."
+} elseif (-not $Silent -and (Test-Path $setup)) {
   Log "Configuration de l'école…"
   & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $setup
   $code = $LASTEXITCODE

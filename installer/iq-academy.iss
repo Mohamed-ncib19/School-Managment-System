@@ -97,6 +97,103 @@ Type: filesandordirs; Name: "{app}\packages\shared\node_modules"
 Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
+var
+  IsUpgrade: Boolean;
+  PreviousDir: String;
+  PreviousVersion: String;
+
+{
+  Where Inno records a previous install of this AppId.
+
+  The GUID is spelled out rather than derived from the [Setup] AppId via
+  SetupSetting: that indirection expands differently depending on how AppId
+  escapes its braces, and getting it subtly wrong means the installer simply
+  never detects an existing installation — a silent failure. If you change
+  AppId above, change this line with it.
+}
+function UninstallKey(): String;
+begin
+  Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+            '{7C4A1E52-9B3D-4F86-A1C2-6D5E8F0B3A74}_is1';
+end;
+
+{ Reads the previous installation's folder and version, if there is one. }
+function FindPreviousInstall(): Boolean;
+var
+  Dir, Ver: String;
+begin
+  Result := False;
+  PreviousDir := '';
+  PreviousVersion := '';
+  if RegQueryStringValue(HKLM, UninstallKey(), 'InstallLocation', Dir) and (Dir <> '') then
+  begin
+    PreviousDir := RemoveBackslash(Dir);
+    RegQueryStringValue(HKLM, UninstallKey(), 'DisplayVersion', Ver);
+    PreviousVersion := Ver;
+    Result := True;
+  end;
+end;
+
+{
+  Decide up front whether this is a first install or a repeat, and say so.
+
+  Silently upgrading is the wrong default here: a school that double-clicks
+  setup.exe a second time — because a shortcut vanished, or because they are
+  not sure it worked — needs to be told the system is already installed and
+  where, not walked through a wizard that looks identical to a fresh install.
+}
+function InitializeSetup(): Boolean;
+var
+  Answer: Integer;
+  Where: String;
+begin
+  Result := True;
+  IsUpgrade := FindPreviousInstall();
+
+  if not IsUpgrade then
+    Exit;
+
+  Where := PreviousDir;
+  if Where = '' then
+    Where := '(emplacement inconnu)';
+
+  Answer := MsgBox(
+    'Le Système de gestion scolaire est déjà installé sur cet ordinateur.' + #13#10#13#10 +
+    'Emplacement : ' + Where + #13#10 +
+    'Version installée : ' + PreviousVersion + #13#10 +
+    'Version de ce programme : {#AppVersion}' + #13#10#13#10 +
+    'Voulez-vous le réinstaller au même endroit ?' + #13#10#13#10 +
+    'Vos données sont conservées : la base de données, les sauvegardes et la ' +
+    'configuration de l''école ne sont pas touchées. Seuls les fichiers du ' +
+    'programme sont remplacés.' + #13#10#13#10 +
+    'Choisissez « Non » pour quitter sans rien changer.',
+    mbConfirmation, MB_YESNO);
+
+  if Answer <> IDYES then
+  begin
+    Result := False;
+    Exit;
+  end;
+end;
+
+{ A repeat install has nothing to ask: it goes back where it already lives. }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := IsUpgrade and (PageID = wpSelectDir);
+end;
+
+{ Reflect which of the two things is happening on the confirmation page. }
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
+  MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  if IsUpgrade then
+    Result := 'Réinstallation par-dessus la version ' + PreviousVersion + NewLine + NewLine
+  else
+    Result := 'Première installation — la configuration de l''école sera demandée.' + NewLine + NewLine;
+
+  Result := Result + MemoDirInfo + NewLine + NewLine + MemoTasksInfo;
+end;
+
 { Warn before uninstalling that data is kept, so nobody assumes it was wiped. }
 function InitializeUninstall(): Boolean;
 begin

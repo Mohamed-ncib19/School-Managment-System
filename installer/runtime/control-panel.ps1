@@ -66,6 +66,8 @@ $form.Controls.Add($header)
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = "Système de gestion scolaire"
+$script:Configured = Test-AppConfigured
+$script:School = Get-SchoolName
 $title.Font = New-Font 12 ([System.Drawing.FontStyle]::Bold)
 $title.ForeColor = $Colors.Text
 $title.Location = New-Object System.Drawing.Point(20, 12)
@@ -200,6 +202,18 @@ function Update-Status {
     }
   }
 
+  if (-not $script:Configured) {
+    # Files present but never set up: the honest state, and the one where the
+    # Start button does something the administrator did not expect.
+    $overallLabel.Text = "Pas encore configuré — cliquez sur Démarrer pour terminer l'installation"
+    $overallLabel.ForeColor = $Colors.Conflict
+    $startBtn.Enabled = $true
+    $stopBtn.Enabled = $false
+    $restartBtn.Enabled = $false
+    $openBtn.Enabled = $false
+    return
+  }
+
   switch ($status.Overall) {
     "running"  { $overallLabel.Text = "En marche"; $overallLabel.ForeColor = $Colors.Running }
     "partial"  { $overallLabel.Text = "Démarrage en cours…"; $overallLabel.ForeColor = $Colors.Conflict }
@@ -228,6 +242,8 @@ $startBtn.Add_Click({
   try {
     Start-AppServices
     Set-Activity "Démarrage lancé. Cette fenêtre se met à jour toute seule."
+    $script:Configured = Test-AppConfigured
+    $script:School = Get-SchoolName
   } catch {
     Set-Activity "Échec du démarrage : $($_.Exception.Message)"
   }
@@ -389,7 +405,10 @@ $timer.Interval = 2000
 $timer.Add_Tick({ Update-Status })
 $timer.Start()
 
-$form.Add_Shown({ Update-Status })
+$form.Add_Shown({
+  if ($script:School) { $form.Text = "Système de gestion scolaire — $($script:School)" }
+  Update-Status
+})
 $form.Add_FormClosed({ $timer.Stop(); $timer.Dispose() })
 
 [void]$form.ShowDialog()

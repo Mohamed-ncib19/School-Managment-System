@@ -95,6 +95,32 @@ function Get-DatabaseStatus {
   return [pscustomobject]@{ Name = "Base de données"; State = "stopped"; Detail = "PostgreSQL intégré"; ProcessId = $null }
 }
 
+function Test-AppConfigured {
+  <#
+    Whether this installation has been through the school-details wizard.
+
+    `apps\backend\.env` carrying a DATABASE_URL is the marker: it is written
+    once and never regenerated, which is precisely what distinguishes "set up"
+    from "files are present". The control panel needs the difference — a
+    Start on an unconfigured install runs the wizard first, and saying so
+    beforehand is better than a console window appearing unannounced.
+  #>
+  $envFile = Join-Path $script:AppRoot "apps\backend\.env"
+  if (-not (Test-Path $envFile)) { return $false }
+  $content = Get-Content $envFile -Raw -ErrorAction SilentlyContinue
+  return [bool]($content -match "DATABASE_URL\s*=")
+}
+
+function Get-SchoolName {
+  <# The configured school's name, or $null when not configured yet. #>
+  $envFile = Join-Path $script:AppRoot "apps\backend\.env"
+  if (-not (Test-Path $envFile)) { return $null }
+  $line = Select-String -Path $envFile -Pattern '^\s*SCHOOL_NAME\s*=\s*(.+)$' -ErrorAction SilentlyContinue |
+          Select-Object -First 1
+  if (-not $line) { return $null }
+  return $line.Matches[0].Groups[1].Value.Trim().Trim('"').Trim("'")
+}
+
 function Get-ServiceStatus {
   <#
     One snapshot of everything the panel shows. Returns three rows plus an
