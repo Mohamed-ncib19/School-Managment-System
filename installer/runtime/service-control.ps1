@@ -11,7 +11,13 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Continue"
+
+# No $ErrorActionPreference here on purpose. This file is dot-sourced, so any
+# assignment lands in the *caller's* scope - it used to set "Continue", which
+# silently downgraded the control panel's own "Stop" and left every try/catch
+# in its button handlers as dead code. Each function below guards itself with
+# -ErrorAction SilentlyContinue or its own try/catch instead, so it behaves
+# the same either way and the host keeps the error handling it chose.
 
 # The web portal and the API. Both must be up for the system to be usable.
 $script:WebPort = 3000
@@ -74,25 +80,42 @@ function Test-OwnedByApp {
 
 function Get-DatabaseStatus {
   <#
-    Only the portable cluster under .postgres\ is ours to report on. A native
-    PostgreSQL service belongs to the machine, and the control panel has no
-    business claiming it or stopping it.
+    Three distinct answers, because they mean three different things to
+    whoever is reading the panel.
+
+    The portable cluster under .postgres\ is ours, and postmaster.pid says
+    whether it is up. A native PostgreSQL service belongs to the machine: it
+    is reported so the row is not misleading, but the panel never claims it
+    and never stops it. And where neither exists yet - every fresh install,
+    before the first start - the honest answer is "not installed". The old
+    code called that case "external" and painted it green, so a brand-new
+    installation opened showing a healthy database that did not exist.
   #>
   $dataDir = Join-Path $script:AppRoot ".postgres\data"
-  if (-not (Test-Path $dataDir)) {
-    return [pscustomobject]@{ Name = "Base de données"; State = "external"; Detail = "Service PostgreSQL du système"; ProcessId = $null }
-  }
-  $pidFile = Join-Path $dataDir "postmaster.pid"
-  if (Test-Path $pidFile) {
-    $first = (Get-Content $pidFile -TotalCount 1 -ErrorAction SilentlyContinue)
-    if ($first -and ($first -as [int])) {
-      $running = Get-Process -Id ([int]$first) -ErrorAction SilentlyContinue
-      if ($running) {
-        return [pscustomobject]@{ Name = "Base de données"; State = "running"; Detail = "PostgreSQL intégré"; ProcessId = [int]$first }
+
+  if (Test-Path $dataDir) {
+    $pidFile = Join-Path $dataDir "postmaster.pid"
+    if (Test-Path $pidFile) {
+      $first = Get-Content $pidFile -TotalCount 1 -ErrorAction SilentlyContinue
+      if ($first -and ($first -as [int])) {
+        $running = Get-Process -Id ([int]$first) -ErrorAction SilentlyContinue
+        if ($running) {
+          return [pscustomobject]@{ Name = "Base de données"; State = "running"; Detail = "PostgreSQL intégré"; ProcessId = [int]$first }
+        }
       }
     }
+    return [pscustomobject]@{ Name = "Base de données"; State = "stopped"; Detail = "PostgreSQL intégré"; ProcessId = $null }
   }
-  return [pscustomobject]@{ Name = "Base de données"; State = "stopped"; Detail = "PostgreSQL intégré"; ProcessId = $null }
+
+  $service = @(Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue) | Select-Object -First 1
+  if ($service) {
+    if ($service.Status -eq "Running") {
+      return [pscustomobject]@{ Name = "Base de données"; State = "external"; Detail = "Service Windows « $($service.Name) »"; ProcessId = $null }
+    }
+    return [pscustomobject]@{ Name = "Base de données"; State = "stopped"; Detail = "Service Windows « $($service.Name) » arrêté"; ProcessId = $null }
+  }
+
+  return [pscustomobject]@{ Name = "Base de données"; State = "missing"; Detail = "Pas encore installée — créée au premier démarrage"; ProcessId = $null }
 }
 
 function Test-AppConfigured {
@@ -146,11 +169,18 @@ function Get-ServiceStatus {
 
   $rows += Get-DatabaseStatus
 
-  $servers = $rows | Where-Object { $_.Name -ne "Base de données" }
+  # Each filter is wrapped in @( ) deliberately. Where-Object yields $null
+  # when nothing matches, and under Set-StrictMode reading .Count off $null is
+  # a terminating error - so the plain form blew up precisely when both
+  # servers were stopped, which is the state every fresh install starts in.
+  $servers  = @($rows | Where-Object { $_.Name -ne "Base de données" })
+  $running  = @($servers | Where-Object { $_.State -eq "running" })
+  $conflict = @($servers | Where-Object { $_.State -eq "conflict" })
+
   $overall =
-    if (($servers | Where-Object { $_.State -eq "conflict" })) { "conflict" }
-    elseif (($servers | Where-Object { $_.State -eq "running" }).Count -eq $servers.Count) { "running" }
-    elseif (($servers | Where-Object { $_.State -eq "running" })) { "partial" }
+    if ($conflict.Count -gt 0) { "conflict" }
+    elseif ($running.Count -eq $servers.Count) { "running" }
+    elseif ($running.Count -gt 0) { "partial" }
     else { "stopped" }
 
   return [pscustomobject]@{ Rows = $rows; Overall = $overall }
@@ -173,7 +203,12 @@ function Start-AppServices {
   $psArgs = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$launcher`"")
   if ($Production) { $psArgs += "-Prod" }
 
-  Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs -WorkingDirectory $script:AppRoot | Out-Null
+  # -WindowStyle Normal is explicit because the control panel itself is
+  # started hidden by launch.vbs, and a child can otherwise inherit that
+  # state -- which would hide the very window whose whole purpose is to show
+  # a first run that installs Node and builds the app for several minutes.
+  Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs `
+    -WorkingDirectory $script:AppRoot -WindowStyle Normal | Out-Null
 }
 
 function Stop-AppServices {

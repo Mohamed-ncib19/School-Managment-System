@@ -75,16 +75,29 @@ parallel installation.
 
 ## What the installer does
 
-1. Copies the application tree to `C:\Program Files\SchoolManagementSystem`
-   (elevation required: the portable PostgreSQL runtime and the Node install
-   both need it).
-2. Runs `post-install.ps1`, which installs Node.js 20 LTS via winget if it is
+1. Copies the application tree to `C:\SchoolManagementSystem`.
+
+   **Not** Program Files, and that is deliberate. The application writes
+   inside its own folder for its whole life — `apps\backend\.env`, `logs\`,
+   `backups\`, `.postgres\data\`, the Next.js build output, `node_modules` —
+   and the control panel that drives all of it opens from a desktop shortcut,
+   so it runs *unelevated*. Program Files denies writes to an unelevated
+   process. Elevating the panel is not an alternative: PostgreSQL refuses to
+   run under an account holding administrative rights. The short path also
+   keeps pnpm's nested `node_modules` well clear of the 260-character limit.
+2. Grants the local **Users** group (SID `S-1-5-32-545`, because the name is
+   translated on French Windows) inheritable Modify rights on that folder, so
+   the unelevated control panel can actually do its job.
+3. Runs `post-install.ps1`, which installs Node.js 20 LTS via winget if it is
    missing, enables pnpm through corepack, opens the school-details dialog,
    and runs `pnpm install`. Every step is idempotent, so it is safe to re-run
-   by hand on a machine that half-installed.
-3. Creates Start Menu and (optionally) desktop shortcuts, plus an optional
+   by hand on a machine that half-installed. Its exit code is checked by
+   `RunPostInstall` in the `[Code]` section — 0 ready, 1 cancelled, 2 failed —
+   and reported. A `[Run]` entry cannot do this: it discards the exit code,
+   which would let setup report success over a system that cannot start.
+4. Creates Start Menu and (optionally) desktop shortcuts, plus an optional
    login entry that starts the servers without opening a window.
-4. Offers to open the control panel.
+5. Offers to open the control panel.
 
 Uninstalling stops the servers and the portable database first, then removes
 build output and `node_modules`. **It deliberately keeps `backups\`,

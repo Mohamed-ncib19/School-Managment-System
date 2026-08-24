@@ -73,7 +73,11 @@ Everything written to a folder is byte-identical to what goes to S3: same envelo
 
 ### Connecting Google Drive
 
-The administrator clicks **Se connecter avec Google**, picks an account, and is done. They never see a client id, a client secret, or a token.
+Google Drive sits behind *Autres options* rather than on the first screen, and this is why.
+
+**It can only be connected from the server itself.** For an installed application Google accepts a redirect URI on `localhost`/`127.0.0.1` and nowhere else — no LAN address, no machine name. The consent flow therefore returns the authorization code to loopback *on whichever computer opened the browser*. An administrator who connects Drive from their own PC while the system runs on the office server hands the code to their own machine, and the server never sees it. Dropbox has no such restriction, which is the single biggest reason it is the recommended cloud.
+
+Sitting at the server, the flow is one click: press **Se connecter avec Google**, pick an account, done. No client id, no client secret, no token to copy.
 
 That works because the application ships its own Google OAuth client, set once in the release build:
 

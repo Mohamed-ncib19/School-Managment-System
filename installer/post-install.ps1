@@ -42,6 +42,40 @@ function Fail {
   exit 2
 }
 
+function Invoke-Native {
+  <#
+    Runs an external program, logs everything it prints, and returns its exit
+    code.
+
+    The redirection is why this helper exists. In Windows PowerShell 5.1 a
+    line a native program writes to stderr becomes an ErrorRecord once `2>&1`
+    merges it into the pipeline, and under $ErrorActionPreference = "Stop"
+    that ErrorRecord is a terminating error. pnpm and winget both write
+    ordinary progress and deprecation notices to stderr, so leaving the
+    preference at "Stop" turns a completely normal install into an unhandled
+    NativeCommandError - the installation dies at "Installation des
+    dependances" and the school never learns why.
+
+    Lowering the preference for the duration is the fix. Success is decided by
+    the exit code, never by $? and never by whether anything reached stderr.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$Exe,
+    [string[]]$Arguments = @()
+  )
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $Exe @Arguments 2>&1 | ForEach-Object {
+      $text = "$_".TrimEnd()
+      if ($text) { Log $text }
+    }
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
 Log "Installation dans $AppRoot"
 
 # --- 0. Already configured? ------------------------------------------------
@@ -64,6 +98,35 @@ if ($AlreadyConfigured) {
   Log "Aucune installation précédente détectée — installation complète."
 }
 
+# --- 0b. Make the folder writable by whoever runs the system ---------------
+# Everything this application does at runtime writes inside its own folder:
+# apps\backend\.env, logs\, backups\, .postgres\data\, the Next.js build
+# output and node_modules. The control panel that drives all of it is opened
+# from a desktop shortcut, so it runs with the ordinary user's token - while
+# this script runs elevated. Without the grant below, the shortcut opens a
+# window whose Start button fails with "access denied" every time.
+#
+# Elevating the control panel instead is not an option: PostgreSQL refuses to
+# run under an account holding administrative rights, so the database has to
+# start unprivileged and needs a data directory it can write.
+#
+# S-1-5-32-545 is the well-known SID of the local Users group. Its NAME is
+# translated on non-English Windows ("Utilisateurs" on the French installs
+# this product targets) and icacls matches the literal string it is given, so
+# the SID is the only spelling that works on every machine.
+#
+# (OI)(CI) makes the grant inheritable, which is what covers node_modules and
+# .postgres\data - both created after this point, by other processes.
+Log "Attribution des droits d'ecriture sur $AppRoot au groupe Utilisateurs..."
+$aclCode = Invoke-Native -Exe "icacls.exe" -Arguments @(
+  $AppRoot, "/grant", "*S-1-5-32-545:(OI)(CI)M", "/T", "/C", "/Q"
+)
+if ($aclCode -ne 0) {
+  Fail ("Impossible d'accorder les droits d'ecriture sur $AppRoot (code $aclCode). " +
+        "Sans ces droits, le raccourci du bureau ouvrirait un panneau incapable " +
+        "de demarrer le systeme.")
+}
+
 # --- 1. Node.js ------------------------------------------------------------
 # Everything below needs it, and the error it produces otherwise ("'node' is
 # not recognized") tells a school nothing about what to install.
@@ -75,8 +138,10 @@ if (-not $node) {
     Fail ("Node.js n'est pas installé et winget n'est pas disponible. " +
           "Installez Node.js 20 LTS depuis https://nodejs.org puis relancez l'installation.")
   }
-  & winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements 2>&1 |
-    ForEach-Object { Log $_ }
+  Invoke-Native -Exe "winget" -Arguments @(
+    "install", "--id", "OpenJS.NodeJS.LTS", "--silent",
+    "--accept-package-agreements", "--accept-source-agreements"
+  ) | Out-Null
 
   # winget updates PATH for new processes only; refresh it for this one.
   $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
@@ -91,8 +156,8 @@ Log "Node.js : $(& node --version)"
 # --- 2. pnpm ---------------------------------------------------------------
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   Log "Activation de pnpm via corepack…"
-  & corepack enable 2>&1 | ForEach-Object { Log $_ }
-  & corepack prepare pnpm@latest --activate 2>&1 | ForEach-Object { Log $_ }
+  Invoke-Native -Exe "corepack" -Arguments @("enable") | Out-Null
+  Invoke-Native -Exe "corepack" -Arguments @("prepare", "pnpm@latest", "--activate") | Out-Null
 }
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   Fail "pnpm n'a pas pu être activé. Vérifiez l'installation de Node.js."
@@ -122,8 +187,8 @@ if ($AlreadyConfigured) {
 Log "Installation des dépendances (cela peut prendre plusieurs minutes)…"
 Push-Location $AppRoot
 try {
-  & pnpm install 2>&1 | ForEach-Object { Log $_ }
-  if ($LASTEXITCODE -ne 0) { Fail "L'installation des dépendances a échoué. Vérifiez la connexion internet." }
+  $installCode = Invoke-Native -Exe "pnpm" -Arguments @("install")
+  if ($installCode -ne 0) { Fail "L'installation des dépendances a échoué. Vérifiez la connexion internet." }
 } finally {
   Pop-Location
 }

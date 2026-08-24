@@ -63,6 +63,18 @@ describe("restore throttle", () => {
 
   it("is applied to every restore route that does real work", () => {
     const controller = readFileSync(join(__dirname, "..", "cloud-backup.controller.ts"), "utf8");
-    expect((controller.match(/@UseGuards\(RestoreThrottleGuard\)/g) ?? []).length).toBe(5);
-  });
-});
+
+    // A hard count used to stand here, and it broke the moment a route was
+    // added — reporting a failure when the code had become *more* protected.
+    // Assert the property instead. Every POST under restore/ does real work:
+    // it starts a job, applies a snapshot, replays events, or mints an OAuth
+    // url. The two unguarded restore routes are GETs that read a flag.
+    const members = controller.split(/\n\n(?=  @)/);
+    const writes = members.filter((m) => /@Post\("restore\//.test(m));
+
+    expect(writes.length).toBeGreaterThanOrEqual(5);
+    const unguarded = writes
+      .filter((m) => !m.includes("@UseGuards(RestoreThrottleGuard)"))
+      .map((m) => m.match(/async (\w+)\(/)?.[1] ?? "(unnamed)");
+    expect(unguarded).toEqual([]);
+  });});

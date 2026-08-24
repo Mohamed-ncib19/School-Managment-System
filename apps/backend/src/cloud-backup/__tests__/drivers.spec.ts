@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { sliceMember } from "./source-anchor";
 import { isRetryable } from "../drivers/retry-policy";
 import { withRetry } from "../drivers/storage-driver";
 import { S3Driver } from "../drivers/s3.driver";
@@ -111,13 +112,11 @@ describe("gdrive driver source", () => {
     // would ever write to.
     expect(gdrive).not.toContain('rootFolder(auth, "__probe__")');
     expect(gdrive).not.toContain("this.config.schoolId");
-    const test = gdrive.slice(gdrive.indexOf("async testConnection"));
-    const body = test.slice(0, test.indexOf("\n  async put"));
+    const body = sliceMember(gdrive, /\n  async testConnection\(/, /\n  async put/);
     expect(body).not.toContain("rootFolder(");
     // …and it cleans up after itself.
     expect(body).toContain("files.delete");
   });
-
   it("no longer carries the dead no-op files.update call", () => {
     expect(gdrive).not.toContain("media: undefined as never");
   });
@@ -134,8 +133,10 @@ describe("the sync worker reuses drivers", () => {
     // Rebuilding meant a new S3Client every 60s AND a credential decrypt,
     // which on Windows spawns a PowerShell process — once a minute, forever.
     expect(worker).toContain("driverCache");
-    const fn = worker.slice(worker.indexOf("private async enabledTargets"));
-    const body = fn.slice(0, fn.indexOf("\n  /** Releases"));
+    // `private` is not part of the anchor: enabledTargets was made public so
+    // the setup service could reuse the same cache, and pinning the modifier
+    // made this guard slice an empty string instead of noticing.
+    const body = sliceMember(worker, /\n  (?:private )?async enabledTargets\(/, /\n  \/\*\* Releases/);
     expect(body).toContain("cached.configRef === row.config_ref");
   });
 

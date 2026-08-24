@@ -1,5 +1,5 @@
 import { slugifySchoolId, isValidSchoolId } from "../setup/school-id";
-import { DRIVER_DEFINITIONS } from "../drivers/driver-registry";
+import { DRIVER_DEFINITIONS, isRecommended } from "../drivers/driver-registry";
 import { S3_PRESETS } from "../drivers/s3-presets";
 
 describe("school id is derived, not demanded", () => {
@@ -50,10 +50,55 @@ describe("school id is derived, not demanded", () => {
 describe("the picker offers free options first", () => {
   const recommended = DRIVER_DEFINITIONS.filter((d) => d.recommended);
 
-  it("recommends exactly the two that need no account or no card", () => {
-    expect(recommended.map((d) => d.id).sort()).toEqual(["folder", "gdrive"]);
-  });
+  // isRecommended() reads the environment at call time, so the test below
+  // has to set it. Snapshot and restore rather than delete: a developer with
+  // real credentials in their shell must not have this suite change what the
+  // next one sees.
+  const OAUTH_VARS = [
+    "DROPBOX_APP_KEY",
+    "DROPBOX_APP_SECRET",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+  ] as const;
+  const saved = new Map<string, string | undefined>();
+  beforeAll(() => OAUTH_VARS.forEach((v) => saved.set(v, process.env[v])));
+  afterAll(() =>
+    OAUTH_VARS.forEach((v) => {
+      const was = saved.get(v);
+      if (was === undefined) delete process.env[v];
+      else process.env[v] = was;
+    }),
+  );
 
+  it("leads with what always works and gates the one-click clouds on credentials", () => {
+    const promoted = () =>
+      DRIVER_DEFINITIONS.filter((d) => isRecommended(d))
+        .map((d) => d.id)
+        .sort();
+
+    // Without publisher credentials a connect button can only return an
+    // error, so neither cloud may head the list — it would be a door that
+    // does not open. A folder always works.
+    delete process.env.DROPBOX_APP_KEY;
+    delete process.env.DROPBOX_APP_SECRET;
+    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    expect(promoted()).toEqual(["folder"]);
+
+    // Dropbox is the cloud this product ships credentials for: one form to
+    // register, no review, and no loopback restriction. It joins the folder
+    // as soon as they are set.
+    process.env.DROPBOX_APP_KEY = "app-key";
+    process.env.DROPBOX_APP_SECRET = "app-secret";
+    expect(promoted()).toEqual(["dropbox", "folder"]);
+
+    // Drive is promoted only for a self-hoster who registered their own
+    // client — and even then it can only be connected from the server, which
+    // is why it is not the recommendation.
+    process.env.GOOGLE_OAUTH_CLIENT_ID = "id.apps.googleusercontent.com";
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = "client-secret";
+    expect(promoted()).toEqual(["dropbox", "folder", "gdrive"]);
+  });
   it("states the cost on every recommended card", () => {
     for (const def of recommended) {
       expect(def.freeTier).toBeTruthy();

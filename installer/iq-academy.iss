@@ -20,7 +20,21 @@ AppId={{7C4A1E52-9B3D-4F86-A1C2-6D5E8F0B3A74}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\{#AppShortName}
+; NOT {autopf}. The application writes inside its own directory the entire
+; time it runs -- apps\backend\.env, logs\, backups\, .postgres\data\, the
+; Next.js build output and node_modules -- and the control panel that drives
+; all of that is opened from a desktop shortcut, so it runs UNELEVATED.
+; Program Files denies writes to an unelevated process, which would leave the
+; shortcut opening a panel whose Start button fails every single time.
+;
+; Elevating the panel instead is not an option: PostgreSQL refuses to run
+; under an account holding administrative rights, so the database has to start
+; unprivileged and therefore needs a data directory it can actually write.
+;
+; A short root also keeps pnpm's nested node_modules paths well clear of the
+; 260-character path limit, which "C:\Program Files\SchoolManagementSystem"
+; does not.
+DefaultDirName={sd}\{#AppShortName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist-installer
@@ -28,10 +42,9 @@ OutputBaseFilename=SystemeGestionScolaire-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-; The app writes into its own directory (.env, logs, .postgres, backups), so
-; it needs a location the service account can write to. Per-machine install
-; under Program Files requires elevation; that is deliberate, because the
-; PostgreSQL runtime and the Node install both need it.
+; Setup itself needs elevation: it installs Node.js, it may install the
+; PostgreSQL runtime, and it grants the install folder to the Users group.
+; Only setup is elevated -- nothing the school runs day to day is.
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
@@ -67,15 +80,15 @@ Name: "{commonstartup}\{#AppName}"; Filename: "{app}\installer\runtime\start-ser
   IconFilename: "{app}\installer\runtime\app.ico"; Tasks: startup
 
 [Run]
-; Prerequisites, the school wizard and dependencies. Shown rather than hidden:
-; installing Node and fetching packages takes minutes, and a silent progress
-; bar during that reads as a hang.
-Filename: "powershell.exe"; \
-  Parameters: "-NoLogo -NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\post-install.ps1"" -AppRoot ""{app}"""; \
-  StatusMsg: "Configuration du système (cela peut prendre plusieurs minutes)..."; \
-  Flags: waituntilterminated
+; The setup work -- prerequisites, the school's configuration, dependencies --
+; is driven from CurStepChanged below rather than from an entry here, because
+; a [Run] entry discards the exit code: a failed Node.js install or a
+; cancelled wizard would still finish "successfully" and hand the school a
+; desktop shortcut to a system that cannot start.
 
-; Offer to open the control panel straight away.
+; Open the control panel as soon as setup finishes. Checked by default: the
+; desktop shortcut opens this same window, so seeing it once is also how the
+; administrator learns where the system is controlled from.
 Filename: "{app}\installer\runtime\{#AppExeName}"; \
   Description: "Ouvrir le panneau de contrôle"; \
   Flags: postinstall nowait skipifsilent shellexec
@@ -196,6 +209,66 @@ begin
     Result := 'Première installation — la configuration de l''école sera demandée.' + NewLine + NewLine;
 
   Result := Result + MemoDirInfo + NewLine + NewLine + MemoTasksInfo;
+end;
+
+{
+  Prerequisites, the school's own configuration and its dependencies.
+
+  Driven from here rather than from a [Run] entry so that the exit code is
+  actually read. post-install.ps1 answers 0 = ready, 1 = the administrator
+  cancelled, 2 = failed; a [Run] entry throws all three away, and reporting
+  "installed" over a system that cannot start is the worst thing this
+  installer could do to a school.
+
+  The window is shown rather than hidden on purpose: installing Node.js and
+  fetching packages takes minutes, and a silent progress bar for that long is
+  indistinguishable from a hang.
+}
+procedure RunPostInstall();
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  WizardForm.StatusLabel.Caption :=
+    'Configuration du système (cela peut prendre plusieurs minutes)...';
+
+  Params := '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
+            ExpandConstant('{app}\installer\post-install.ps1') +
+            '" -AppRoot "' + ExpandConstant('{app}') + '"';
+
+  if not Exec('powershell.exe', Params, ExpandConstant('{app}'), SW_SHOW,
+              ewWaitUntilTerminated, ResultCode) then
+  begin
+    MsgBox('La configuration n''a pas pu être lancée.' + #13#10#13#10 +
+           SysErrorMessage(ResultCode) + #13#10#13#10 +
+           'Les fichiers sont en place. Relancez la configuration par un clic ' +
+           'droit sur ce fichier, puis « Exécuter avec PowerShell » :' + #13#10 +
+           ExpandConstant('{app}\installer\post-install.ps1'),
+           mbCriticalError, MB_OK);
+    Exit;
+  end;
+
+  if ResultCode = 1 then
+    MsgBox('Configuration interrompue.' + #13#10#13#10 +
+           'Les fichiers sont installés, mais l''école n''est pas encore ' +
+           'configurée. Ouvrez le panneau de contrôle depuis le raccourci du ' +
+           'bureau et cliquez sur « Démarrer » pour la terminer.',
+           mbInformation, MB_OK)
+  else if ResultCode <> 0 then
+    { A continuation line must never begin with '#': the preprocessor reads
+      it as a directive and aborts the build. Keep #13#10 mid-line. }
+    MsgBox('La configuration a échoué (code ' + IntToStr(ResultCode) + ').' + #13#10#13#10 +
+           'Le journal détaillé se trouve dans :' + #13#10 +
+           ExpandConstant('{app}\logs') + #13#10#13#10 +
+           'Le système ne pourra pas démarrer tant que ce problème persiste. ' +
+           'Envoyez ce journal à l''assistance.',
+           mbCriticalError, MB_OK);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RunPostInstall();
 end;
 
 { Warn before uninstalling that data is kept, so nobody assumes it was wiped. }

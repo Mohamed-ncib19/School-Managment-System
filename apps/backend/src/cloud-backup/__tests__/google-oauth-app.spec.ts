@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { sliceMember } from "./source-anchor";
 import {
   appGoogleOAuth,
   hasAppGoogleOAuth,
@@ -95,9 +96,19 @@ describe("the OAuth url endpoint", () => {
   const CONTROLLER = readFileSync(join(__dirname, "..", "cloud-backup.controller.ts"), "utf8");
 
   it("no longer demands a client id and secret from the caller", () => {
-    const handler = CONTROLLER.slice(CONTROLLER.indexOf("async gdriveUrl"));
-    const body = handler.slice(0, handler.indexOf("\n  @"));
-    expect(body).not.toMatch(/!body\.clientId \|\| !body\.clientSecret/);
-    expect(body).toContain("appGoogleOAuth()");
+    // Two routes reach this: the authenticated one, and the one the login
+    // screen uses during a restore on new hardware. Both delegate to a single
+    // builder, and that is where the property now lives — the old anchor
+    // named `async gdriveUrl`, which is neither async nor the place the
+    // credentials get resolved any more, so it silently guarded nothing.
+    expect(sliceMember(CONTROLLER, /\n  gdriveUrl\(/, /\n  \/\*\*/)).toContain("buildGdriveConsentUrl(body)");
+    expect(sliceMember(CONTROLLER, /\n  async restoreGdriveUrl\(/, /\n  private async/)).toContain(
+      "buildGdriveConsentUrl(body)",
+    );
+
+    const builder = sliceMember(CONTROLLER, /\n  private async buildGdriveConsentUrl\(/, /\n  @/);
+    // The caller's credentials are optional now; the app's own client fills in.
+    expect(builder).not.toMatch(/!body\.clientId \|\| !body\.clientSecret/);
+    expect(builder).toContain("appGoogleOAuth()");
   });
 });

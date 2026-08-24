@@ -15,6 +15,52 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# A failure before the window exists would otherwise be completely silent:
+# launch.vbs starts this hidden, so the school double-clicks the desktop
+# shortcut and *nothing happens at all* - no window, no error, nothing to
+# report to support. Catching it and naming the fault is the difference
+# between "it is broken" and a support call that can be answered.
+trap {
+  try {
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    [System.Windows.Forms.MessageBox]::Show(
+      "Le panneau de contrôle n'a pas pu démarrer." + [Environment]::NewLine +
+      [Environment]::NewLine + $_.Exception.Message + [Environment]::NewLine +
+      [Environment]::NewLine + "Réinstallez le Système de gestion scolaire ou " +
+      "contactez l'assistance.",
+      "Système de gestion scolaire",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+  } catch {
+    # Even the message failed - nothing left but a non-zero exit code.
+  }
+  exit 1
+}
+
+
+# --- window visibility -----------------------------------------------------
+# Windows applies the *launcher's* requested window state to the first window
+# a process shows and ignores what the code asks for -- that is what
+# STARTF_USESHOWWINDOW in STARTUPINFO does. launch.vbs deliberately starts
+# PowerShell hidden so no console flashes, so the panel's own window was the
+# one absorbing that "hidden": the form was created, correctly titled, and
+# never appeared. Double-clicking the desktop shortcut did nothing visible at
+# all.
+#
+# Spending the one-shot override on the console window -- which we want hidden
+# regardless -- lets every window after it appear normally: the panel, its
+# dialogs, and the crash message above.
+Add-Type -Namespace SmsPanel -Name Native -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")]   public static extern bool SetForegroundWindow(IntPtr hWnd);
+'@
+
+$consoleWindow = [SmsPanel.Native]::GetConsoleWindow()
+if ($consoleWindow -ne [IntPtr]::Zero) {
+  [void][SmsPanel.Native]::ShowWindow($consoleWindow, 0)   # SW_HIDE
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -407,6 +453,19 @@ $timer.Start()
 
 $form.Add_Shown({
   if ($script:School) { $form.Text = "Système de gestion scolaire — $($script:School)" }
+  # Second line of defence against the show-window override explained at the
+  # top: a no-op when the window already came up normally, and the difference
+  # between a working shortcut and a dead one when it did not.
+  [void][SmsPanel.Native]::ShowWindow($form.Handle, 5)   # SW_SHOW
+  [void][SmsPanel.Native]::SetForegroundWindow($form.Handle)
+  # SetForegroundWindow is refused when another application currently owns
+  # the foreground, which would leave the panel opening *behind* whatever
+  # the administrator was looking at -- indistinguishable from not opening.
+  # A momentary TopMost flip is the reliable way to raise it without
+  # leaving it pinned above everything else afterwards.
+  $form.TopMost = $true
+  $form.TopMost = $false
+  $form.Activate()
   Update-Status
 })
 $form.Add_FormClosed({ $timer.Stop(); $timer.Dispose() })

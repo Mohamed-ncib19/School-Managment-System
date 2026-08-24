@@ -2,7 +2,10 @@ import { Readable } from "node:stream";
 import { buildKdfParams, deriveKey, newSalt } from "../crypto/kdf";
 import { encodeObject, decodeObject } from "../crypto/object-codec";
 import { compressionAlgorithm } from "../crypto/compression";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { buildCheckPlaintext } from "../crypto/check-object";
+import { moduleFiles, moduleSource } from "./source-anchor";
 
 const TEST_KDF = buildKdfParams("scrypt", newSalt(), { scryptN: 1024 });
 
@@ -44,15 +47,19 @@ describe("recovery-phrase check object", () => {
     );
   });
 
-  it("is not rebuilt inline by setup or restore", () => {
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const { join } = require("node:path") as typeof import("node:path");
-    const setup = readFileSync(join(__dirname, "..", "setup", "setup.service.ts"), "utf8");
-    const restore = readFileSync(join(__dirname, "..", "restore", "restore.service.ts"), "utf8");
-    // Both must call the shared builder; an inline literal is how they drifted.
-    expect(setup).not.toContain("recovery-phrase-verification");
-    expect(restore).not.toContain("recovery-phrase-verification");
-    expect(setup).toContain("buildCheckPlaintext");
-    expect(restore).toContain("buildCheckPlaintext");
-  });
-});
+  it("is not rebuilt inline anywhere but the shared builder", () => {
+    // Walking the module beats naming two files. The inline copies drifted
+    // apart once already, and a guard pinned to file names stops guarding the
+    // moment the code moves — which is exactly what happened when the
+    // meta-object writer left setup.service.ts for setup/meta-objects.ts.
+    const builder = join("crypto", "check-object.ts");
+    const offenders = moduleFiles()
+      .filter((f) => !f.endsWith(builder))
+      .filter((f) => readFileSync(f, "utf8").includes("recovery-phrase-verification"))
+      .map((f) => f.slice(f.indexOf("cloud-backup")));
+    expect(offenders).toEqual([]);
+
+    // And both sides still go through it.
+    expect(moduleSource("setup", "meta-objects.ts")).toContain("buildCheckPlaintext");
+    expect(moduleSource("restore", "restore.service.ts")).toContain("buildCheckPlaintext");
+  });});
