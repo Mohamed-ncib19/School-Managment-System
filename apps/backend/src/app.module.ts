@@ -22,6 +22,7 @@ import { WhiteboardsModule } from "./whiteboards/whiteboards.module";
 import { DataTransferModule } from "./data-transfer/data-transfer.module";
 import { CloudBackupModule } from "./cloud-backup/cloud-backup.module";
 import { MachineBindingService } from "./machine/machine-binding.service";
+import { HealthModule } from "./health/health.module";
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { MachineBindingService } from "./machine/machine-binding.service";
     WhiteboardsModule,
     DataTransferModule,
     CloudBackupModule,
+    HealthModule,
   ],
   providers: [MachineBindingService],
 })
