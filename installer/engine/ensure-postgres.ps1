@@ -164,36 +164,87 @@ function Sync-SuperPasswordIntoEnv {
   Say "Recorded the superuser password in .env" "Green"
 }
 
-# --- 1. Already listening? ------------------------------------------------
-
-if (Test-PgPort $Port) {
-  Say "PostgreSQL already listening on port $Port" "Green"
-  $bin = Find-PgBin
-  if ($bin) { return $bin }
-  return ""
+function Update-EnvPort {
+  param([int]$NewPort)
+  $envFile = Join-Path (Join-Path (Join-Path $Root "apps") "backend") ".env"
+  if (-not (Test-Path $envFile)) { return }
+  $content = Get-Content $envFile -Raw -ErrorAction SilentlyContinue
+  if ($null -eq $content) { return }
+  $content = $content -replace "@localhost:\d+/", "@localhost:${NewPort}/"
+  $content = $content -replace "@127\.0\.0\.1:\d+/", "@127.0.0.1:${NewPort}/"
+  Set-Content -Path $envFile -Value $content -NoNewline -Encoding ascii
 }
 
-# --- 2. Native Windows service present ------------------------------------
-$svc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($svc) {
-  Say "Starting Windows service $($svc.Name)..." "Yellow"
+function Test-PgAuthOk {
+  param([int]$PortNumber, [string]$SuperPassword)
+  $binDir = Find-PgBin
+  $psqlExe = if ($binDir) { Join-Path $binDir "psql.exe" } else { (Get-Command psql -ErrorAction SilentlyContinue).Source }
+  if (-not $psqlExe -or -not (Test-Path $psqlExe)) { return $true }
+
+  $candidates = @($SuperPassword, "iq_academy_local", "postgres", "") | Where-Object { $_ -ne $null } | Select-Object -Unique
+  $oldEap = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
   try {
-    if ($svc.Status -ne "Running") { Start-Service $svc.Name -ErrorAction Stop }
-    if (Wait-PgPortUp -P $Port -TimeoutSec 20 -Label "the PostgreSQL service") {
-      Say "Service started" "Green"
+    foreach ($p in $candidates) {
+      $env:PGPASSWORD = $p
+      & $psqlExe -U postgres -h 127.0.0.1 -p $PortNumber -d postgres -tAc "SELECT 1" 2>$null | Out-Null
+      $ok = ($LASTEXITCODE -eq 0)
+      Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+      if ($ok) { return $true }
+    }
+    return $false
+  } finally {
+    $ErrorActionPreference = $oldEap
+  }
+}
+
+# --- 1. Already listening? ------------------------------------------------
+
+$isForeignPg = $false
+if (Test-PgPort $Port) {
+  if (Test-PgAuthOk -PortNumber $Port -SuperPassword $SuperPassword) {
+    Say "PostgreSQL already listening on port $Port" "Green"
+    $bin = Find-PgBin
+    if ($bin) { return $bin }
+    return ""
+  } else {
+    Say "Port $Port is occupied by a foreign PostgreSQL instance (superuser auth failed)." "Yellow"
+    Say "Switching application database port to 54325..." "Yellow"
+    $Port = 54325
+    $isForeignPg = $true
+    Update-EnvPort -NewPort 54325
+    if ((Test-PgPort 54325) -and (Test-PgAuthOk -PortNumber 54325 -SuperPassword $SuperPassword)) {
+      Say "Application PostgreSQL listening on port 54325" "Green"
       $bin = Find-PgBin
       if ($bin) { return $bin }
       return ""
     }
-  } catch {
-    Say "Could not start the service: $($_.Exception.Message)" "Yellow"
+  }
+}
+
+# --- 2. Native Windows service present ------------------------------------
+if (-not $isForeignPg) {
+  $svc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($svc) {
+    Say "Starting Windows service $($svc.Name)..." "Yellow"
+    try {
+      if ($svc.Status -ne "Running") { Start-Service $svc.Name -ErrorAction Stop }
+      if (Wait-PgPortUp -P $Port -TimeoutSec 20 -Label "the PostgreSQL service") {
+        Say "Service started" "Green"
+        $bin = Find-PgBin
+        if ($bin) { return $bin }
+        return ""
+      }
+    } catch {
+      Say "Could not start the service: $($_.Exception.Message)" "Yellow"
+    }
   }
 }
 
 # --- 3. No native install: install from the official installer ------------
 $nativeInstallAttempted = $false
 
-if (-not (Find-NativePgBin)) {
+if (-not $isForeignPg -and -not (Find-NativePgBin)) {
   Say "PostgreSQL is not installed - downloading the official installer (~350 MB)..." "Cyan"
 
   $major = ($Version -split "\.")[0]

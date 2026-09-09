@@ -64,9 +64,9 @@ function New-RandomString {
 
 function ConvertTo-Slug {
   param([string]$Name)
-  $slug = $Name.ToLowerInvariant() -replace "[^a-z0-9]+", "-"
-  $slug = $slug.Trim("-")
-  if (-not $slug) { $slug = "school" }
+  $slug = $Name.ToLowerInvariant() -replace "[^a-z0-9]+", "_"
+  $slug = $slug.Trim("_")
+  if (-not $slug) { $slug = "school_db" }
   return $slug
 }
 

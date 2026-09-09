@@ -55,27 +55,46 @@ $dbHost = $uri.Host
 $dbPort = if ($uri.Port -gt 0) { $uri.Port } else { 5432 }
 $dbName = $uri.AbsolutePath.TrimStart("/").Split("?")[0]
 
-if (-not $dbName) {
-  Write-Warn3 "DATABASE_URL names no database - skipping the safety backup."
+if (-not $dbName -or $dbName -eq "public" -or $dbName -match '^\s*=') {
+  Write-Note "Invalid database name ($dbName) - skipping the safety backup."
   exit 0
 }
 
 # Prefer the runtime shipped with the app, then anything on PATH.
 $pgDump = $null
+$psqlBin = $null
 $runtime = Join-Path $Root ".postgres\runtime"
 if (Test-Path $runtime) {
   $found = Get-ChildItem -Path $runtime -Filter "pg_dump.exe" -Recurse -ErrorAction SilentlyContinue |
            Select-Object -First 1
   if ($found) { $pgDump = $found.FullName }
+  $foundPsql = Get-ChildItem -Path $runtime -Filter "psql.exe" -Recurse -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+  if ($foundPsql) { $psqlBin = $foundPsql.FullName }
 }
 if (-not $pgDump) {
   $onPath = Get-Command pg_dump -ErrorAction SilentlyContinue
   if ($onPath) { $pgDump = $onPath.Source }
 }
+if (-not $psqlBin) {
+  $onPathPsql = Get-Command psql -ErrorAction SilentlyContinue
+  if ($onPathPsql) { $psqlBin = $onPathPsql.Source }
+}
 if (-not $pgDump) {
   Write-Warn3 "pg_dump not found - continuing WITHOUT a safety backup."
   Write-Warn3 "If a schema change removes a column, that data cannot be recovered."
   exit 0
+}
+
+# Skip safety backup if database doesn't exist or is empty (0 tables)
+if ($psqlBin) {
+  $env:PGPASSWORD = $dbPass
+  $tableCount = & $psqlBin -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
+  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  if ($LASTEXITCODE -ne 0 -or -not ($tableCount -match "^\d+$") -or [int]$tableCount -eq 0) {
+    Write-Note "Database '$dbName' is empty or not initialized yet - safety backup skipped."
+    exit 0
+  }
 }
 
 $backupDir = Join-Path $Root "backups"

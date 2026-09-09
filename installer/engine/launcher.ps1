@@ -307,8 +307,21 @@ if (-not $databaseUrl) { Fail "DATABASE_URL is missing from apps\backend\.env" }
 if ($databaseUrl -notmatch "postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^?]+)") {
   Fail "DATABASE_URL in apps\backend\.env is not a valid PostgreSQL connection string."
 }
-$dbUser = $Matches[1]; $dbPass = $Matches[2]; $dbHost = $Matches[3]
-$dbPort = [int]$Matches[4]; $dbName = $Matches[5]
+$dbUser = Get-EnvValue $backendEnv "DATABASE_USER"
+if (-not $dbUser) { $dbUser = $Matches[1] }
+$dbPass = Get-EnvValue $backendEnv "DATABASE_PASSWORD"
+if (-not $dbPass) { $dbPass = $Matches[2] }
+$dbHost = $Matches[3]
+$dbPort = [int]$Matches[4]
+$dbName = Get-EnvValue $backendEnv "DATABASE_NAME"
+if (-not $dbName -or $dbName -match '^\s*=' -or $dbName -eq "public") {
+  $extracted = $Matches[5]
+  if ($extracted -and $extracted -notmatch '^\s*=' -and $extracted -ne "public") {
+    $dbName = $extracted
+  } else {
+    $dbName = "school_db"
+  }
+}
 Write-Ok "Database target" "$dbName @ $dbHost`:$dbPort"
 
 # ===========================================================================
@@ -332,6 +345,13 @@ $pgBin = & (Join-Path $RootScripts "ensure-postgres.ps1") -Port $dbPort -SuperPa
   Fail "Could not start PostgreSQL: $($_.Exception.Message)" `
        "Start the system again from the desktop shortcut - it will resume automatically, or install PostgreSQL 16 from https://www.postgresql.org/download/windows/"
 }
+
+# Re-read database configuration from .env in case ensure-postgres auto-switched ports
+$databaseUrl = Get-EnvValue $backendEnv "DATABASE_URL"
+if ($databaseUrl -match "postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^?]+)") {
+  $dbPort = [int]$Matches[4]
+}
+
 if (-not (Test-Port $dbPort)) {
   Fail "Nothing is listening on port $dbPort." "PostgreSQL did not start. See the messages above."
 }
@@ -359,22 +379,46 @@ if ($appLoginOk) {
 } elseif ($psql) {
   # Fresh machine: create the role and database as the superuser.
   Write-Info "Application login failed - setting up the role and database..."
-  $superPass = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
-  if (-not $superPass) { $superPass = "iq_academy_local" }
-  $env:PGPASSWORD = $superPass
+  $superCandidates = @(
+    (Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"),
+    "iq_academy_local",
+    "postgres",
+    ""
+  ) | Where-Object { $_ -ne $null } | Select-Object -Unique
 
-  $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
-  if ($roleExists -ne "1") {
-    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE ROLE `"$dbUser`" LOGIN PASSWORD '$dbPass' CREATEDB" 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
+  $workingSuperPass = $null
+  foreach ($sp in $superCandidates) {
+    $env:PGPASSWORD = $sp
+    & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $workingSuperPass = $sp; break }
   }
 
-  $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
-  if ($dbExists -ne "1") {
-    & $psql -U postgres -h $dbHost -p $dbPort -c "CREATE DATABASE `"$dbName`" OWNER `"$dbUser`"" 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
+  if ($null -ne $workingSuperPass) {
+    $env:PGPASSWORD = $workingSuperPass
+
+    $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
+    if ($roleExists -ne "1") {
+      $sqlFile = [System.IO.Path]::GetTempFileName()
+      Set-Content -Path $sqlFile -Value ("CREATE ROLE " + [char]34 + $dbUser + [char]34 + " WITH LOGIN PASSWORD '" + $dbPass + "' CREATEDB;") -Encoding ascii
+      & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+      $roleCode = $LASTEXITCODE
+      Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+      if ($roleCode -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
+    }
+
+    $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
+    if ($dbExists -ne "1") {
+      $sqlFile = [System.IO.Path]::GetTempFileName()
+      Set-Content -Path $sqlFile -Value ("CREATE DATABASE " + [char]34 + $dbName + [char]34 + " OWNER " + [char]34 + $dbUser + [char]34 + ";") -Encoding ascii
+      & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+      $dbCode = $LASTEXITCODE
+      Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+      if ($dbCode -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
+    }
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  } else {
+    Write-Warn2 "Could not authenticate as superuser 'postgres' on port $dbPort - skipping role/database setup"
   }
-  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 } else {
   Write-Warn2 "psql not found - skipping the database check (drizzle-kit will report any problem)"
 }
@@ -389,21 +433,37 @@ if ($appLoginOk) {
   predate the extension and need it too. IF NOT EXISTS makes the repeat free.
 #>
 if ($psql) {
-  $superPass = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
-  if (-not $superPass) { $superPass = "iq_academy_local" }
-  $env:PGPASSWORD = $superPass
+  $superCandidates = @(
+    (Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"),
+    "iq_academy_local",
+    "postgres",
+    ""
+  ) | Where-Object { $_ -ne $null } | Select-Object -Unique
 
-  $hasTrgm = & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -tAc "SELECT 1 FROM pg_extension WHERE extname='pg_trgm'" 2>$null
-  if ($hasTrgm -ne "1") {
-    & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-      Write-Ok "Enabled pg_trgm" "text search indexes"
-    } else {
-      Write-Warn2 "Could not enable pg_trgm - text searches will fall back to full scans"
-    }
+  $workingSuperPass = $null
+  foreach ($sp in $superCandidates) {
+    $env:PGPASSWORD = $sp
+    & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $workingSuperPass = $sp; break }
   }
 
-  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  if ($null -ne $workingSuperPass) {
+    $env:PGPASSWORD = $workingSuperPass
+    $hasTrgm = & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -tAc "SELECT 1 FROM pg_extension WHERE extname='pg_trgm'" 2>$null
+    if ($hasTrgm -ne "1") {
+      $sqlFile = [System.IO.Path]::GetTempFileName()
+      Set-Content -Path $sqlFile -Value "CREATE EXTENSION IF NOT EXISTS pg_trgm;" -Encoding ascii
+      & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -f $sqlFile 2>$null | Out-Null
+      $trgmCode = $LASTEXITCODE
+      Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+      if ($trgmCode -eq 0) {
+        Write-Ok "Enabled pg_trgm" "text search indexes"
+      } else {
+        Write-Warn2 "Could not enable pg_trgm - text searches will fall back to full scans"
+      }
+    }
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  }
 }
 
 <#
@@ -665,7 +725,7 @@ if ($apiUp) {
 } else {
   $backendProc = Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $BackendDir -PassThru `
     -ArgumentList "-NoLogo", "-NoProfile", "-Command",
-      "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - API'; $backendCmd 2>&1 | Tee-Object -FilePath '$LogDir\backend.log'"
+      "`$ErrorActionPreference='Continue'; `$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - API'; $backendCmd 2>&1 | Tee-Object -FilePath '$LogDir\backend.log'"
   if ($backendProc) { $backendProc.Id | Out-File -FilePath (Join-Path $LogDir "backend.pid") -Encoding ascii }
 }
 
@@ -674,7 +734,7 @@ if ($webUp) {
 } else {
   $webProc = Start-Process -FilePath "powershell" -WindowStyle Minimized -WorkingDirectory $FrontendDir -PassThru `
     -ArgumentList "-NoLogo", "-NoProfile", "-Command",
-      "`$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
+      "`$ErrorActionPreference='Continue'; `$Host.UI.RawUI.WindowTitle='SCHOOL MANAGEMENT SYSTEM - Web'; $frontendCmd 2>&1 | Tee-Object -FilePath '$LogDir\frontend.log'"
   if ($webProc) { $webProc.Id | Out-File -FilePath (Join-Path $LogDir "frontend.pid") -Encoding ascii }
 }
 
