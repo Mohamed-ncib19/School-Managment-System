@@ -284,40 +284,45 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                           {field.required && <span className="text-danger"> *</span>}
                         </label>
                         {field.type === "oauth" ? (
-                          values[field.name] ? (
-                            <div className="flex items-center gap-3 rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3">
-                              <CheckCircle2 size={16} className="shrink-0 text-success-strong dark:text-success-dark-strong" />
-                              <span className="text-sm text-success-strong dark:text-success-dark-strong flex-1">
-                                {def?.id === "dropbox"
-                                  ? t("cloudSafeSave.dropboxConnected", "Compte Dropbox connecté")
-                                  : t("cloudSafeSave.googleConnected", "Compte Google connecté")}
-                              </span>
+                          <>
+                            {values[field.name] ? (
+                              <div className="flex items-center gap-3 rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3">
+                                <CheckCircle2 size={16} className="shrink-0 text-success-strong dark:text-success-dark-strong" />
+                                <span className="text-sm text-success-strong dark:text-success-dark-strong flex-1">
+                                  {def?.id === "dropbox"
+                                    ? t("cloudSafeSave.dropboxConnected", "Compte Dropbox connecté")
+                                    : t("cloudSafeSave.googleConnected", "Compte Google connecté")}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="text-xs text-text-secondary hover:text-primary underline shrink-0"
+                                  onClick={() => void runOAuth(field.name)}
+                                  disabled={busy}
+                                >
+                                  {t("cloudSafeSave.googleChangeAccount", "Changer de compte")}
+                                </button>
+                              </div>
+                            ) : (
                               <button
                                 type="button"
-                                className="text-xs text-text-secondary hover:text-primary underline shrink-0"
+                                className="btn btn-secondary w-full justify-center gap-2"
                                 onClick={() => void runOAuth(field.name)}
                                 disabled={busy}
                               >
-                                {t("cloudSafeSave.googleChangeAccount", "Changer de compte")}
+                                {busy ? (
+                                  <RefreshCw size={16} className="animate-spin" />
+                                ) : (
+                                  <GoogleMark className="h-4 w-4 shrink-0" />
+                                )}
+                                {def?.id === "dropbox"
+                                  ? t("cloudSafeSave.dropboxConnect", "Se connecter avec Dropbox")
+                                  : t("cloudSafeSave.googleConnect", "Se connecter avec Google")}
                               </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-secondary w-full justify-center gap-2"
-                              onClick={() => void runOAuth(field.name)}
-                              disabled={busy}
-                            >
-                              {busy ? (
-                                <RefreshCw size={16} className="animate-spin" />
-                              ) : (
-                                <GoogleMark className="h-4 w-4 shrink-0" />
-                              )}
-                              {def?.id === "dropbox"
-                                ? t("cloudSafeSave.dropboxConnect", "Se connecter avec Dropbox")
-                                : t("cloudSafeSave.googleConnect", "Se connecter avec Google")}
-                            </button>
-                          )
+                            )}
+                            {def?.id === "gdrive" && (
+                              <p className="text-xs text-gold mt-1">{t("cloudSafeSave.googleLimitation")}</p>
+                            )}
+                          </>
                         ) : field.type === "select" ? (
                           <select
                             id={`res-${field.name}`}

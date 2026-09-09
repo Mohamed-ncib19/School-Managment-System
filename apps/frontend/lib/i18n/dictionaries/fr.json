@@ -1552,6 +1552,7 @@
     "dropboxConnected": "Compte Dropbox connecté",
     "googleConnected": "Compte Google connecté",
     "googleChangeAccount": "Changer de compte",
+    "googleLimitation": "Google Drive : la connexion doit être ouverte depuis le serveur. Depuis un autre poste du réseau, le code d'autorisation est envoyé à la mauvaise machine et la connexion échoue silencieusement. Utilisez Dropbox pour une configuration à distance.",
     "step2Title": "Identifiant d'école et phrase de récupération",
     "step2Subtitle": "L'identifiant d'école sert d'espace de stockage. La phrase est la seule clé des données chiffrées : elle n'est jamais stockée sur cette machine ni sur le cloud.",
     "schoolId": "Identifiant d'école",
