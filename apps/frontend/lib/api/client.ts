@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import { useAuthStore } from "@/hooks/use-auth-store";
+import { z } from "zod";
 
 let apiClient: AxiosInstance | undefined;
 
@@ -74,6 +75,11 @@ const resolveUrl = (url: string) => url;
 const unwrap = <T>(body: any): T =>
   body && typeof body === "object" && "data" in body && "error" in body ? body.data : body;
 
+function validateWithSchema<T>(body: any, schema: z.ZodType<T>): T {
+  const raw = body && typeof body === "object" && "data" in body && "error" in body ? body.data : body;
+  return schema.parse(raw);
+}
+
 /** A paginated payload, with the envelope's `meta` preserved. */
 export interface Paginated<
   T,
@@ -108,13 +114,25 @@ const unwrapPaginated = <
 };
 
 export const ApiClient = {
-  get: <T>(url: string, config = {}): Promise<T> => getApiClient().get(resolveUrl(url), config).then((r) => unwrap<T>(r.data)),
-  getPaginated: <T, M = Paginated<T>["meta"]>(url: string, config = {}): Promise<Paginated<T, M>> =>
-    getApiClient().get(resolveUrl(url), config).then((r) => unwrapPaginated<T, M>(r.data)),
-  post: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().post(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
-  put: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().put(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
-  patch: <T = any>(url: string, data?: any, config = {}): Promise<T> => getApiClient().patch(resolveUrl(url), data, config).then((r) => unwrap<T>(r.data)),
-  del: (url: string, config = {}): Promise<void> => getApiClient().delete(resolveUrl(url), config).then(() => {}),
+  get: <T>(url: string, config: { schema?: z.ZodType<T> } & Record<string, any> = {}): Promise<T> => {
+    const { schema, ...axiosConfig } = config;
+    return getApiClient().get(resolveUrl(url), axiosConfig).then((r) => schema ? validateWithSchema<T>(r.data, schema) : unwrap<T>(r.data));
+  },
+  getPaginated: <T, M = Paginated<T>["meta"]>(url: string, config: { schema?: z.ZodType<T> } & Record<string, any> = {}): Promise<Paginated<T, M>> =>
+    getApiClient().get(resolveUrl(url), config as any).then((r) => unwrapPaginated<T, M>(r.data)),
+  post: <T = any>(url: string, data?: any, config: { schema?: z.ZodType<T> } & Record<string, any> = {}): Promise<T> => {
+    const { schema, ...axiosConfig } = config;
+    return getApiClient().post(resolveUrl(url), data, axiosConfig).then((r) => schema ? validateWithSchema<T>(r.data, schema) : unwrap<T>(r.data));
+  },
+  put: <T = any>(url: string, data?: any, config: { schema?: z.ZodType<T> } & Record<string, any> = {}): Promise<T> => {
+    const { schema, ...axiosConfig } = config;
+    return getApiClient().put(resolveUrl(url), data, axiosConfig).then((r) => schema ? validateWithSchema<T>(r.data, schema) : unwrap<T>(r.data));
+  },
+  patch: <T = any>(url: string, data?: any, config: { schema?: z.ZodType<T> } & Record<string, any> = {}): Promise<T> => {
+    const { schema, ...axiosConfig } = config;
+    return getApiClient().patch(resolveUrl(url), data, axiosConfig).then((r) => schema ? validateWithSchema<T>(r.data, schema) : unwrap<T>(r.data));
+  },
+  del: (url: string, config: Record<string, any> = {}): Promise<void> => getApiClient().delete(resolveUrl(url), config).then(() => {}),
 };
 
 export default ApiClient;
