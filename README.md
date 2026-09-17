@@ -5,7 +5,7 @@ and monthly cash tuition payments.
 
 ## Download & install
 
-**Windows (recommended):** download `SystemeGestionScolaire-Setup-1.1.3.exe` from
+**Windows (recommended):** download `SystemeGestionScolaire-Setup-1.1.4.exe` from
 [Releases](https://github.com/Mohamed-ncib19/School-Managment-System/releases),
 run it and answer the school-details wizard once. The installer provides Node.js
 (if missing), creates the database and role, and puts a “Système de gestion
