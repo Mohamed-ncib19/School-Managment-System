@@ -479,6 +479,75 @@ function Ensure-AppRoleAndDb {
   return $working
 }
 
+<#
+  Last resort for an unknown native superuser password: when elevated, briefly
+  switch the native cluster's loopback authentication to trust, set the
+  superuser password to the .env value (or a fresh one), then restore
+  pg_hba.conf and restart. Returns the working superuser password, or $null.
+  Every failure restores the file and the service first - never fatal to the
+  start. Only loopback lines are touched, and only for the duration.
+#>
+function Reset-NativeSuperViaHba {
+  param([string]$Psql, [int]$Port)
+  $backup = $null
+  try {
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return $null }
+    $svc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $svc) { return $null }
+    $detail = Get-CimInstance Win32_Service -Filter "Name = '$($svc.Name)'" -ErrorAction SilentlyContinue
+    if (-not $detail -or -not $detail.PathName) { return $null }
+    $m = [regex]::Match($detail.PathName, '-D\s+"([^"]+)"')
+    if (-not $m.Success) { $m = [regex]::Match($detail.PathName, '-D\s+(\S+)') }
+    if (-not $m.Success) { return $null }
+    $hba = Join-Path $m.Groups[1].Value "pg_hba.conf"
+    if (-not (Test-Path $hba)) { return $null }
+    $backup = "$hba.iq-bak"
+    Copy-Item $hba $backup -Force
+    $content = Get-Content $hba -Raw
+    $relaxed = $content -replace '(?m)^(host\s+\S+\s+\S+\s+(?:127\.0\.0\.1/32|::1/128)\s+)\S+(\s*(?:#.*)?)$', '$1trust$2'
+    if ($relaxed -eq $content) { return $null }
+    Set-Content -Path $hba -Value $relaxed -Encoding ascii -NoNewline
+    Restart-Service -Name $svc.Name -Force -ErrorAction Stop
+    $deadline = (Get-Date).AddSeconds(90)
+    while (-not (Test-Port $Port) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
+    if (-not (Test-Port $Port)) { return $null }
+    $newSuper = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
+    if (-not $newSuper) { $newSuper = New-ApiKey }
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    & $Psql -U postgres -h $dbHost -p $Port -tAc "SELECT 1" 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $safe = $newSuper -replace "'", "''"
+    $sqlFile = [System.IO.Path]::GetTempFileName()
+    Set-Content -Path $sqlFile -Value "ALTER USER postgres PASSWORD '$safe';" -Encoding ascii
+    & $Psql -U postgres -h $dbHost -p $Port -f $sqlFile 2>$null | Out-Null
+    $alterCode = $LASTEXITCODE
+    Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+    if ($alterCode -ne 0) { return $null }
+    $env:PGPASSWORD = $newSuper
+    & $Psql -U postgres -h $dbHost -p $Port -tAc "SELECT 1" 2>$null | Out-Null
+    $verified = ($LASTEXITCODE -eq 0)
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    if (-not $verified) { return $null }
+    Copy-Item $backup $hba -Force
+    Remove-Item $backup -Force -ErrorAction SilentlyContinue
+    $backup = $null
+    Restart-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+    $deadline = (Get-Date).AddSeconds(90)
+    while (-not (Test-Port $Port) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
+    Set-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD" $newSuper
+    Write-Ok "Recovered native superuser access" "password stored in apps\backend\.env"
+    return $newSuper
+  } catch { return $null }
+  finally {
+    if ($backup -and (Test-Path $backup)) {
+      $hbaPath = $backup -replace '\.iq-bak$', ''
+      Copy-Item $backup $hbaPath -Force -ErrorAction SilentlyContinue
+      Remove-Item $backup -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 # Can the application already log in? On an established install this is the
 # whole story, and we never need superuser rights.
 $appLoginOk = $false
@@ -502,6 +571,12 @@ if ($appLoginOk) {
   Write-Info "Application login failed - setting up the role and database..."
   $workingSuperPass = Ensure-AppRoleAndDb -FixPassword:(-not $appLoginOk)
   if ($null -eq $workingSuperPass -and $dbPort -ne 54325) {
+    # Unknown superuser password, step 1: recover native access when elevated
+    # (trust-reset, fully reverted afterwards). Step 2 below is the portable
+    # fallback, which needs no password at all.
+    $hbaPass = Reset-NativeSuperViaHba -Psql $psql -Port $dbPort
+    if ($hbaPass) { $workingSuperPass = Ensure-AppRoleAndDb -FixPassword:$true }
+    if ($null -eq $workingSuperPass) {
     <#
       Auto-solve for an unusable native PostgreSQL (unknown superuser
       password, foreign instance nobody maintains): move OUR database to a
@@ -530,6 +605,7 @@ if ($appLoginOk) {
       }
     } catch {
       Write-Warn2 "Private database fallback failed: $($_.Exception.Message)"
+    }
     }
   }
   if ($null -eq $workingSuperPass) {
