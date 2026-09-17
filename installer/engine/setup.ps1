@@ -11,7 +11,7 @@
     DB_NAME            e.g. noor_school
     DB_USER            e.g. noor_school_user
     DB_PASSWORD        random 24-char alphanumeric (safe for URLs and SQL)
-    SUPER_PASSWORD     random 24-char - the portable PostgreSQL superuser
+    SUPER_PASSWORD     recovered automatically when PostgreSQL exists, else random 24-char
     JWT_SECRET         random
     JWT_REFRESH_SECRET random
     API_KEY            random 32-char alphanumeric (install API key, x-api-key)
@@ -69,6 +69,42 @@ function ConvertTo-Slug {
   $slug = $slug.Trim("_")
   if (-not $slug) { $slug = "school_db" }
   return $slug
+}
+
+<#
+  Recovers the existing PostgreSQL superuser password via
+  get-superpassword.ps1 so setup reuses the real one. Returns the password
+  (possibly empty when loopback trust works), or $null when nothing was
+  found and a fresh password must be generated. Opens ONE administrator
+  window only when a trust-reset is the way through; everything else runs
+  silently in this console.
+#>
+function Get-RecoveredSuperPassword {
+  param([int]$Port)
+  $worker = Join-Path $PSScriptRoot "get-superpassword.ps1"
+  if (-not (Test-Path $worker)) { return $null }
+  $tmp = Join-Path $env:TEMP ("iq-superpw-" + [Guid]::NewGuid().ToString("N") + ".txt")
+  try {
+    & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $worker -Port $Port -EmitFile $tmp | Out-Null
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $tmp)) {
+      $v = Get-Content $tmp -Raw -ErrorAction SilentlyContinue
+      if ($null -eq $v) { $v = "" }
+      return $v.Trim()
+    }
+    if ($LASTEXITCODE -eq 3) {
+      Write-Host "  Requesting administrator rights once to recover the database password..." -ForegroundColor Cyan
+      $wArgs = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$worker`" -Port $Port -EmitFile `"$tmp`""
+      $proc = Start-Process powershell -Verb RunAs -ArgumentList $wArgs -Wait -PassThru -ErrorAction SilentlyContinue
+      if ($proc -and $proc.ExitCode -eq 0 -and (Test-Path $tmp)) {
+        $v = Get-Content $tmp -Raw -ErrorAction SilentlyContinue
+        if ($null -eq $v) { $v = "" }
+        return $v.Trim()
+      }
+    }
+    return $null
+  } finally {
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function New-WizardDialog {
@@ -161,7 +197,13 @@ $dbName = $slug
 if ($dbName -notmatch '^[a-z0-9_-]+$') { $dbName = "school_db" }
 $dbUser = "$($dbName)_user"
 $dbPassword = New-RandomString 24
-$superPassword = New-RandomString 24
+# The superuser password is recovered, not always generated: when PostgreSQL
+# is already installed, get-superpassword.ps1 finds the working password
+# (stored value, defaults, loopback trust) so the installer reuses the real
+# one instead of inventing a password that matches nothing. A single
+# administrator window opens only when a trust-reset is the way through.
+$superPassword = Get-RecoveredSuperPassword -Port 5432
+if ($null -eq $superPassword) { $superPassword = New-RandomString 24 }
 $jwtSecret = New-RandomString 32
 $jwtRefresh = New-RandomString 32
 $apiKey = New-RandomString 32
