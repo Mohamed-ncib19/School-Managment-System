@@ -141,6 +141,23 @@ function Get-EnvValue {
   return $null
 }
 
+<#
+  Rewrites one KEY=value line in a .env file in place (first match wins),
+  appending the key when absent. Used by the auto-fix steps below so a
+  repaired configuration persists across restarts instead of warning again.
+#>
+function Set-EnvValue {
+  param([string]$Path, [string]$Key, [string]$Value)
+  if (-not (Test-Path $Path)) { return }
+  $lines = @(Get-Content $Path)
+  $done = $false
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match "^\s*$([regex]::Escape($Key))\s*=.*$") { $lines[$i] = "$Key=$Value"; $done = $true; break }
+  }
+  if (-not $done) { $lines += "$Key=$Value" }
+  Set-Content -Path $Path -Value $lines -Encoding UTF8
+}
+
 # CSPRNG alphanumeric key for the install API (x-api-key). Same alphabet as
 # the setup wizard's New-RandomString, so the value is header- and URL-safe.
 function New-ApiKey {
@@ -403,6 +420,52 @@ Write-Ok "PostgreSQL accepting connections" "port $dbPort"
 
 $psql = Find-Tool -Name "psql" -PgBin $pgBin
 
+<#
+  Ensures the application role and database exist via the first working
+  superuser password. Returns that password, or $null when no candidate
+  authenticates. Reads the live $psql/$dbHost/$dbPort/$dbUser/$dbPass/$dbName
+  variables at call time so the portable fallback can reuse it after
+  switching ports.
+#>
+function Ensure-AppRoleAndDb {
+  $candidates = @(
+    (Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"),
+    "iq_academy_local",
+    "postgres",
+    ""
+  ) | Where-Object { $_ -ne $null } | Select-Object -Unique
+
+  $working = $null
+  foreach ($sp in $candidates) {
+    $env:PGPASSWORD = $sp
+    & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $working = $sp; break }
+  }
+  if ($null -eq $working) { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue; return $null }
+
+  $env:PGPASSWORD = $working
+  $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
+  if ($roleExists -ne "1") {
+    $sqlFile = [System.IO.Path]::GetTempFileName()
+    Set-Content -Path $sqlFile -Value ("CREATE ROLE " + [char]34 + $dbUser + [char]34 + " WITH LOGIN PASSWORD '" + $dbPass + "' CREATEDB;") -Encoding ascii
+    & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+    $roleCode = $LASTEXITCODE
+    Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+    if ($roleCode -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
+  }
+
+  $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
+  if ($dbExists -ne "1") {
+    $sqlFile = [System.IO.Path]::GetTempFileName()
+    Set-Content -Path $sqlFile -Value ("CREATE DATABASE " + [char]34 + $dbName + [char]34 + " OWNER " + [char]34 + $dbUser + [char]34 + ";") -Encoding ascii
+    & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+    $dbCode = $LASTEXITCODE
+    Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+    if ($dbCode -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
+  }
+  return $working
+}
+
 # Can the application already log in? On an established install this is the
 # whole story, and we never need superuser rights.
 $appLoginOk = $false
@@ -420,51 +483,98 @@ if ($psql) {
 
 if ($appLoginOk) {
   Write-Ok "Connected to '$dbName'" "$tableCount tables"
+  $workingSuperPass = $null
 } elseif ($psql) {
   # Fresh machine: create the role and database as the superuser.
   Write-Info "Application login failed - setting up the role and database..."
-  $superCandidates = @(
-    (Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"),
-    "iq_academy_local",
-    "postgres",
-    ""
-  ) | Where-Object { $_ -ne $null } | Select-Object -Unique
-
-  $workingSuperPass = $null
-  foreach ($sp in $superCandidates) {
-    $env:PGPASSWORD = $sp
-    & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1" 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { $workingSuperPass = $sp; break }
+  $workingSuperPass = Ensure-AppRoleAndDb
+  if ($null -eq $workingSuperPass -and $dbPort -ne 54325) {
+    <#
+      Auto-solve for an unusable native PostgreSQL (unknown superuser
+      password, foreign instance nobody maintains): move OUR database to a
+      private portable cluster on port 54325, whose password is always known.
+      The native server is never touched - it keeps running for whoever owns
+      it - and existing backups are never touched either.
+    #>
+    Write-Warn2 "No superuser access on port $dbPort - switching to a private database on port 54325..."
+    $rawEnv = Get-Content $backendEnv -Raw
+    $rawEnv = $rawEnv -replace "@localhost:\d+/", "@localhost:54325/"
+    $rawEnv = $rawEnv -replace "@127\.0\.0\.1:\d+/", "@127.0.0.1:54325/"
+    Set-Content -Path $backendEnv -Value $rawEnv -Encoding UTF8 -NoNewline
+    $databaseUrl = Get-EnvValue $backendEnv "DATABASE_URL"
+    $dbPort = 54325
+    try {
+      $storedSuper = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
+      if (-not $storedSuper) { $storedSuper = "" }
+      $pgBin = & (Join-Path $RootScripts "ensure-postgres.ps1") -Port 54325 -SuperPassword $storedSuper -ForcePortable
+      $psql = Find-Tool -Name "psql" -PgBin $pgBin
+      if (($psql) -and (Test-Port $dbPort)) {
+        Write-Ok "Private database running" "port 54325"
+        $workingSuperPass = Ensure-AppRoleAndDb
+        if ($null -ne $workingSuperPass) {
+          Write-Info "Role and database ready on the private server. If the old server held your real data, restore a backup from the Database Backup page."
+        }
+      }
+    } catch {
+      Write-Warn2 "Private database fallback failed: $($_.Exception.Message)"
+    }
   }
-
-  if ($null -ne $workingSuperPass) {
-    $env:PGPASSWORD = $workingSuperPass
-
-    $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
-    if ($roleExists -ne "1") {
-      $sqlFile = [System.IO.Path]::GetTempFileName()
-      Set-Content -Path $sqlFile -Value ("CREATE ROLE " + [char]34 + $dbUser + [char]34 + " WITH LOGIN PASSWORD '" + $dbPass + "' CREATEDB;") -Encoding ascii
-      & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
-      $roleCode = $LASTEXITCODE
-      Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
-      if ($roleCode -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
-    }
-
-    $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
-    if ($dbExists -ne "1") {
-      $sqlFile = [System.IO.Path]::GetTempFileName()
-      Set-Content -Path $sqlFile -Value ("CREATE DATABASE " + [char]34 + $dbName + [char]34 + " OWNER " + [char]34 + $dbUser + [char]34 + ";") -Encoding ascii
-      & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
-      $dbCode = $LASTEXITCODE
-      Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
-      if ($dbCode -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
-    }
-    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
-  } else {
+  if ($null -eq $workingSuperPass) {
     Write-Warn2 "Could not authenticate as superuser 'postgres' on port $dbPort - skipping role/database setup"
   }
 } else {
   Write-Warn2 "psql not found - skipping the database check (drizzle-kit will report any problem)"
+  $workingSuperPass = $null
+}
+
+<#
+  Auto-fix a DATABASE_URL / split-field identity mismatch (e.g. a hand-edited
+  .env pointing the URL at "public" while DATABASE_NAME says otherwise).
+  Probes both databases with the working application credentials and keeps
+  the one holding data; ties go to the URL because that is what the app
+  connects with. The URL's own credentials are verified before the URL is
+  ever rewritten. Warn-only when nothing can be probed.
+#>
+if ($psql -and $urlDb -and ($dbName -ne $urlDb) -and (Test-Port $dbPort)) {
+  $probeCounts = @{}
+  foreach ($candidateDb in @($urlDb, $dbName) | Select-Object -Unique) {
+    $env:PGPASSWORD = $dbPass
+    $n = & $psql -U $dbUser -h $dbHost -p $dbPort -d $candidateDb -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -eq 0 -and $n -match "^\d+$") { $probeCounts[$candidateDb] = [int]$n } else { $probeCounts[$candidateDb] = -1 }
+  }
+  $urlCount = $probeCounts[$urlDb]
+  $splitCount = $probeCounts[$dbName]
+  $winner = $null
+  if ($urlCount -ge 0 -and $urlCount -ge $splitCount) { $winner = $urlDb }
+  elseif ($splitCount -ge 0) { $winner = $dbName }
+  if ($winner -and ($winner -ne $urlDb)) {
+    $urlCredsOk = ($urlUser -eq $dbUser -and $urlPass -eq $dbPass)
+    if (-not $urlCredsOk) {
+      $env:PGPASSWORD = $urlPass
+      & $psql -U $urlUser -h $dbHost -p $dbPort -d $dbName -tAc "SELECT 1" 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) { $urlCredsOk = $true }
+      Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    }
+    if ($urlCredsOk) {
+      $prefix = $databaseUrl.Substring(0, $databaseUrl.LastIndexOf("/") + 1)
+      $suffix = ""
+      if ($databaseUrl -match "(\?.*)$") { $suffix = $Matches[1] }
+      $databaseUrl = "$prefix$winner$suffix"
+      Set-EnvValue $backendEnv "DATABASE_URL" $databaseUrl
+      Set-EnvValue $backendEnv "DATABASE_NAME" $winner
+      $urlDb = $winner
+      $dbName = $winner
+      Write-Ok "Reconciled database identity" "app + scripts now use '$winner' ($splitCount vs $urlCount tables)"
+    } else {
+      Write-Warn2 "DATABASE_URL credentials cannot access '$dbName' - leaving .env untouched; fix the password or database name manually."
+    }
+  } elseif ($winner -and ($winner -ne $dbName)) {
+    Set-EnvValue $backendEnv "DATABASE_NAME" $winner
+    $dbName = $winner
+    $urlDb = $winner
+    Write-Ok "Reconciled database identity" "scripts now match DATABASE_URL ($urlCount tables)"
+  }
 }
 
 <#

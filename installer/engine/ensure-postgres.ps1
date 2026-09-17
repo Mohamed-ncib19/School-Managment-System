@@ -24,7 +24,11 @@ param(
   [switch]$Quiet,
   # Superuser password for a NEWLY initialised cluster. Existing clusters keep
   # the password they were created with - this value is never applied retroactively.
-  [string]$SuperPassword = ""
+  [string]$SuperPassword = "",
+  # Skip the native service/installation path and go straight to the private
+  # portable server. The launcher sets this when the native PostgreSQL proved
+  # unusable (unknown superuser password, foreign instance).
+  [switch]$ForcePortable
 )
 
 $ErrorActionPreference = "Stop"
@@ -223,18 +227,30 @@ if (Test-PgPort $Port) {
 }
 
 # --- 2. Native Windows service present ------------------------------------
-if (-not $isForeignPg) {
+if (-not $isForeignPg -and -not $ForcePortable) {
   $svc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($svc) {
     Say "Starting Windows service $($svc.Name)..." "Yellow"
     try {
       if ($svc.Status -ne "Running") { Start-Service $svc.Name -ErrorAction Stop }
-      if (Wait-PgPortUp -P $Port -TimeoutSec 20 -Label "the PostgreSQL service") {
+      $svcUp = Wait-PgPortUp -P $Port -TimeoutSec 60 -Label "the PostgreSQL service"
+      if (-not $svcUp -and (Get-Service -Name $svc.Name -ErrorAction SilentlyContinue).Status -eq "Running") {
+        # Still starting (cold services on slow disks take a while) - one more
+        # window before calling it broken.
+        Say "Service is running but not listening yet - giving it one more minute..." "Yellow"
+        $svcUp = Wait-PgPortUp -P $Port -TimeoutSec 60 -Label "the slow service"
+      }
+      if ($svcUp) {
         Say "Service started" "Green"
         $bin = Find-PgBin
         if ($bin) { return $bin }
         return ""
       }
+      # Auto-solve: a service that never listens is broken (bad data dir,
+      # crashed recovery). Stop it so the private server below can take the
+      # port instead of colliding with a half-started service.
+      Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+      Say "Stopped $($svc.Name) - it never started listening; the private server will be used instead." "Yellow"
     } catch {
       Say "Could not start the service: $($_.Exception.Message)" "Yellow"
     }
@@ -244,7 +260,7 @@ if (-not $isForeignPg) {
 # --- 3. No native install: install from the official installer ------------
 $nativeInstallAttempted = $false
 
-if (-not $isForeignPg -and -not (Find-NativePgBin)) {
+if (-not $isForeignPg -and -not $ForcePortable -and -not (Find-NativePgBin)) {
   Say "PostgreSQL is not installed - downloading the official installer (~350 MB)..." "Cyan"
 
   $major = ($Version -split "\.")[0]
