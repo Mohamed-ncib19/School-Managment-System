@@ -428,6 +428,7 @@ $psql = Find-Tool -Name "psql" -PgBin $pgBin
   switching ports.
 #>
 function Ensure-AppRoleAndDb {
+  param([switch]$FixPassword)
   $candidates = @(
     (Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"),
     "iq_academy_local",
@@ -452,6 +453,18 @@ function Ensure-AppRoleAndDb {
     $roleCode = $LASTEXITCODE
     Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
     if ($roleCode -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
+  } elseif ($FixPassword) {
+    # The role exists but the application login failed with the .env
+    # password (hand-edited or forgotten): align the role to .env, which is
+    # what the app authenticates with. Single quotes are doubled so any
+    # password stays one SQL string literal.
+    $safePass = $dbPass -replace "'", "''"
+    $sqlFile = [System.IO.Path]::GetTempFileName()
+    Set-Content -Path $sqlFile -Value ("ALTER ROLE " + [char]34 + $dbUser + [char]34 + " WITH LOGIN PASSWORD '" + $safePass + "';") -Encoding ascii
+    & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+    $alterCode = $LASTEXITCODE
+    Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
+    if ($alterCode -eq 0) { Write-Ok "Reset password for role $dbUser" "matches apps\backend\.env" }
   }
 
   $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
@@ -487,7 +500,7 @@ if ($appLoginOk) {
 } elseif ($psql) {
   # Fresh machine: create the role and database as the superuser.
   Write-Info "Application login failed - setting up the role and database..."
-  $workingSuperPass = Ensure-AppRoleAndDb
+  $workingSuperPass = Ensure-AppRoleAndDb -FixPassword:(-not $appLoginOk)
   if ($null -eq $workingSuperPass -and $dbPort -ne 54325) {
     <#
       Auto-solve for an unusable native PostgreSQL (unknown superuser
@@ -510,7 +523,7 @@ if ($appLoginOk) {
       $psql = Find-Tool -Name "psql" -PgBin $pgBin
       if (($psql) -and (Test-Port $dbPort)) {
         Write-Ok "Private database running" "port 54325"
-        $workingSuperPass = Ensure-AppRoleAndDb
+        $workingSuperPass = Ensure-AppRoleAndDb -FixPassword:$true
         if ($null -ne $workingSuperPass) {
           Write-Info "Role and database ready on the private server. If the old server held your real data, restore a backup from the Database Backup page."
         }
