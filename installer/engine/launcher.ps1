@@ -563,17 +563,17 @@ function Ensure-AppRoleAndDb {
   $working = $null
   foreach ($sp in $candidates) {
     $env:PGPASSWORD = $sp
-    & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1" 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -w -tAc "SELECT 1" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { $working = $sp; break }
   }
   if ($null -eq $working) { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue; return $null }
 
   $env:PGPASSWORD = $working
-  $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
+  $roleExists = & $psql -U postgres -h $dbHost -p $dbPort -w -tAc "SELECT 1 FROM pg_roles WHERE rolname='$dbUser'" 2>$null
   if ($roleExists -ne "1") {
     $sqlFile = [System.IO.Path]::GetTempFileName()
     Set-Content -Path $sqlFile -Value ("CREATE ROLE " + [char]34 + $dbUser + [char]34 + " WITH LOGIN PASSWORD '" + $dbPass + "' CREATEDB;") -Encoding ascii
-    & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -w -f $sqlFile 2>$null | Out-Null
     $roleCode = $LASTEXITCODE
     Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
     if ($roleCode -eq 0) { Write-Ok "Created role $dbUser" } else { Write-Warn2 "Could not create role $dbUser" }
@@ -585,17 +585,17 @@ function Ensure-AppRoleAndDb {
     $safePass = $dbPass -replace "'", "''"
     $sqlFile = [System.IO.Path]::GetTempFileName()
     Set-Content -Path $sqlFile -Value ("ALTER ROLE " + [char]34 + $dbUser + [char]34 + " WITH LOGIN PASSWORD '" + $safePass + "';") -Encoding ascii
-    & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -w -f $sqlFile 2>$null | Out-Null
     $alterCode = $LASTEXITCODE
     Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
     if ($alterCode -eq 0) { Write-Ok "Reset password for role $dbUser" "matches apps\backend\.env" }
   }
 
-  $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
+  $dbExists = & $psql -U postgres -h $dbHost -p $dbPort -w -tAc "SELECT 1 FROM pg_database WHERE datname='$dbName'" 2>$null
   if ($dbExists -ne "1") {
     $sqlFile = [System.IO.Path]::GetTempFileName()
     Set-Content -Path $sqlFile -Value ("CREATE DATABASE " + [char]34 + $dbName + [char]34 + " OWNER " + [char]34 + $dbUser + [char]34 + ";") -Encoding ascii
-    & $psql -U postgres -h $dbHost -p $dbPort -f $sqlFile 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -w -f $sqlFile 2>$null | Out-Null
     $dbCode = $LASTEXITCODE
     Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
     if ($dbCode -eq 0) { Write-Ok "Created database $dbName" } else { Write-Warn2 "Could not create database $dbName" }
@@ -639,17 +639,17 @@ function Reset-NativeSuperViaHba {
     $newSuper = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
     if (-not $newSuper) { $newSuper = New-ApiKey }
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
-    & $Psql -U postgres -h $dbHost -p $Port -tAc "SELECT 1" 2>$null | Out-Null
+    & $Psql -U postgres -h $dbHost -p $Port -w -tAc "SELECT 1" 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) { return $null }
     $safe = $newSuper -replace "'", "''"
     $sqlFile = [System.IO.Path]::GetTempFileName()
     Set-Content -Path $sqlFile -Value "ALTER USER postgres PASSWORD '$safe';" -Encoding ascii
-    & $Psql -U postgres -h $dbHost -p $Port -f $sqlFile 2>$null | Out-Null
+    & $Psql -U postgres -h $dbHost -p $Port -w -f $sqlFile 2>$null | Out-Null
     $alterCode = $LASTEXITCODE
     Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
     if ($alterCode -ne 0) { return $null }
     $env:PGPASSWORD = $newSuper
-    & $Psql -U postgres -h $dbHost -p $Port -tAc "SELECT 1" 2>$null | Out-Null
+    & $Psql -U postgres -h $dbHost -p $Port -w -tAc "SELECT 1" 2>$null | Out-Null
     $verified = ($LASTEXITCODE -eq 0)
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
     if (-not $verified) { return $null }
@@ -678,7 +678,7 @@ $appLoginOk = $false
 $tableCount = -1
 if ($psql) {
   $env:PGPASSWORD = $dbPass
-  $tables = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+  $tables = & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -tAc `
             "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
   if ($LASTEXITCODE -eq 0 -and $tables -match "^\d+$") {
     $appLoginOk = $true
@@ -753,7 +753,7 @@ if ($psql -and $urlDb -and ($dbName -ne $urlDb) -and (Test-Port $dbPort)) {
   $probeCounts = @{}
   foreach ($candidateDb in @($urlDb, $dbName) | Select-Object -Unique) {
     $env:PGPASSWORD = $dbPass
-    $n = & $psql -U $dbUser -h $dbHost -p $dbPort -d $candidateDb -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
+    $n = & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $candidateDb -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -eq 0 -and $n -match "^\d+$") { $probeCounts[$candidateDb] = [int]$n } else { $probeCounts[$candidateDb] = -1 }
   }
@@ -766,7 +766,7 @@ if ($psql -and $urlDb -and ($dbName -ne $urlDb) -and (Test-Port $dbPort)) {
     $urlCredsOk = ($urlUser -eq $dbUser -and $urlPass -eq $dbPass)
     if (-not $urlCredsOk) {
       $env:PGPASSWORD = $urlPass
-      & $psql -U $urlUser -h $dbHost -p $dbPort -d $dbName -tAc "SELECT 1" 2>$null | Out-Null
+      & $psql -U $urlUser -h $dbHost -p $dbPort -w -d $dbName -tAc "SELECT 1" 2>$null | Out-Null
       if ($LASTEXITCODE -eq 0) { $urlCredsOk = $true }
       Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
     }
@@ -811,17 +811,17 @@ if ($psql) {
   $workingSuperPass = $null
   foreach ($sp in $superCandidates) {
     $env:PGPASSWORD = $sp
-    & $psql -U postgres -h $dbHost -p $dbPort -tAc "SELECT 1" 2>$null | Out-Null
+    & $psql -U postgres -h $dbHost -p $dbPort -w -tAc "SELECT 1" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { $workingSuperPass = $sp; break }
   }
 
   if ($null -ne $workingSuperPass) {
     $env:PGPASSWORD = $workingSuperPass
-    $hasTrgm = & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -tAc "SELECT 1 FROM pg_extension WHERE extname='pg_trgm'" 2>$null
+    $hasTrgm = & $psql -U postgres -h $dbHost -p $dbPort -w -d $dbName -tAc "SELECT 1 FROM pg_extension WHERE extname='pg_trgm'" 2>$null
     if ($hasTrgm -ne "1") {
       $sqlFile = [System.IO.Path]::GetTempFileName()
       Set-Content -Path $sqlFile -Value "CREATE EXTENSION IF NOT EXISTS pg_trgm;" -Encoding ascii
-      & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -f $sqlFile 2>$null | Out-Null
+      & $psql -U postgres -h $dbHost -p $dbPort -w -d $dbName -f $sqlFile 2>$null | Out-Null
       $trgmCode = $LASTEXITCODE
       Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue
       if ($trgmCode -eq 0) {
@@ -920,7 +920,7 @@ if ($pushNeeded) {
   # ==========================================================================
   if ($psql -and $appLoginOk) {
     $env:PGPASSWORD = $dbPass
-    $nonOwnerTables = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+    $nonOwnerTables = & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -tAc `
       "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tableowner<>'$dbUser'" 2>$null
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
@@ -937,7 +937,7 @@ if ($pushNeeded) {
           failure it exists to prevent.
         #>
         $reassign = "DO `$`$ DECLARE t record; BEGIN FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tableowner<>'$dbUser' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO %I', t.tablename, '$dbUser'); END LOOP; END `$`$;"
-        & $psql -U postgres -h $dbHost -p $dbPort -d $dbName -c $reassign 2>$null | Out-Null
+        & $psql -U postgres -h $dbHost -p $dbPort -w -d $dbName -c $reassign 2>$null | Out-Null
         $ownerFixExit = $LASTEXITCODE
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
@@ -950,14 +950,14 @@ if ($pushNeeded) {
     }
 
     $env:PGPASSWORD = $dbPass
-    $orphanCount = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+    $orphanCount = & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -tAc `
       "SELECT count(*) FROM schedule_entries WHERE group_id NOT IN (SELECT id FROM groups)" 2>$null
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
     if ($LASTEXITCODE -eq 0 -and [int]$orphanCount -gt 0) {
       Write-Info "Cleaning up $orphanCount orphaned schedule entry/entries..."
       $env:PGPASSWORD = $dbPass
-      & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -c "DELETE FROM schedule_entries WHERE group_id NOT IN (SELECT id FROM groups);" 2>$null | Out-Null
+      & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -c "DELETE FROM schedule_entries WHERE group_id NOT IN (SELECT id FROM groups);" 2>$null | Out-Null
       Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
       Write-Ok "Orphaned schedule entries removed"
     }
@@ -1009,7 +1009,7 @@ if ($pushNeeded) {
 $seedNeeded = $true
 if ($psql) {
   $env:PGPASSWORD = $dbPass
-  $seedCount = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc `
+  $seedCount = & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -tAc `
     "SELECT (SELECT count(*) FROM users) + (SELECT count(*) FROM system_settings)" 2>$null
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
   if ($LASTEXITCODE -eq 0 -and $seedCount -match "^\d+$" -and [int]$seedCount -ge 2) { $seedNeeded = $false }
@@ -1163,7 +1163,7 @@ if (-not $adminEmail) { $adminEmail = "see apps\backend\.env (SEED_ADMIN_EMAIL)"
 $studentCount = $null
 if ($psql) {
   $env:PGPASSWORD = $dbPass
-  $counted = & $psql -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc "SELECT count(*) FROM students" 2>$null
+  $counted = & $psql -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -tAc "SELECT count(*) FROM students" 2>$null
   if ($LASTEXITCODE -eq 0 -and $counted -match "^\d+$") { $studentCount = [int]$counted }
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 }

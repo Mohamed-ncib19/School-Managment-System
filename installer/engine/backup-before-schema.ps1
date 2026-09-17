@@ -89,7 +89,7 @@ if (-not $pgDump) {
 # Skip safety backup if database doesn't exist or is empty (0 tables)
 if ($psqlBin) {
   $env:PGPASSWORD = $dbPass
-  $tableCount = & $psqlBin -U $dbUser -h $dbHost -p $dbPort -d $dbName -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
+  $tableCount = & $psqlBin -U $dbUser -h $dbHost -p $dbPort -w -d $dbName -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
   if ($LASTEXITCODE -ne 0 -or -not ($tableCount -match "^\d+$") -or [int]$tableCount -eq 0) {
     Write-Note "Database '$dbName' is empty or not initialized yet - safety backup skipped."

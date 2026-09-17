@@ -282,7 +282,7 @@ function Get-SupportContacts {
     $env:PGPASSWORD = [System.Uri]::UnescapeDataString($userInfo[1])
     $row = & $psqlPath -U ([System.Uri]::UnescapeDataString($userInfo[0])) -h $uri.Host `
       -p $(if ($uri.Port -gt 0) { $uri.Port } else { 5432 }) `
-      -d $uri.AbsolutePath.TrimStart("/").Split("?")[0] -tAc `
+      -w -d $uri.AbsolutePath.TrimStart("/").Split("?")[0] -tAc `
       "SELECT coalesce(support_email,'')||'|'||coalesce(support_phone,'')||'|'||coalesce(support_whatsapp,'')||'|'||coalesce(system_name,'') FROM system_settings WHERE singleton='global'" 2>$null
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
