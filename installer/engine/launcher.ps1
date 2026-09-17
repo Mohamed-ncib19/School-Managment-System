@@ -47,6 +47,58 @@ $FrontendPort = 3000
 # Build step is only present with -Prod, so the progress bar counts accordingly.
 Initialize-Ui -TotalSteps $(if ($Prod) { 8 } else { 7 })
 
+<#
+  0. SELF-UPDATE (auto-heal delivery): fast-forward the release branch BEFORE
+  anything that can fail on old code, so one double-click also repairs known
+  installer bugs with zero manual steps. Strictly best-effort and silent when
+  there is nothing to do: no .git, offline, dirty tree, another branch, status
+  mode, or any git failure just continues with the local code. When engine
+  scripts changed under us, re-exec so the rest of THIS start runs new code.
+#>
+if (-not $Status) {
+  try {
+    if ((Test-Path (Join-Path $Root ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+      # A private remote without cached credentials must fail the pull, never
+      # block startup on a username/password prompt nobody can see.
+      $env:GIT_TERMINAL_PROMPT = "0"
+      $tracked = Get-EnvValue (Join-Path $BackendDir ".env") "UPDATE_BRANCH"
+      if (-not $tracked) { $tracked = "selfhosted" }
+      $current = (& git -C $Root rev-parse --abbrev-ref HEAD 2>$null | Select-Object -Last 1)
+      if ($current) { $current = $current.Trim() }
+      # Only installs sitting on the release branch itself move; dev checkouts
+      # on other branches are left alone.
+      if ($current -and ($current -eq $tracked)) {
+        # Cheap connectivity probe first: a dead network must not stall startup.
+        $ghTcp = New-Object System.Net.Sockets.TcpClient
+        $ghWait = $ghTcp.BeginConnect("github.com", 443, $null, $null)
+        if ($ghWait.AsyncWaitHandle.WaitOne(3000, $false) -and $ghTcp.Connected) {
+          $ghTcp.Close()
+          $headBefore = (& git -C $Root rev-parse HEAD 2>$null | Select-Object -Last 1)
+          if ($headBefore) { $headBefore = $headBefore.Trim() }
+          & git -C $Root pull --ff-only --quiet origin $tracked 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0 -and $headBefore) {
+            $headAfter = (& git -C $Root rev-parse HEAD 2>$null | Select-Object -Last 1)
+            if ($headAfter) { $headAfter = $headAfter.Trim() }
+            if ($headAfter -and ($headAfter -ne $headBefore)) {
+              $shortBefore = $headBefore.Substring(0, [Math]::Min(7, $headBefore.Length))
+              $shortAfter = $headAfter.Substring(0, [Math]::Min(7, $headAfter.Length))
+              Write-Ok "Self-update pulled" "$shortBefore -> $shortAfter"
+              $changed = @(& git -C $Root diff --name-only $headBefore $headAfter 2>$null)
+              if ($PSCommandPath -and ($changed | Where-Object { $_ -match "^(installer/|scripts/|apps/)" })) {
+                Write-Info "Engine updated - restarting the launcher on the new code..."
+                $fwd = @()
+                if ($Prod) { $fwd += "-Prod" }
+                & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @fwd
+                exit $LASTEXITCODE
+              }
+            }
+          }
+        } else { try { $ghTcp.Close() } catch { } }
+      }
+    }
+  } catch { }
+}
+
 function Fail {
   param([string]$Message, [string]$Hint)
   Write-Host ""
@@ -591,6 +643,7 @@ if ($appLoginOk) {
     Set-Content -Path $backendEnv -Value $rawEnv -Encoding UTF8 -NoNewline
     $databaseUrl = Get-EnvValue $backendEnv "DATABASE_URL"
     $dbPort = 54325
+    $script:justSwitchedPort = $true
     try {
       $storedSuper = Get-EnvValue $backendEnv "POSTGRES_SUPERUSER_PASSWORD"
       if (-not $storedSuper) { $storedSuper = "" }
@@ -725,8 +778,20 @@ if ($appLoginOk -and $tableCount -eq 0) {
     Write-Info "Continuing will set up an empty system. Your backups will NOT be touched."
     Write-Info "To restore the most recent backup instead, close this window and use the Database Backup page in the app."
     Write-Host ""
-    $answer = Read-Host "  Continue with the empty database? Type YES to continue"
-    if ($answer -ne "YES") { Fail "Stopped at your request. Nothing was changed." "Start the app and use the Database Backup page to restore a backup." }
+    $proceedEmpty = $false
+    if ($script:justSwitchedPort) {
+      # We caused this ourselves minutes ago (portable fallback above): the
+      # old server and the backups are untouched, and stopping would wedge
+      # every future automatic start. Continue loudly instead of hanging.
+      Write-Warn2 "Continuing on the fresh private database by design (portable fallback) - restore a backup from the Database Backup page if this server is wrong."
+      $proceedEmpty = $true
+    } elseif ([Console]::IsInputRedirected) {
+      Write-Warn2 "No console input available (background start) - stopping instead of guessing on an empty database."
+    } else {
+      $answer = Read-Host "  Continue with the empty database? Type YES to continue"
+      if ($answer -eq "YES") { $proceedEmpty = $true }
+    }
+    if (-not $proceedEmpty) { Fail "Stopped. Nothing was changed." "Start the app and use the Database Backup page to restore a backup." }
   }
 }
 
