@@ -63,6 +63,13 @@ function mapPgError(
         code: "NUMBER_OUT_OF_RANGE",
         message: "A number is too large for the column it was stored in.",
       };
+    case "42P01":
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        code: "UNKNOWN_TABLE",
+        message:
+          "The file references a table this database does not have — update the application on both sides to the same version, then export and import again.",
+      };
     default:
       return null;
   }
