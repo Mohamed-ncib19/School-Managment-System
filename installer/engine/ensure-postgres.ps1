@@ -191,7 +191,7 @@ function Test-PgAuthOk {
   try {
     foreach ($p in $candidates) {
       $env:PGPASSWORD = $p
-      & $psqlExe -U postgres -h 127.0.0.1 -p $PortNumber -d postgres -tAc "SELECT 1" 2>$null | Out-Null
+      & $psqlExe -U postgres -h 127.0.0.1 -p $PortNumber -w -d postgres -tAc "SELECT 1" 2>$null | Out-Null
       $ok = ($LASTEXITCODE -eq 0)
       Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
       if ($ok) { return $true }
