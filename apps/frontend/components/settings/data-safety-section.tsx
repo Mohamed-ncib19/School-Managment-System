@@ -14,6 +14,7 @@ import {
   TestTube2,
   UploadCloud,
   Database,
+  ChevronDown,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import GoogleMark from "@/components/shared/google-mark";
@@ -30,6 +31,7 @@ import {
 } from "@/lib/api/cloud-backup.api";
 import { useCloudSyncStore } from "@/hooks/use-cloud-sync-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { PageLoader } from "@/components/shared/skeletons";
 
 const errorMessage = (err: unknown): string => {
   // The API wraps failures as { data: null, error: { message, code, ... } } —
@@ -62,8 +64,12 @@ export default function DataSafetySection() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const st = await useCloudSyncStore.getState().refresh();
-    queryClient.setQueryData(["cloud-status"], st);
+    try {
+      const st = await useCloudSyncStore.getState().refresh();
+      queryClient.setQueryData(["cloud-status"], st);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }, [queryClient]);
 
   const status = (statusQuery.data ?? undefined) as CloudBackupStatus | undefined;
@@ -99,8 +105,15 @@ export default function DataSafetySection() {
           </div>
         )}
 
-        {configured ? (
-          <ConfiguredOverview status={status!} onRefresh={refresh} onSnapshotNow={runSnapshotNow} />
+        {statusQuery.isLoading && !status ? (
+          <PageLoader text={t("common.loading", "Chargement…")} />
+        ) : configured ? (
+          <ConfiguredOverview
+            status={status!}
+            drivers={drivers ?? []}
+            onRefresh={refresh}
+            onSnapshotNow={runSnapshotNow}
+          />
         ) : (
           <div>
             <p className="text-sm text-text-secondary mb-4">{t("cloudSafeSave.unconfiguredText")}</p>
@@ -129,16 +142,25 @@ export default function DataSafetySection() {
 
 function ConfiguredOverview({
   status,
+  drivers,
   onRefresh,
   onSnapshotNow,
 }: {
   status: CloudBackupStatus;
+  drivers: DriverDefinition[];
   onRefresh: () => Promise<void>;
   onSnapshotNow: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [snapBusy, setSnapBusy] = useState(false);
+  const [showTargets, setShowTargets] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [addIds, setAddIds] = useState<string[]>([]);
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [testState, setTestState] = useState<Record<string, { running: boolean; ok: boolean | null; text: string | null }>>({});
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
 
   const stateLabel =
     status.state === "synced"
@@ -150,6 +172,44 @@ function ConfiguredOverview({
           : status.state === "attention"
             ? t("cloudSafeSave.statusAttention")
             : t("cloudSafeSave.statusDisabled");
+
+  const driverLabel = (driverId: string) =>
+    drivers.find((d) => d.id === driverId)?.displayName ?? driverId;
+
+  const runTest = async (id: string) => {
+    setTestState((prev) => ({ ...prev, [id]: { running: true, ok: null, text: null } }));
+    try {
+      const res = (await cloudBackupApi.testTarget(id)) as unknown as {
+        ok?: boolean;
+        latencyMs?: number;
+        data?: { ok?: boolean; latencyMs?: number };
+      };
+      const ms = res?.latencyMs ?? res?.data?.latencyMs;
+      setTestState((prev) => ({
+        ...prev,
+        [id]: {
+          running: false,
+          ok: true,
+          text: `${t("cloudSafeSave.testOk", "Test réussi")}${typeof ms === "number" ? ` (${ms} ms)` : ""}`,
+        },
+      }));
+    } catch (err) {
+      setTestState((prev) => ({ ...prev, [id]: { running: false, ok: false, text: errorMessage(err) } }));
+    }
+  };
+
+  const runDelete = async (id: string, name: string) => {
+    if (!window.confirm(t("cloudSafeSave.confirmDeleteTarget", "Retirer cette destination ? Les copies déjà envoyées restent sur le cloud.") + `\n${name}`)) return;
+    setDeleteBusy(id);
+    try {
+      await cloudBackupApi.deleteTarget(id);
+      await onRefresh();
+    } catch (err) {
+      setTestState((prev) => ({ ...prev, [id]: { running: false, ok: false, text: errorMessage(err) } }));
+    } finally {
+      setDeleteBusy(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -168,9 +228,13 @@ function ConfiguredOverview({
           className="btn btn-secondary text-sm"
           onClick={async () => {
             setBusy(true);
-            await onRefresh();
-            setBusy(false);
+            try {
+              await onRefresh();
+            } finally {
+              setBusy(false);
+            }
           }}
+          disabled={busy}
           aria-busy={busy || undefined}
         >
           <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
@@ -182,7 +246,7 @@ function ConfiguredOverview({
         <div className="rounded-btn border border-gold/40 bg-gold/10 text-sm px-4 py-3 flex items-start gap-2">
           <AlertTriangle size={16} className="text-gold shrink-0 mt-0.5" />
           <p className="text-text-primary">
-            {t("cloudSafeSave.splitBrain", "Une autre machine synchronise dÃ©jÃ  cette Ã©cole")} â€” {status.conflict.hostname} (
+            {t("cloudSafeSave.splitBrain", "Une autre machine synchronise déjà cette école")} — {status.conflict.hostname} (
             {new Date(status.conflict.claimedAt).toLocaleString("fr-FR")})
           </p>
         </div>
@@ -190,35 +254,166 @@ function ConfiguredOverview({
 
       <dl className="grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.schoolId", "Identifiant d'Ã©cole")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.schoolId", "Identifiant d'école")}</dt>
           <dd className="font-mono text-text-primary truncate">{status.schoolId}</dd>
         </div>
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSync", "DerniÃ¨re synchronisation")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSync", "Dernière synchronisation")}</dt>
           <dd className="text-text-primary">
             {status.lastSync ? new Date(status.lastSync).toLocaleString("fr-FR") : t("common.never", "Jamais")}
           </dd>
         </div>
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSnapshot", "DerniÃ¨re capture complÃ¨te")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSnapshot", "Dernière capture complète")}</dt>
           <dd className="text-text-primary">
             {status.lastSnapshot ? new Date(status.lastSnapshot).toLocaleString("fr-FR") : t("common.never", "Jamais")}
           </dd>
         </div>
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.pendingEvents", "Ã‰vÃ©nements en attente")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.pendingEvents", "Événements en attente")}</dt>
           <dd className={cn("text-text-primary", status.queue.pending > 0 && "text-gold font-semibold")}>
             {status.queue.pending.toLocaleString("fr-FR")}
           </dd>
         </div>
       </dl>
 
-      <div className="flex gap-3">
-        <button className="btn btn-secondary text-sm" onClick={onSnapshotNow} aria-busy={snapBusy || undefined}>
-          <Database size={14} />
-          {t("cloudSafeSave.snapshotNow", "Capture complÃ¨te maintenant")}
+      <div className="flex flex-wrap gap-3">
+        <button
+          className="btn btn-secondary text-sm"
+          onClick={async () => {
+            setSnapBusy(true);
+            try {
+              await onSnapshotNow();
+            } finally {
+              setSnapBusy(false);
+            }
+          }}
+          disabled={snapBusy}
+          aria-busy={snapBusy || undefined}
+        >
+          {snapBusy ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+          {snapBusy
+            ? t("cloudSafeSave.snapshotStarting", "Capture demandée…")
+            : t("cloudSafeSave.snapshotNow", "Capture complète maintenant")}
+        </button>
+        <button
+          className="btn btn-secondary text-sm"
+          onClick={() => setShowTargets((v) => !v)}
+          aria-expanded={showTargets || undefined}
+        >
+          <Cloud size={14} />
+          {t("cloudSafeSave.destinationsTitle", "Destinations")} ({status.targets.length})
+          <ChevronDown size={14} className={cn("transition-transform", showTargets && "rotate-180")} />
         </button>
       </div>
+
+      {showTargets && (
+        <div className="rounded-btn border border-border bg-background p-4 space-y-3">
+          {status.targets.length === 0 && (
+            <p className="text-xs text-text-secondary">{t("cloudSafeSave.noTargets", "Aucune destination liée.")}</p>
+          )}
+          {status.targets.map((target) => {
+            const test = testState[target.id];
+            const deleting = deleteBusy === target.id;
+            return (
+              <div key={target.id} className="rounded-btn border border-border bg-surface p-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-text-primary flex-1 min-w-0 truncate">{target.name}</p>
+                  <span className="text-[11px] text-text-secondary">{driverLabel(target.driverId)}</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      target.enabled
+                        ? "bg-success-soft dark:bg-success-dark-soft text-success-strong dark:text-success-dark-strong"
+                        : "bg-neutral-soft text-text-secondary",
+                    )}
+                  >
+                    {target.enabled
+                      ? t("cloudSafeSave.targetEnabled", "Active")
+                      : t("cloudSafeSave.targetDisabled", "Désactivée")}
+                  </span>
+                </div>
+                <div className="mt-1.5 space-y-1 text-xs text-text-secondary">
+                  <p>
+                    {t("cloudSafeSave.targetLastSuccess", "Dernier succès :")}{" "}
+                    <span className="text-text-primary">
+                      {target.lastSuccessAt
+                        ? new Date(target.lastSuccessAt).toLocaleString("fr-FR")
+                        : t("common.never", "Jamais")}
+                    </span>
+                    {target.consecutiveFailures > 0 && (
+                      <span className="text-danger">
+                        {" "}· {target.consecutiveFailures} {t("cloudSafeSave.targetFailures", "échecs")}
+                      </span>
+                    )}
+                  </p>
+                  {target.lastError && (
+                    <p className="flex items-start gap-1.5 text-danger-strong dark:text-danger-dark-strong">
+                      <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                      <span>{target.lastError}</span>
+                    </p>
+                  )}
+                  {test && !test.running && test.text && (
+                    <p className={cn("flex items-start gap-1.5", test.ok ? "text-success-strong dark:text-success-dark-strong" : "text-danger-strong dark:text-danger-dark-strong")}>
+                      {test.ok ? <CheckCircle2 size={12} className="shrink-0 mt-0.5" /> : <AlertTriangle size={12} className="shrink-0 mt-0.5" />}
+                      <span>{test.text}</span>
+                    </p>
+                  )}
+                </div>
+                <div className="mt-2.5 flex gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-secondary text-xs min-h-[32px]"
+                    onClick={() => void runTest(target.id)}
+                    disabled={test?.running || deleting}
+                  >
+                    {test?.running ? <RefreshCw size={12} className="animate-spin" /> : <TestTube2 size={12} />}
+                    {t("cloudSafeSave.testTarget", "Tester")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary text-xs min-h-[32px] hover:text-danger"
+                    onClick={() => void runDelete(target.id, target.name)}
+                    disabled={test?.running || deleting}
+                  >
+                    {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    {t("cloudSafeSave.deleteTarget", "Retirer")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {showAdd ? (
+            <div className="pt-1">
+              <div className="flex justify-end mb-2">
+                <button type="button" className="btn btn-secondary text-xs" onClick={() => setShowAdd(false)}>
+                  {t("fields.cancel")}
+                </button>
+              </div>
+              <StepTargets
+                drivers={drivers}
+                targetIds={addIds}
+                setTargetIds={setAddIds}
+                linkedDriverIds={status.targets.map((target) => target.driverId)}
+                busy={addBusy}
+                setBusy={setAddBusy}
+                error={addError}
+                setError={setAddError}
+                onNext={async () => {
+                  setShowAdd(false);
+                  setAddIds([]);
+                  await onRefresh();
+                }}
+              />
+            </div>
+          ) : (
+            <button type="button" className="btn btn-secondary text-xs" onClick={() => setShowAdd(true)}>
+              <Plus size={13} />
+              {t("cloudSafeSave.addDestination", "Ajouter une destination")}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
