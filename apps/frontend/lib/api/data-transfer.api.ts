@@ -55,9 +55,10 @@ export const dataTransferApi = {
     URL.revokeObjectURL(url);
   },
 
-  async previewImport(file: File): Promise<ImportPreview> {
+  async previewImport(file: File, phrase?: string): Promise<ImportPreview> {
     const form = new FormData();
     form.append("file", file);
+    if (phrase?.trim()) form.append("phrase", phrase.trim());
     const response = await getApiClient().post<{ data: ImportPreview }>(
       "/system/data/import/preview",
       form,
@@ -65,10 +66,11 @@ export const dataTransferApi = {
     return response.data.data;
   },
 
-  async importData(file: File, fills: FillValues): Promise<ImportResult> {
+  async importData(file: File, fills: FillValues, phrase?: string): Promise<ImportResult> {
     const form = new FormData();
     form.append("file", file);
     form.append("fills", JSON.stringify(fills));
+    if (phrase?.trim()) form.append("phrase", phrase.trim());
     const response = await getApiClient().post<{ data: ImportResult }>(
       "/system/data/import",
       form,

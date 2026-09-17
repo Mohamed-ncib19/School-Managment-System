@@ -23,6 +23,24 @@ function DashboardLabel() {
 }
 
 /**
+ * Crash-safe translated text for the fallback panel itself.
+ *
+ * The boundary renders precisely when something above it broke — possibly the
+ * i18n provider — so `useTranslation` may throw. It is still called
+ * unconditionally (stable hook order) and the French fallback covers a dead
+ * provider, which is also why every key below ships its French default.
+ */
+export function SafeText({ k, fallback }: { k: string; fallback: string }) {
+  let text = fallback;
+  try {
+    text = useTranslation().t(k, fallback);
+  } catch {
+    text = fallback;
+  }
+  return <>{text}</>;
+}
+
+/**
  * Stops one broken component from blanking the entire application.
  *
  * Without a boundary, any render-time exception unmounts the whole React tree
@@ -57,9 +75,14 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-warning-soft text-warning-strong dark:bg-warning-dark-soft dark:text-warning-dark-strong">
           <AlertTriangle size={22} />
         </div>
-        <p className="text-sm font-medium text-text-primary">Cette section n'a pas pu être affichée</p>
+        <p className="text-sm font-medium text-text-primary">
+          <SafeText k="errors.sectionTitle" fallback="Cette section n'a pas pu être affichée" />
+        </p>
         <p className="mt-1 max-w-md text-xs text-text-secondary">
-          Le reste de l'application fonctionne normalement. Recharger cette section la rétablit généralement.
+          <SafeText
+            k="errors.sectionDesc"
+            fallback="Le reste de l'application fonctionne normalement. Recharger cette section la rétablit généralement."
+          />
         </p>
         {process.env.NODE_ENV !== "production" && (
           <pre className="mt-4 max-w-full overflow-x-auto rounded-input bg-neutral-soft p-3 text-left text-[11px] text-text-secondary dark:bg-white/5">
@@ -68,7 +91,7 @@ export class ErrorBoundary extends Component<Props, State> {
         )}
         <div className="mt-4 flex gap-2">
           <button type="button" onClick={this.reset} className="btn btn-secondary text-xs">
-            <RefreshCw size={14} /> Recharger la section
+            <RefreshCw size={14} /> <SafeText k="errors.retrySection" fallback="Recharger la section" />
           </button>
           <button type="button" onClick={() => (window.location.href = "/dashboard")} className="btn btn-primary text-xs">
             <Home size={14} /> <DashboardLabel />

@@ -14,15 +14,15 @@ export function useExportAll() {
 
 export function useImportPreview() {
   return useMutation({
-    mutationFn: (file: File) => dataTransferApi.previewImport(file),
+    mutationFn: ({ file, phrase }: { file: File; phrase?: string }) => dataTransferApi.previewImport(file, phrase),
   });
 }
 
 export function useDataImport() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, fills }: { file: File; fills: FillValues }) =>
-      dataTransferApi.importData(file, fills),
+    mutationFn: ({ file, fills, phrase }: { file: File; fills: FillValues; phrase?: string }) =>
+      dataTransferApi.importData(file, fills, phrase),
     onSuccess: () => {
       // Nearly every collection may have changed; refetch the affected domains.
       queryClient.invalidateQueries();

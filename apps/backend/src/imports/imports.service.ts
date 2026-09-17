@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql, SQL, SQLWrapper } from "drizzle-orm";
 import * as ExcelJS from "exceljs";
 import { DbService, Tx } from "../db/db.service";
 import { fields, groups, levels, professors, studentAssignments, students } from "../db/schema";
@@ -35,6 +35,87 @@ const HEADER_KEYS: Record<string, keyof ParsedRow> = {
 };
 
 const STUDENT_STATUSES: StudentStatus[] = ["active", "paused", "withdrawn"];
+
+/**
+ * Canonical form for hierarchy and person names: lowercase, French diacritics
+ * folded, inner whitespace collapsed. "  MATH " == "math", "Mélanie" ==
+ * "melanie" — so re-importing a roster typed with different casing or accents
+ * reuses the existing Level/Field/Professor/Group and skips the existing
+ * student instead of forking duplicates.
+ */
+export const normName = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[àâä]/g, "a")
+    .replace(/ç/g, "c")
+    .replace(/[éèêë]/g, "e")
+    .replace(/[îï]/g, "i")
+    .replace(/[ôö]/g, "o")
+    .replace(/[ùûü]/g, "u")
+    .replace(/ÿ/g, "y")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** SQL mirror of normName for name columns (translate == the JS map above). */
+const normCol = (col: SQLWrapper): SQL<unknown> =>
+  sql`btrim(regexp_replace(translate(lower(${col}), 'àâäçéèêëîïôöùûüÿ', 'aaaceeeeiioouuuy'), '\s+', ' ', 'g'))`;
+
+const asValidDate = (value: unknown): Date | null => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+};
+
+export interface RowValidationProblem {
+  index: number;
+  message: string;
+}
+
+/**
+ * Re-validates client-supplied rows for `POST /imports/preview/confirm`.
+ * Preview rows round-trip through the browser as JSON (where Dates arrive as
+ * strings and any field can be hand-edited), so the server must not trust
+ * them: every row is checked and normalised, and tampered rows are rejected
+ * before anything is written.
+ */
+export function validateImportedRows(rows: ParsedRow[]): {
+  problems: RowValidationProblem[];
+  clean: ParsedRow[];
+} {
+  const problems: RowValidationProblem[] = [];
+  const clean: ParsedRow[] = [];
+
+  rows.forEach((row, index) => {
+    const missing = (
+      ["level", "field", "professor", "group", "firstName", "lastName", "phone"] as const
+    ).filter((key) => typeof row[key] !== "string" || !row[key].trim());
+    if (missing.length > 0) {
+      problems.push({ index, message: `missing required value(s): ${missing.join(", ")}` });
+      return;
+    }
+    const fee = Number(row.monthlyFee);
+    if (!Number.isFinite(fee) || fee < 0) {
+      problems.push({ index, message: "monthlyFee must be a finite number >= 0" });
+      return;
+    }
+    const enrollmentDate = asValidDate(row.enrollmentDate);
+    if (!enrollmentDate) {
+      problems.push({ index, message: "enrollmentDate must be a valid date" });
+      return;
+    }
+    const status = String(row.status ?? "").toLowerCase().trim() as StudentStatus;
+    if (!STUDENT_STATUSES.includes(status)) {
+      problems.push({ index, message: `status must be one of: ${STUDENT_STATUSES.join(", ")}` });
+      return;
+    }
+    clean.push({ ...row, monthlyFee: fee, enrollmentDate, status });
+  });
+
+  return { problems, clean };
+}
 
 /**
  * Rows per INSERT.
@@ -103,8 +184,20 @@ export class ImportsService {
 
     if (rows.length === 0) return result;
 
+    // Rows come back from the browser as JSON — re-validate, because Dates
+    // arrive as strings and any field may have been hand-edited in between.
+    const { problems, clean } = validateImportedRows(rows);
+    for (const problem of problems) {
+      result.failed++;
+      result.errors.push({
+        row: rows[problem.index]?.rowNumber ?? problem.index + 1,
+        message: problem.message,
+      });
+    }
+    if (clean.length === 0) return result;
+
     await this.db.client.transaction(async (tx) => {
-      await this.insertRows(tx, rows, actorUserId, result);
+      await this.insertRows(tx, clean, actorUserId, result);
     });
 
     await this.audit.createLog(actorUserId, "import.students", "students", actorUserId, {
@@ -243,11 +336,13 @@ export class ImportsService {
       .from(students)
       .where(inArray(students.group_id, groupIds));
 
-    const seen = new Set(existing.map((s) => `${s.group_id}::${s.first_name}::${s.last_name}`));
+    const seen = new Set(
+      existing.map((s) => `${s.group_id}::${normName(s.first_name)}::${normName(s.last_name)}`),
+    );
 
     const toInsert: { row: ParsedRow; groupId: string }[] = [];
     for (const entry of resolved) {
-      const key = `${entry.groupId}::${entry.row.firstName}::${entry.row.lastName}`;
+      const key = `${entry.groupId}::${normName(entry.row.firstName)}::${normName(entry.row.lastName)}`;
       // Also guards against the same student appearing twice in one file.
       if (seen.has(key)) {
         result.skippedDuplicates++;
@@ -313,10 +408,20 @@ export class ImportsService {
     caches: ImportCaches,
     result: ImportResult,
   ): Promise<string> {
-    const levelKey = row.level.toLowerCase();
-    let levelId = caches.levels.get(levelKey);
+    // Normalised once: matching is case/accent/space-insensitive, while the
+    // inserted display names below keep the row's original spelling.
+    const level = normName(row.level);
+    const field = normName(row.field);
+    const professor = normName(row.professor);
+    const group = normName(row.group);
+
+    let levelId = caches.levels.get(level);
     if (!levelId) {
-      const [existing] = await tx.select({ id: levels.id }).from(levels).where(eq(levels.name, row.level)).limit(1);
+      const [existing] = await tx
+        .select({ id: levels.id })
+        .from(levels)
+        .where(eq(normCol(levels.name), level))
+        .limit(1);
       if (existing) {
         levelId = existing.id;
       } else {
@@ -324,16 +429,16 @@ export class ImportsService {
         levelId = created.id;
         result.created.levels++;
       }
-      caches.levels.set(levelKey, levelId);
+      caches.levels.set(level, levelId);
     }
 
-    const fieldKey = `${levelId}::${row.field.toLowerCase()}`;
+    const fieldKey = `${levelId}::${field}`;
     let fieldId = caches.fields.get(fieldKey);
     if (!fieldId) {
       const [existing] = await tx
         .select({ id: fields.id })
         .from(fields)
-        .where(and(eq(fields.level_id, levelId), eq(fields.name, row.field)))
+        .where(and(eq(fields.level_id, levelId), eq(normCol(fields.name), field)))
         .limit(1);
       if (existing) {
         fieldId = existing.id;
@@ -348,13 +453,13 @@ export class ImportsService {
       caches.fields.set(fieldKey, fieldId);
     }
 
-    const profKey = `${fieldId}::${row.professor.toLowerCase()}`;
+    const profKey = `${fieldId}::${professor}`;
     let profId = caches.professors.get(profKey);
     if (!profId) {
       const [existing] = await tx
         .select({ id: professors.id })
         .from(professors)
-        .where(and(eq(professors.field_id, fieldId), eq(professors.full_name, row.professor)))
+        .where(and(eq(professors.field_id, fieldId), eq(normCol(professors.full_name), professor)))
         .limit(1);
       if (existing) {
         profId = existing.id;
@@ -376,13 +481,13 @@ export class ImportsService {
       caches.professors.set(profKey, profId);
     }
 
-    const groupKey = `${profId}::${row.group.toLowerCase()}`;
+    const groupKey = `${profId}::${group}`;
     let groupId = caches.groups.get(groupKey);
     if (!groupId) {
       const [existing] = await tx
         .select({ id: groups.id })
         .from(groups)
-        .where(and(eq(groups.prof_id, profId), eq(groups.name, row.group)))
+        .where(and(eq(groups.prof_id, profId), eq(normCol(groups.name), group)))
         .limit(1);
       if (existing) {
         groupId = existing.id;

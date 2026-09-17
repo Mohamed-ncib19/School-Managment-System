@@ -33,9 +33,9 @@ export class DataTransferController {
 
   @Post("import/preview")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: FILE_LIMIT } }))
-  preview(@UploadedFile() file?: Express.Multer.File) {
+  preview(@UploadedFile() file?: Express.Multer.File, @Body("phrase") phrase?: string) {
     if (!file) throw new BadRequestException("Aucun fichier envoyé.");
-    return this.dataTransfer.previewImport(file.buffer, file.originalname);
+    return this.dataTransfer.previewImport(file.buffer, file.originalname, phrase);
   }
 
   @Post("import")
@@ -44,6 +44,7 @@ export class DataTransferController {
     @UploadedFile() file?: Express.Multer.File,
     @Body("fills") fillsJson?: string,
     @Req() req?: any,
+    @Body("phrase") phrase?: string,
   ) {
     if (!file) throw new BadRequestException("Aucun fichier envoyé.");
 
@@ -59,6 +60,6 @@ export class DataTransferController {
     const actor = req?.user;
     if (!actor?.id) throw new BadRequestException("Utilisateur non identifié.");
 
-    return this.dataTransfer.importAll(file.buffer, fills, actor.id, file.originalname);
+    return this.dataTransfer.importAll(file.buffer, fills, actor.id, file.originalname, phrase);
   }
 }

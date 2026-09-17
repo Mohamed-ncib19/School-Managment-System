@@ -15,13 +15,15 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from "@nes
 import type { Response } from "express";
 import { ImportsService } from "./imports.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard, Roles } from "../auth/guards/roles.guard";
 import { ParsedRow } from "./import.types";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10MB — a roster workbook is far smaller
 
 @ApiTags("imports")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles("super_admin")
 @Controller("imports")
 export class ImportsController {
   constructor(private readonly imports: ImportsService) {}

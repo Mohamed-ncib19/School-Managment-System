@@ -14,15 +14,16 @@ import {
   TestTube2,
   UploadCloud,
   Database,
-  ChevronRight,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import GoogleMark from "@/components/shared/google-mark";
+import { ManualOAuthConnect } from "@/components/shared/manual-oauth-connect";
 import DriverCard from "@/components/settings/driver-card";
 import { cn } from "@/lib/utils/format";
 import {
   cloudBackupApi,
   DriverDefinition,
+  DriverFieldDef,
   RecoveryPhrase,
   CloudBackupStatus,
   CloudTargetStatus,
@@ -31,6 +32,11 @@ import { useCloudSyncStore } from "@/hooks/use-cloud-sync-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 const errorMessage = (err: unknown): string => {
+  // The API wraps failures as { data: null, error: { message, code, ... } } —
+  // read the envelope first, or every error renders as axios's raw
+  // "Request failed with status code 400".
+  const envelope = (err as any)?.response?.data?.error;
+  if (envelope?.message) return Array.isArray(envelope.message) ? envelope.message.join(" ") : envelope.message;
   const axios = (err as any)?.response?.data;
   if (axios?.message) return Array.isArray(axios.message) ? axios.message.join(" ") : axios.message;
   return (err as Error)?.message ?? "Une erreur est survenue";
@@ -39,9 +45,9 @@ const errorMessage = (err: unknown): string => {
 const PHRASE_SESSION_KEY = "iq-cloud-safe-save-phrase";
 
 /**
- * Data safety — the cloud safe save section of the Settings page. Shows the
+ * Data safety â€” the cloud safe save section of the Settings page. Shows the
  * live sync status, the configured destinations, and hosts the 4-step setup
- * wizard (destination → school ID + recovery phrase → verify → first
+ * wizard (destination â†’ school ID + recovery phrase â†’ verify â†’ first
  * snapshot). The wizard mirrors the disaster-recovery contract: the phrase is
  * shown exactly once and must be written down on the printable sheet.
  */
@@ -176,7 +182,7 @@ function ConfiguredOverview({
         <div className="rounded-btn border border-gold/40 bg-gold/10 text-sm px-4 py-3 flex items-start gap-2">
           <AlertTriangle size={16} className="text-gold shrink-0 mt-0.5" />
           <p className="text-text-primary">
-            {t("cloudSafeSave.splitBrain", "Une autre machine synchronise déjà cette école")} — {status.conflict.hostname} (
+            {t("cloudSafeSave.splitBrain", "Une autre machine synchronise dÃ©jÃ  cette Ã©cole")} â€” {status.conflict.hostname} (
             {new Date(status.conflict.claimedAt).toLocaleString("fr-FR")})
           </p>
         </div>
@@ -184,23 +190,23 @@ function ConfiguredOverview({
 
       <dl className="grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.schoolId", "Identifiant d'école")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.schoolId", "Identifiant d'Ã©cole")}</dt>
           <dd className="font-mono text-text-primary truncate">{status.schoolId}</dd>
         </div>
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSync", "Dernière synchronisation")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSync", "DerniÃ¨re synchronisation")}</dt>
           <dd className="text-text-primary">
             {status.lastSync ? new Date(status.lastSync).toLocaleString("fr-FR") : t("common.never", "Jamais")}
           </dd>
         </div>
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSnapshot", "Dernière capture complète")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.lastSnapshot", "DerniÃ¨re capture complÃ¨te")}</dt>
           <dd className="text-text-primary">
             {status.lastSnapshot ? new Date(status.lastSnapshot).toLocaleString("fr-FR") : t("common.never", "Jamais")}
           </dd>
         </div>
         <div className="rounded-btn border border-border bg-background p-3">
-          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.pendingEvents", "Événements en attente")}</dt>
+          <dt className="text-xs text-text-secondary">{t("cloudSafeSave.pendingEvents", "Ã‰vÃ©nements en attente")}</dt>
           <dd className={cn("text-text-primary", status.queue.pending > 0 && "text-gold font-semibold")}>
             {status.queue.pending.toLocaleString("fr-FR")}
           </dd>
@@ -210,7 +216,7 @@ function ConfiguredOverview({
       <div className="flex gap-3">
         <button className="btn btn-secondary text-sm" onClick={onSnapshotNow} aria-busy={snapBusy || undefined}>
           <Database size={14} />
-          {t("cloudSafeSave.snapshotNow", "Capture complète maintenant")}
+          {t("cloudSafeSave.snapshotNow", "Capture complÃ¨te maintenant")}
         </button>
       </div>
     </div>
@@ -226,6 +232,7 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
   const [error, setError] = useState<string | null>(null);
 
   const [targetIds, setTargetIds] = useState<string[]>([]);
+  const [linkedDriverIds, setLinkedDriverIds] = useState<string[]>([]);
   const [schoolId, setSchoolId] = useState("");
   const [phrase, setPhrase] = useState<RecoveryPhrase | null>(() => {
     if (typeof window === "undefined") return null;
@@ -256,6 +263,28 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
     };
   }, []);
 
+  // Pick up destinations linked in an earlier run: the link lives server-side,
+  // so leaving and coming back must not demand reconnecting. Targets created
+  // above join the list through setTargetIds as usual.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const st = await cloudBackupApi.status();
+        if (!cancelled) {
+          const ids = (st.targets ?? []).filter((t) => t.enabled).map((t) => t.id);
+          if (ids.length > 0) setTargetIds((current) => [...current, ...ids.filter((id) => !current.includes(id))]);
+          setLinkedDriverIds((st.targets ?? []).filter((t) => t.enabled).map((t) => t.driverId));
+        }
+      } catch {
+        /* step 1 starts empty */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const next = () => setStep((s) => s + 1);
 
   return (
@@ -270,7 +299,7 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
         </div>
       </div>
 
-      <ol className="flex items-center gap-2 mb-6" aria-label={t("cloudSafeSave.steps", "Étapes")}>
+      <ol className="flex items-center gap-2 mb-6" aria-label={t("cloudSafeSave.steps", "Ã‰tapes")}>
         {[0, 1, 2, 3].map((i) => (
           <li key={i} className="flex items-center gap-2 flex-1">
             <span
@@ -302,6 +331,7 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
           drivers={drivers}
           targetIds={targetIds}
           setTargetIds={setTargetIds}
+          linkedDriverIds={linkedDriverIds}
           busy={busy}
           setBusy={setBusy}
           error={error}
@@ -353,6 +383,7 @@ function StepTargets({
   drivers,
   targetIds,
   setTargetIds,
+  linkedDriverIds,
   busy,
   setBusy,
   error,
@@ -362,6 +393,7 @@ function StepTargets({
   drivers: DriverDefinition[];
   targetIds: string[];
   setTargetIds: (ids: string[]) => void;
+  linkedDriverIds: string[];
   busy: boolean;
   setBusy: (b: boolean) => void;
   error: string | null;
@@ -371,18 +403,75 @@ function StepTargets({
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [showOthers, setShowOthers] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Consent links already issued per oauth field: the paste panel opens on
+  // its own with the link, so approving anywhere (popup, another tab, a
+  // phone) always lands back here instead of a stuck spinner.
+  const [oauthLinks, setOauthLinks] = useState<Record<string, { url: string; state: string }>>({});
 
   const def = drivers.find((d) => d.id === picked) ?? null;
+
+  // Developer credentials (own OAuth client) hide behind a toggle: a school
+  // must never face "Client ID" inputs for the one-click providers.
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const visibleFields = def?.fields.filter((f) => !f.advanced) ?? [];
+  const advancedFields = def?.fields.filter((f) => f.advanced) ?? [];
+  const requiredFields = showAdvanced ? (def?.fields ?? []) : visibleFields;
+  // One list for the form below: developer credentials join only behind the toggle.
+  const shownFields = showAdvanced ? (def?.fields ?? []) : visibleFields;
 
   /**
    * Connect an account for an OAuth destination.
    *
    * The server holds the app credentials for both providers, so this asks the
-   * administrator for nothing — they pick an account and approve. `values`
+   * administrator for nothing â€” they pick an account and approve. `values`
    * only carries credentials when a self-hoster registered their own app.
+   *
+   * One consent URL feeds both connect paths: the popup opens it directly,
+   * the "other computer" mode shows it as a link whose `code` is pasted back.
+   * The redirect target never needs to load on the approving device.
    */
+  const requestOAuthUrl = async (): Promise<{ url: string; state: string }> => {
+    if (!def) throw new Error("No driver selected");
+    const isDropbox = def.id === "dropbox";
+    const redirectUri = `${window.location.origin}/api/cloud-backup/oauth/${
+      isDropbox ? "dropbox" : "gdrive"
+    }/callback`;
+    return isDropbox
+      ? cloudBackupApi.dropboxOAuthUrl({
+          appKey: values["appKey"] || undefined,
+          appSecret: values["appSecret"] || undefined,
+          redirectUri,
+        })
+      : cloudBackupApi.gdriveOAuthUrl({
+          clientId: values["clientId"] || undefined,
+          clientSecret: values["clientSecret"] || undefined,
+          redirectUri,
+        });
+  };
+
+  /**
+   * Copy-code variant: fixed loopback redirect (see manualOAuthRedirectUri),
+   * so the link works opened from any machine — never the LAN address.
+   */
+  const requestManualOAuthUrl = async (): Promise<{ url: string; state: string }> => {
+    if (!def) throw new Error("No driver selected");
+    const isDropbox = def.id === "dropbox";
+    const provider = isDropbox ? "dropbox" : "gdrive";
+    const redirectUri = cloudBackupApi.manualOAuthRedirectUri(provider);
+    return isDropbox
+      ? cloudBackupApi.dropboxOAuthUrl({
+          appKey: values["appKey"] || undefined,
+          appSecret: values["appSecret"] || undefined,
+          redirectUri,
+        })
+      : cloudBackupApi.gdriveOAuthUrl({
+          clientId: values["clientId"] || undefined,
+          clientSecret: values["clientSecret"] || undefined,
+          redirectUri,
+        });
+  };
+
   const runOAuth = async (fieldName: string) => {
     if (!def) return;
     const isDropbox = def.id === "dropbox";
@@ -390,25 +479,16 @@ function StepTargets({
     setSaving(true);
     setError(null);
     try {
-      const redirectUri = `${window.location.origin}/api/cloud-backup/oauth/${
-        isDropbox ? "dropbox" : "gdrive"
-      }/callback`;
-      const { url } = isDropbox
-        ? await cloudBackupApi.dropboxOAuthUrl({
-            appKey: values["appKey"] || undefined,
-            appSecret: values["appSecret"] || undefined,
-            redirectUri,
-          })
-        : await cloudBackupApi.gdriveOAuthUrl({
-            clientId: values["clientId"] || undefined,
-            clientSecret: values["clientSecret"] || undefined,
-            redirectUri,
-          });
-
+      const { url, state } = await requestOAuthUrl();
+      // Publish the link first: whatever happens with the popup, the code
+      // has somewhere to be pasted.
+      setOauthLinks((v) => ({ ...v, [fieldName]: { url, state } }));
       const popup = window.open(url, messageType, "width=560,height=720");
+      // The popup carries on on its own from here — the button must not spin
+      // forever if the approval happens in another tab.
+      setSaving(false);
       if (!popup) {
         setError(t("cloudSafeSave.popupBlocked", "Autorisez les fenêtres pop-up pour ce site."));
-        setSaving(false);
         return;
       }
       const onMessage = (ev: MessageEvent) => {
@@ -416,12 +496,25 @@ function StepTargets({
         if (ev.origin !== window.location.origin) return;
         if (ev.data?.type !== messageType) return;
         window.removeEventListener("message", onMessage);
-        setSaving(false);
-        if (ev.data.ok) {
-          setValues((v) => ({ ...v, [fieldName]: ev.data.refreshToken }));
-        } else {
-          setError(ev.data.error ? String(ev.data.error) : t("cloudSafeSave.oauthDenied", "Autorisation refusée."));
-        }
+        // The popup hands back the authorization code (never a token); swap
+        // it server-side, exactly like the copy-code flow does.
+        void (async () => {
+          try {
+            if (ev.data.ok && ev.data.code) {
+              const res = await cloudBackupApi.oauthExchange({ state: ev.data.state, code: ev.data.code });
+              setValues((v) => ({ ...v, [fieldName]: res.refreshToken }));
+              setOauthLinks((v) => {
+                const next = { ...v };
+                delete next[fieldName];
+                return next;
+              });
+            } else {
+              setError(ev.data.error ? String(ev.data.error) : t("cloudSafeSave.oauthDenied", "Autorisation refusée."));
+            }
+          } catch (err) {
+            setError(errorMessage(err));
+          }
+        })();
       };
       window.addEventListener("message", onMessage);
     } catch (err) {
@@ -438,6 +531,7 @@ function StepTargets({
       const result = await cloudBackupApi.createTarget({ driverId: def.id, config: values });
       setTargetIds([...targetIds, result.id]);
       setValues({});
+      setOauthLinks({});
       setPicked(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -446,25 +540,35 @@ function StepTargets({
     }
   };
 
-  const recommended = drivers.filter((d) => d.recommended);
-  // If a build ever ships without the flag, show everything rather than an
-  // empty screen.
-  const others = recommended.length > 0 ? drivers.filter((d) => !d.recommended) : [];
-  const primary = recommended.length > 0 ? recommended : drivers;
+  // Setup offers exactly three destinations — the safe, free, one-minute
+  // ones. Expert drivers (S3, WebDAV…) still work through the API and appear
+  // in the restore dialog, but a school setting up backup should never have
+  // to choose between six providers. Dropbox leads: no vendor validation,
+  // no test-user list, LAN-friendly — the login-and-link flow.
+  const SIMPLE_IDS = ["folder", "dropbox", "gdrive"];
+  const simple = SIMPLE_IDS.map((id) => drivers.find((d) => d.id === id)).filter(
+    (d): d is DriverDefinition => Boolean(d),
+  );
+  const primary = simple.length > 0 ? simple : drivers.filter((d) => d.recommended);
 
   return (
     <div className="space-y-5">
       <div>
         <p className="text-sm font-medium text-text-primary mb-2">{t("cloudSafeSave.step1Title", "Choisissez une destination")}</p>
         <p className="text-xs text-text-secondary mb-4">
-          {t("cloudSafeSave.step1Subtitle", "La sauvegarde est dupliquée sur chaque destination active. Vous pouvez en ajouter plusieurs — au moins une est requise.")}
+          {t("cloudSafeSave.step1Subtitle", "Où garder une copie chiffrée de vos données. Une suffit, deux c'est mieux.")}
         </p>
 
-        {/* Two choices, not six. Both free, neither needs a payment card, and
-            either is done in under a minute. Everything else is real and still
-            reachable, but a school that has no opinion should not have to
-            form one. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {targetIds.length > 0 && (
+          <p className="rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3 text-sm text-success-strong dark:text-success-dark-strong mb-4">
+            {t(
+              "cloudSafeSave.alreadyLinked",
+              "{n} destination(s) déjà liée(s) — Continuer, ou ajoutez-en une autre ci-dessous.",
+            ).replace("{n}", String(targetIds.length))}
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {primary.map((d) => (
             <DriverCard
               key={d.id}
@@ -472,42 +576,13 @@ function StepTargets({
               selected={picked === d.id}
               onSelect={() => {
                 setPicked(d.id);
+                setShowAdvanced(false);
+                setOauthLinks({});
                 setError(null);
               }}
             />
           ))}
         </div>
-
-        {others.length > 0 && (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => setShowOthers((v) => !v)}
-              className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-primary transition-colors"
-            >
-              <ChevronRight size={13} className={cn("transition-transform", showOthers && "rotate-90")} />
-              {showOthers
-                ? t("cloudSafeSave.hideOtherOptions", "Masquer les autres options")
-                : t("cloudSafeSave.showOtherOptions", "Autres options (Backblaze, Nextcloud, S3…)")}
-            </button>
-
-            {showOthers && (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {others.map((d) => (
-                  <DriverCard
-                    key={d.id}
-                    driver={d}
-                    selected={picked === d.id}
-                    onSelect={() => {
-                      setPicked(d.id);
-                      setError(null);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {def && (
           <div className="mt-4 space-y-4 rounded-btn border border-border bg-background p-4">
@@ -518,7 +593,7 @@ function StepTargets({
                 <p className="text-xs leading-relaxed text-text-secondary whitespace-pre-line">{def.setupHelp}</p>
               </div>
             )}
-            {def.fields.map((field) => (
+            {shownFields.map((field) => (
               <div key={field.name}>
                 <label htmlFor={`tgt-${field.name}`} className="block text-sm font-medium text-text-primary mb-1.5">
                   {field.label}
@@ -531,7 +606,7 @@ function StepTargets({
                     value={values[field.name] ?? ""}
                     onChange={(e) => setValues((v) => ({ ...v, [field.name]: e.target.value }))}
                   >
-                    <option value="">—</option>
+                    <option value="">â€”</option>
                     {field.options?.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
@@ -554,8 +629,8 @@ function StepTargets({
                         <CheckCircle2 size={16} className="shrink-0 text-success-strong dark:text-success-dark-strong" />
                         <span className="text-sm text-success-strong dark:text-success-dark-strong flex-1">
                           {def.id === "dropbox"
-                            ? t("cloudSafeSave.dropboxConnected", "Compte Dropbox connecté")
-                            : t("cloudSafeSave.googleConnected", "Compte Google connecté")}
+                            ? t("cloudSafeSave.dropboxConnected", "Compte Dropbox connectÃ©")
+                            : t("cloudSafeSave.googleConnected", "Compte Google connectÃ©")}
                         </span>
                         <button
                           type="button"
@@ -588,6 +663,21 @@ function StepTargets({
                     {def.id === "gdrive" && (
                       <p className="text-xs text-gold mt-1">{t("cloudSafeSave.googleLimitation")}</p>
                     )}
+                    {!values[field.name] && (
+                      <ManualOAuthConnect
+                        getUrl={() => requestManualOAuthUrl()}
+                        exchange={(body) => cloudBackupApi.oauthExchange(body)}
+                        onToken={(token) => {
+                          setValues((v) => ({ ...v, [field.name]: token }));
+                          setOauthLinks((v) => {
+                            const next = { ...v };
+                            delete next[field.name];
+                            return next;
+                          });
+                        }}
+                        initialLink={oauthLinks[field.name] ?? null}
+                      />
+                    )}
                   </>
                 ) : (
                   <input
@@ -603,15 +693,33 @@ function StepTargets({
               </div>
             ))}
 
-            <div className="flex gap-3">
-              <button type="button" className="btn btn-primary text-sm" onClick={() => void saveTarget()} disabled={saving || !def.fields.every((f) => !f.required || (values[f.name] ?? "").trim())}>
-                <Plus size={14} />
-                {t("cloudSafeSave.addTarget", "Tester et enregistrer")}
+            {advancedFields.length > 0 && (
+              <button
+                type="button"
+                className="text-xs text-text-secondary hover:text-primary underline"
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                {showAdvanced
+                  ? t("cloudSafeSave.hideOwnClient", "Masquer mes propres identifiants")
+                  : t("cloudSafeSave.ownClient", "J'ai mon propre client OAuth (optionnel)")}
               </button>
-              <button type="button" className="btn btn-secondary text-sm" onClick={() => setPicked(null)}>
-                {t("common.cancel", "Annuler")}
-              </button>
-            </div>
+            )}
+
+            {linkedDriverIds.includes(def.id) ? (
+              <p className="rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3 text-sm text-success-strong dark:text-success-dark-strong">
+                {t("cloudSafeSave.driverAlreadyLinked", "Cette destination est déjà liée — Continuer ci-dessous.")}
+              </p>
+            ) : (
+              <div className="flex gap-3">
+                <button type="button" className="btn btn-primary text-sm" onClick={() => void saveTarget()} disabled={saving || !requiredFields.every((f) => !f.required || (values[f.name] ?? "").trim())}>
+                  <Plus size={14} />
+                  {t("cloudSafeSave.addTarget", "Tester et enregistrer")}
+                </button>
+                <button type="button" className="btn btn-secondary text-sm" onClick={() => setPicked(null)}>
+                  {t("common.cancel", "Annuler")}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -619,7 +727,7 @@ function StepTargets({
       {targetIds.length > 0 && (
         <div className="rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3 text-sm text-success-strong dark:text-success-dark-strong flex items-center gap-2">
           <CheckCircle2 size={16} />
-          {t("cloudSafeSave.targetsReady", "{n} destination(s) enregistrée(s)").replace("{n}", String(targetIds.length))}
+          {t("cloudSafeSave.targetsReady", "{n} destination(s) enregistrÃ©e(s)").replace("{n}", String(targetIds.length))}
         </div>
       )}
 
@@ -685,13 +793,13 @@ function StepPhrase({
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-sm font-medium text-text-primary mb-2">{t("cloudSafeSave.step2Title", "Identifiant d'école et phrase de récupération")}</p>
+        <p className="text-sm font-medium text-text-primary mb-2">{t("cloudSafeSave.step2Title", "Identifiant d'Ã©cole et phrase de rÃ©cupÃ©ration")}</p>
         <p className="text-xs text-text-secondary mb-4">
-          {t("cloudSafeSave.step2Subtitle", "L'identifiant d'école sert d'espace de stockage. La phrase est la seule clé des données chiffrées : elle n'est jamais stockée sur cette machine ni sur le cloud.")}
+          {t("cloudSafeSave.step2Subtitle", "L'identifiant d'Ã©cole sert d'espace de stockage. La phrase est la seule clÃ© des donnÃ©es chiffrÃ©es : elle n'est jamais stockÃ©e sur cette machine ni sur le cloud.")}
         </p>
 
         <label htmlFor="school-id" className="block text-sm font-medium text-text-primary mb-1.5">
-          {t("cloudSafeSave.schoolId", "Identifiant d'école")}
+          {t("cloudSafeSave.schoolId", "Identifiant d'Ã©cole")}
         </label>
         <input
           id="school-id"
@@ -704,10 +812,10 @@ function StepPhrase({
 
       <div className="rounded-btn border border-border bg-background p-4">
         <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-semibold text-text-primary">{t("cloudSafeSave.recoveryPhraseTitle", "Phrase de récupération")}</p>
+          <p className="text-sm font-semibold text-text-primary">{t("cloudSafeSave.recoveryPhraseTitle", "Phrase de rÃ©cupÃ©ration")}</p>
           <button className="btn btn-secondary text-sm" onClick={() => void generate()} disabled={busy} aria-busy={busy || undefined}>
             <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
-            {phrase ? t("cloudSafeSave.regenerate", "Régénérer") : t("cloudSafeSave.generate", "Générer")}
+            {phrase ? t("cloudSafeSave.regenerate", "RÃ©gÃ©nÃ©rer") : t("cloudSafeSave.generate", "GÃ©nÃ©rer")}
           </button>
         </div>
 
@@ -722,7 +830,7 @@ function StepPhrase({
               ))}
             </div>
             <p className="text-xs text-danger mt-3">
-              {t("cloudSafeSave.phraseWarning", "Écrivez ces 12 mots dans l'ordre sur la feuille de secours. Sans elle, aucune restauration n'est possible en cas de perte de cet ordinateur.")}
+              {t("cloudSafeSave.phraseWarning", "Ã‰crivez ces 12 mots dans l'ordre sur la feuille de secours. Sans elle, aucune restauration n'est possible en cas de perte de cet ordinateur.")}
             </p>
             <div className="flex gap-3 mt-3 print:hidden">
               <button className="btn btn-secondary text-sm" onClick={() => window.print()}>
@@ -736,12 +844,12 @@ function StepPhrase({
                   onChange={(e) => setConfirmed(e.target.checked)}
                   className="accent-primary h-4 w-4"
                 />
-                {t("cloudSafeSave.confirmWritten", "J'ai noté la phrase en lieu sûr.")}
+                {t("cloudSafeSave.confirmWritten", "J'ai notÃ© la phrase en lieu sÃ»r.")}
               </label>
             </div>
           </>
         ) : (
-          <p className="text-sm text-text-secondary">{t("cloudSafeSave.noPhraseYet", "Cliquez sur « Générer » — la phrase n'est montrée qu'une seule fois.")}</p>
+          <p className="text-sm text-text-secondary">{t("cloudSafeSave.noPhraseYet", "Cliquez sur Â« GÃ©nÃ©rer Â» â€” la phrase n'est montrÃ©e qu'une seule fois.")}</p>
         )}
       </div>
 
@@ -781,14 +889,35 @@ function StepVerify({
   const { t } = useTranslation();
   const [result, setResult] = useState<Awaited<ReturnType<typeof cloudBackupApi.verifySetup>> | null>(null);
   const [running, setRunning] = useState(false);
+  // The check needs no decision from the administrator, so it starts on its
+  // own and moves on when everything answers. Failures stay put with Retry.
+  const autoStarted = useRef(false);
+  // Step 1 writes the school identity and seals any previous one: running it
+  // twice trips the reconfigure guard ("déjà configurée… irréversible"), so
+  // retries re-verify only. Unmount (Retour) resets this with everything else.
+  const step1Done = useRef(false);
 
   const run = async () => {
-    if (!phrase) return;
+    // Never send an empty step-1: the server can only answer 400, which reads
+    // like a system fault for what is actually a missing field. Name it and
+    // point back instead.
+    if (!phrase?.phrase?.trim() || !schoolId.trim()) {
+      setError(
+        t(
+          "cloudSafeSave.missingIdOrPhrase",
+          "L'identifiant d'école ou la phrase manque — retournez à l'étape précédente et vérifiez les deux champs.",
+        ),
+      );
+      return;
+    }
     setError(null);
     setRunning(true);
     setBusy(true);
     try {
-      await cloudBackupApi.step1({ schoolId: schoolId.trim(), phrase: phrase.normalized });
+      if (!step1Done.current) {
+        await cloudBackupApi.step1({ schoolId: schoolId.trim(), phrase: phrase.phrase });
+        step1Done.current = true;
+      }
       const v = await cloudBackupApi.verifySetup();
       setResult(v);
     } catch (err) {
@@ -799,11 +928,28 @@ function StepVerify({
     }
   };
 
+  useEffect(() => {
+    // StrictMode double-mounts in dev; the ref keeps the probe to one run.
+    if (autoStarted.current) return;
+    autoStarted.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!result?.ok) return;
+    // Let the green checks register, then continue on their own.
+    const id = setTimeout(onNext, 1500);
+    return () => clearTimeout(id);
+  }, [result?.ok, onNext]);
+
   return (
     <div className="space-y-5">
-      <p className="text-sm font-medium text-text-primary">{t("cloudSafeSave.step3Title", "Vérification de bout en bout")}</p>
+      <p className="text-sm font-medium text-text-primary">{t("cloudSafeSave.step3Title", "VÃ©rification de bout en bout")}</p>
       <p className="text-xs text-text-secondary">
-        {t("cloudSafeSave.step3Subtitle", "Une écriture de test est chiffrée et envoyée vers chaque destination, puis relue. Toute destination doit répondre avant de valider.")}
+        {running && !result
+          ? t("cloudSafeSave.verifyingAuto", "VÃ©rification en cours â€” chaque destination est testÃ©e automatiquementâ€¦")
+          : t("cloudSafeSave.step3Subtitle", "Une Ã©criture de test est chiffrÃ©e et envoyÃ©e vers chaque destination, puis relue. Toute destination doit rÃ©pondre avant de valider.")}
       </p>
 
       {result && (
@@ -820,12 +966,12 @@ function StepVerify({
             >
               {tgt.ok ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
               {tgt.ok
-                ? t("cloudSafeSave.verifyOk", "Destination vérifiée")
-                : `${t("cloudSafeSave.verifyFailed", "Échec")} — ${tgt.lastError ?? ""}`}
+                ? t("cloudSafeSave.verifyOk", "Destination vÃ©rifiÃ©e")
+                : `${t("cloudSafeSave.verifyFailed", "Ã‰chec")} â€” ${tgt.lastError ?? ""}`}
             </div>
           ))}
           {result.ok ? (
-            <p className="text-sm text-success-strong dark:text-success-dark-strong font-medium">{t("cloudSafeSave.verifyAllOk", "Toutes les destinations sont prêtes.")}</p>
+            <p className="text-sm text-success-strong dark:text-success-dark-strong font-medium">{t("cloudSafeSave.verifyAllOk", "Toutes les destinations sont prÃªtes.")}</p>
           ) : (
             <p className="text-sm text-danger">{t("cloudSafeSave.verifyNotOk", "Corrigez la destination avant de continuer.")}</p>
           )}
@@ -839,7 +985,7 @@ function StepVerify({
         <div className="flex gap-3">
           <button className="btn btn-secondary text-sm" onClick={() => void run()} disabled={running || busy} aria-busy={running || undefined}>
             <TestTube2 size={14} className={running ? "animate-pulse" : ""} />
-            {result ? t("cloudSafeSave.reverify", "Re-vérifier") : t("cloudSafeSave.verifyNow", "Vérifier")}
+            {result ? t("cloudSafeSave.reverify", "Re-vÃ©rifier") : t("cloudSafeSave.verifyNow", "VÃ©rifier")}
           </button>
           <button className="btn btn-primary text-sm" onClick={onNext} disabled={!result?.ok || running}>
             {t("common.next", "Continuer")}
@@ -856,6 +1002,8 @@ function StepFinish({ schoolId, onDone }: { schoolId: string; onDone: () => Prom
   const { t } = useTranslation();
   const [state, setState] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [error, setError] = useState<string | null>(null);
+  // No decision to make here either: the capture starts on its own.
+  const autoStarted = useRef(false);
 
   const run = async () => {
     setState("running");
@@ -870,13 +1018,20 @@ function StepFinish({ schoolId, onDone }: { schoolId: string; onDone: () => Prom
     }
   };
 
+  useEffect(() => {
+    if (autoStarted.current) return;
+    autoStarted.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (state === "done") {
     return (
       <div className="space-y-4 text-center py-4">
         <CheckCircle2 size={40} className="mx-auto text-success dark:text-success-dark" />
-        <p className="text-h4 font-bold text-text-primary">{t("cloudSafeSave.doneTitle", "Sauvegarde cloud activée")}</p>
+        <p className="text-h4 font-bold text-text-primary">{t("cloudSafeSave.doneTitle", "Sauvegarde cloud activÃ©e")}</p>
         <p className="text-sm text-text-secondary">
-          {t("cloudSafeSave.doneText", "La première capture complète a été chiffrée et envoyée. La synchronisation continue désormais en arrière-plan, toutes les minutes.")}
+          {t("cloudSafeSave.doneText", "La premiÃ¨re capture complÃ¨te a Ã©tÃ© chiffrÃ©e et envoyÃ©e. La synchronisation continue dÃ©sormais en arriÃ¨re-plan, toutes les minutes.")}
         </p>
         <button className="btn btn-primary" onClick={() => void onDone()}>
           {t("common.close", "Fermer")}
@@ -887,9 +1042,9 @@ function StepFinish({ schoolId, onDone }: { schoolId: string; onDone: () => Prom
 
   return (
     <div className="space-y-5">
-      <p className="text-sm font-medium text-text-primary">{t("cloudSafeSave.step4Title", "Première capture complète")}</p>
+      <p className="text-sm font-medium text-text-primary">{t("cloudSafeSave.step4Title", "PremiÃ¨re capture complÃ¨te")}</p>
       <p className="text-xs text-text-secondary">
-        {t("cloudSafeSave.step4Subtitle", "La base entière est exportée, compressée, chiffrée puis envoyée. Cela peut prendre quelques minutes sur une grosse base.")}
+        {t("cloudSafeSave.step4Subtitle", "La base entiÃ¨re est exportÃ©e, compressÃ©e, chiffrÃ©e puis envoyÃ©e. Cela peut prendre quelques minutes sur une grosse base.")}
       </p>
 
       {error && <p className="text-sm text-danger">{error}</p>}
@@ -897,11 +1052,11 @@ function StepFinish({ schoolId, onDone }: { schoolId: string; onDone: () => Prom
       <div className="flex gap-3">
         <button className="btn btn-primary text-sm" onClick={() => void run()} disabled={state === "running"} aria-busy={state === "running" || undefined}>
           <Database size={14} />
-          {state === "running" ? t("cloudSafeSave.snapshotting", "Capture en cours…") : t("cloudSafeSave.snapshotStart", "Lancer la capture")}
+          {state === "running" ? t("cloudSafeSave.snapshotting", "Capture en coursâ€¦") : t("cloudSafeSave.snapshotStart", "Lancer la capture")}
         </button>
         {state === "failed" && (
           <button className="btn btn-secondary text-sm" onClick={() => void run()}>
-            {t("common.retry", "Réessayer")}
+            {t("common.retry", "RÃ©essayer")}
           </button>
         )}
       </div>

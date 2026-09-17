@@ -16,7 +16,10 @@ async function main() {
   const email = process.env.SEED_ADMIN_EMAIL ?? (schoolName ? `admin@${slugify(schoolName)}.com` : "admin@school.local");
   const password = process.env.SEED_ADMIN_PASSWORD ?? "change_me_password";
   const fullName = process.env.SEED_ADMIN_NAME ?? (schoolName ? `${schoolName} Administrator` : "School Administrator");
-  const rounds = Number(process.env.BCRYPT_ROUNDS ?? 10);
+  // Same 4–31 clamp as auth.service bcryptRounds(): an out-of-range or
+  // unparseable value falls back to 10 instead of crashing bcrypt.
+  const rawRounds = Number(process.env.BCRYPT_ROUNDS ?? 10);
+  const rounds = Number.isInteger(rawRounds) && rawRounds >= 4 && rawRounds <= 31 ? rawRounds : 10;
 
   const password_hash = await hash(password, rounds);
 

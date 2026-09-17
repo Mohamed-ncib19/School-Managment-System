@@ -176,6 +176,17 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
     isFeatureEnabled(features, FINANCIAL_FEATURE[item.href]),
   );
   const financialEnabled = financialItems.length > 0;
+  /** Schedule screens, mapped to their own feature toggle. */
+  const SCHEDULE_FEATURE: Record<string, FeatureKey> = {
+    "/schedule/calendar": "schedule.calendar",
+    "/schedule/entries": "schedule.entries",
+    "/schedule/classrooms": "schedule.classrooms",
+    "/schedule/working-hours": "schedule.workingHours",
+  };
+  const scheduleItems = SCHEDULE_NAV_ITEMS.filter((item) =>
+    isFeatureEnabled(features, SCHEDULE_FEATURE[item.href]),
+  );
+  const scheduleEnabled = scheduleItems.length > 0;
   const adminItems = ADMIN_NAV_ITEMS.filter((item) => {
     if (item.href === "/import") return isFeatureEnabled(features, "import");
     if (item.href === "/audit") return isFeatureEnabled(features, "audit");
@@ -421,7 +432,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
           )}
 
           {/* Schedule Management section */}
-          {!collapsed ? (
+          {scheduleEnabled && (!collapsed ? (
             <div>
               <button
                 onClick={() => setScheduleOpen(!scheduleOpen)}
@@ -437,7 +448,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               </button>
               {scheduleOpen && (
                 <div className="ml-6 mt-1 space-y-1 border-l border-border pl-3">
-                  {SCHEDULE_NAV_ITEMS.map((item) => {
+                  {scheduleItems.map((item) => {
                     const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
                     const Icon = item.icon;
                     return (
@@ -463,7 +474,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
             /* Collapsed schedule */
             <div className="flex flex-col items-center">
               <button
-                onClick={() => router.push(SCHEDULE_NAV_ITEMS[0]?.href ?? "/schedule/entries")}
+                onClick={() => router.push(scheduleItems[0]?.href ?? "/schedule/entries")}
                 className={`flex items-center justify-center w-full py-2.5 rounded-btn transition-colors duration-150 ${
                   isOnSchedulePage
                     ? "bg-black/[0.06] dark:bg-white/[0.08] text-text-primary"
@@ -475,7 +486,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
                 <CalendarDays size={18} />
               </button>
             </div>
-          )}
+          ))}
 
           <div className="!my-2 border-t border-border" />
 

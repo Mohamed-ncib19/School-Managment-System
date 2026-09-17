@@ -7,6 +7,7 @@ import { RevenueCalculationService } from "./revenue-calculation.service";
 import { ReceiptNumberService } from "./receipt-number.service";
 import { FinancialSettingsService } from "./financial-settings.service";
 import { Money, money, round2, toAmount } from "./money.util";
+import { deriveInvoiceStatus } from "./payment-status.util";
 import { billingPeriods, dueDateFor, periodOf } from "./billing.util";
 import { paymentWhere } from "./financial.filters";
 import type {
@@ -60,11 +61,13 @@ const SEARCH_STOP_WORDS = new Set([
   "non", "pas", "et", "ou", "pour", "avec", "tout", "tous", "toutes",
 ]);
 
-/** Lower rank = more urgent. A student's ledger status is its worst invoice. */
+/** Lower rank = more urgent. A student's ledger status is its worst invoice.
+ * `overdue` no longer exists as a live state (see deriveStatus) — legacy rows
+ * rank with `not_paid` so they sort by urgency, not above everything else. */
 const STATUS_RANK: Record<string, number> = {
-  overdue: 0,
   due_soon: 1,
   not_paid: 2,
+  overdue: 2,
   partially_paid: 3,
   paid: 4,
   cancelled: 5,
@@ -499,11 +502,12 @@ export class PaymentService {
     const dir = query.sortDir === "asc" ? sql`asc` : sql`desc`;
 
     // `STATUS_RANK` in SQL — a student's status is their worst invoice, so the
-    // grouped `min` of this is the row's status.
+    // grouped `min` of this is the row's status. Legacy `overdue` ranks with
+    // `not_paid`: it is no longer a live state, only old rows carry it.
     const statusRank = sql`min(case ${studentPayments.status}
-      when 'overdue' then 0
       when 'due_soon' then 1
       when 'not_paid' then 2
+      when 'overdue' then 2
       when 'partially_paid' then 3
       when 'paid' then 4
       else 5 end)`;
@@ -975,27 +979,11 @@ export class PaymentService {
   }
 
   /**
-   * The one definition of what an invoice's status means.
-   *
-   * Ordered most-settled first: a fully paid invoice is never also overdue, and
-   * a partially paid one stays `partially_paid` past its due date rather than
-   * losing the fact that money came in. Unpaid invoices are `due_soon` in the
-   * last `dueSoonDays` before the due date — strictly after today, so an
-   * invoice due today is plain `not_paid`, as is a just-created one — and
-   * there is no `overdue` state, a late invoice is simply unpaid.
+   * The one definition of what an invoice's status means — pure logic lives
+   * in `payment-status.util.ts` (unit-tested); this stays as the call site.
    */
   private deriveStatus(collected: Money, due: Money, dueDate: Date, dueSoonDays: number): PaymentStatus {
-    if (collected.greaterThanOrEqualTo(due) && due.greaterThan(0)) return "paid";
-    if (collected.greaterThan(0)) return "partially_paid";
-
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-
-    const soon = new Date(today);
-    soon.setUTCDate(soon.getUTCDate() + dueSoonDays);
-    if (dueDate > today && dueDate <= soon) return "due_soon";
-
-    return "not_paid";
+    return deriveInvoiceStatus(collected, due, dueDate, dueSoonDays);
   }
 
   /**
@@ -1040,16 +1028,27 @@ export class PaymentService {
     return this.findOne(updated.id);
   }
 
-  /** Puts a cancelled invoice back into circulation as unpaid. */
+  /** Puts a cancelled invoice back into circulation, re-deriving its status
+   * so an invoice due within the `due_soon` window comes back as `due_soon`
+   * rather than plain `not_paid` (cancelled invoices hold no cash, so the
+   * collected side is always zero here). */
   async reopen(paymentId: string, userId: string) {
     const payment = await this.requirePayment(paymentId);
     if (payment.status !== "cancelled") {
       throw new BadRequestException("Seule une facture annulée peut être rouverte");
     }
 
+    const settings = await this.settings.get();
+    const status = deriveInvoiceStatus(
+      money(payment.paid_amount),
+      money(payment.amount_due),
+      new Date(payment.due_date),
+      settings.due_soon_days,
+    );
+
     await this.db.client
       .update(studentPayments)
-      .set({ status: "not_paid" })
+      .set({ status })
       .where(eq(studentPayments.id, paymentId));
 
     await this.audit.record({
@@ -1059,7 +1058,7 @@ export class PaymentService {
       entityLabel: payment.period,
       actorId: userId,
       prevValues: { status: "cancelled" },
-      newValues: { status: "not_paid" },
+      newValues: { status },
       meta: { student_id: payment.student_id },
     });
 
@@ -1296,6 +1295,10 @@ export class PaymentService {
    * There is no `overdue` state: an invoice is `due_soon` in the two days before
    * its due date, and plain `not_paid` once the date passes — so this also
    * unwinds legacy rows that were labelled overdue before that rule existed.
+   *
+   * The three updates run sequentially inside one transaction: they touch the
+   * same rows a concurrent `reconcile` (appendTransaction) may rewrite, so an
+   * interleaved run could otherwise report counts for a state it never held.
    */
   async refreshStatuses(studentId?: string) {
     const settings = await this.settings.get();
@@ -1309,14 +1312,14 @@ export class PaymentService {
     // Only the number of affected rows is wanted, so the updates do not ask for
     // them back: `RETURNING` on a whole-academy refresh materialises tens of
     // thousands of UUIDs purely to call `.length` on them.
-    const [expiredSoon, dueSoon, legacyOverdue] = await Promise.all([
-      this.db.client
+    const counts = await this.db.client.transaction(async (tx) => {
+      const expiredSoon = await tx
         .update(studentPayments)
         .set({ status: "not_paid" })
         // `lte` rather than `lt`: the due_soon window starts strictly after
         // today, so anything due today or earlier is no longer due soon.
-        .where(and(scope, eq(studentPayments.status, "due_soon"), lte(studentPayments.due_date, today))),
-      this.db.client
+        .where(and(scope, eq(studentPayments.status, "due_soon"), lte(studentPayments.due_date, today)));
+      const dueSoon = await tx
         .update(studentPayments)
         .set({ status: "due_soon" })
         .where(
@@ -1326,21 +1329,22 @@ export class PaymentService {
             gt(studentPayments.due_date, today),
             lte(studentPayments.due_date, soon),
           ),
-        ),
-      this.db.client
+        );
+      const legacyOverdue = await tx
         .update(studentPayments)
         .set({ status: "not_paid" })
-        .where(and(scope, eq(studentPayments.status, "overdue"))),
-    ]);
-
-    const expiredSoonCount = expiredSoon.rowCount ?? 0;
-    const dueSoonCount = dueSoon.rowCount ?? 0;
-    const legacyOverdueCount = legacyOverdue.rowCount ?? 0;
+        .where(and(scope, eq(studentPayments.status, "overdue")));
+      return {
+        expiredSoon: expiredSoon.rowCount ?? 0,
+        dueSoon: dueSoon.rowCount ?? 0,
+        legacyOverdue: legacyOverdue.rowCount ?? 0,
+      };
+    });
 
     return {
-      overdue: legacyOverdueCount,
-      dueSoon: dueSoonCount,
-      total: expiredSoonCount + dueSoonCount + legacyOverdueCount,
+      overdue: counts.legacyOverdue,
+      dueSoon: counts.dueSoon,
+      total: counts.expiredSoon + counts.dueSoon + counts.legacyOverdue,
     };
   }
 }

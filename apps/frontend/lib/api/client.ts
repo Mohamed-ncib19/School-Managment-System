@@ -18,6 +18,10 @@ export function initApi(baseURL: string = DEFAULT_BASE_URL): AxiosInstance {
     // The session rides on httpOnly cookies (`iq_session`), so every request
     // must send credentials — there is no token to attach by hand.
     withCredentials: true,
+    // The install API key the backend's ApiKeyGuard requires on every keyed
+    // route. A build-time constant, present even on the login screen; the
+    // session cookie remains the real authentication.
+    headers: { "x-api-key": process.env.NEXT_PUBLIC_API_KEY ?? "" },
   });
 
   apiClient.interceptors.response.use(

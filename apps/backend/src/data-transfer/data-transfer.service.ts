@@ -4,6 +4,9 @@ import * as fs from "fs";
 import * as path from "path";
 import { DbService } from "../db/db.service";
 import { AuditService } from "../audit/audit.service";
+import { deriveKey } from "../cloud-backup/crypto/kdf";
+import { decodeObject } from "../cloud-backup/crypto/object-codec";
+import { splitObject } from "../cloud-backup/crypto/object-header";
 import {
   attendanceSheets,
   classrooms,
@@ -186,7 +189,8 @@ export class DataTransferService {
   // Preview
   // ------------------------------------------------------------------
 
-  previewImport(buffer: Buffer, fileName: string): ImportPreview {
+  async previewImport(buffer: Buffer, fileName: string, phrase?: string): Promise<ImportPreview> {
+    buffer = await this.resolveImportBuffer(buffer, phrase);
     const document = this.parseDocument(buffer);
     const tables: TablePreview[] = [];
     const ignoredTables: string[] = [];
@@ -220,7 +224,9 @@ export class DataTransferService {
     fills: Record<string, Record<string, string>>,
     actorUserId: string,
     fileName?: string,
+    phrase?: string,
   ): Promise<ImportResult> {
+    buffer = await this.resolveImportBuffer(buffer, phrase);
     const document = this.parseDocument(buffer);
     const fillsSafe = fills && typeof fills === "object" ? fills : {};
 
@@ -333,6 +339,52 @@ const current = getTableColumns(def.table) as Record<string, any>;
   // ------------------------------------------------------------------
   // Internals
   // ------------------------------------------------------------------
+
+  /**
+   * Accepts either a plain `iq-data-export` JSON file or an encrypted
+   * `data_export` object (`{school}/exports/*.json.zst.enc`) as uploaded to
+   * Dropbox by every snapshot. The envelope header is plaintext and carries
+   * its own KDF parameters, so the phrase alone re-derives the key — the same
+   * zero-knowledge property as the snapshot restore, but ending in the
+   * Importer instead of `psql`.
+   */
+  private async resolveImportBuffer(buffer: Buffer, phrase?: string): Promise<Buffer> {
+    if (this.looksLikeJson(buffer)) return buffer;
+    if (!phrase?.trim()) {
+      throw new BadRequestException(
+        "Ce fichier est chiffré (copie Dropbox) — saisissez la phrase de récupération (12 mots) pour le déchiffrer.",
+      );
+    }
+    let header;
+    try {
+      ({ header } = splitObject(buffer));
+    } catch {
+      throw new BadRequestException("Impossible de lire ce fichier — est-ce un export .json ou .enc valide ?");
+    }
+    if (header.kind !== "data_export") {
+      throw new BadRequestException(
+        `Ce fichier chiffré est une capture « ${header.kind} », pas un export de données — restaurez-le depuis « Restaurer une sauvegarde » sur la page de connexion.`,
+      );
+    }
+    const key = await deriveKey(phrase.trim(), header.kdf);
+    try {
+      const { plaintext } = await decodeObject(buffer, key);
+      return plaintext;
+    } catch {
+      throw new BadRequestException(
+        "Phrase de récupération invalide pour ce fichier — vérifiez l'ordre et l'orthographe des 12 mots.",
+      );
+    }
+  }
+
+  /** Plain exports start with `{` (after whitespace); encrypted objects start with a u32 length. */
+  private looksLikeJson(buffer: Buffer): boolean {
+    for (const byte of buffer) {
+      if (byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d) continue;
+      return byte === 0x7b;
+    }
+    return false;
+  }
 
   private parseDocument(buffer: Buffer): ExportDocument {
     let document: ExportDocument;

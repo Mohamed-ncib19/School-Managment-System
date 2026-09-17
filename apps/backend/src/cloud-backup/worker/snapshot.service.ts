@@ -16,6 +16,8 @@ import { RedactingLogger } from "../redaction/redaction";
 import { findPgBin } from "./pg-bin";
 import { computeSchemaHash } from "./schema-hash";
 import { Readable } from "node:stream";
+import { Optional } from "@nestjs/common";
+import { DataTransferService } from "../../data-transfer/data-transfer.service";
 
 const PG_TIMEOUT_MS = 30 * 60_000;
 
@@ -25,6 +27,14 @@ const PG_TIMEOUT_MS = 30 * 60_000;
  * daily at the configured quiet hour, on demand after setup, and at boot when
  * the schema hash has changed (i.e. right after a migration).
  *
+ * Alongside the pg_dump snapshot, an Importer-compatible data export
+ * (`iq-data-export` JSON, same envelope + same recovery phrase) is uploaded
+ * to `{school_id}/exports/` as `kind: "data_export"`. It is the copy that
+ * survives an instance loss without the login-page restore flow: download it
+ * from Dropbox, drop it into Settings → Données → "Importer des données"
+ * with the phrase, and the data is back. Best-effort: an export failure never
+ * fails the snapshot itself.
+ *
  * Memory stays flat: pg_dump writes a plaintext temp file, a streaming
  * prepass hashes and sizes it, then the encode+upload pass streams the file
  * through the compress→encrypt pipeline in 1 MiB blocks.
@@ -33,7 +43,10 @@ const PG_TIMEOUT_MS = 30 * 60_000;
 export class SnapshotService {
   private readonly logger = new RedactingLogger(SnapshotService.name);
 
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    @Optional() private readonly dataTransfer?: DataTransferService,
+  ) {}
 
 
   private findPgDump(): string | null {
@@ -179,9 +192,70 @@ compression: compressionAlgorithm(),
       }
 
       await this.uploadManifest(targets, key, schoolId, kdf, results.filter((r) => r.ok).map((r) => r.key!));
+      // The Importer-compatible copy for instance-loss recovery. Best-effort:
+      // it must never fail a snapshot that already succeeded.
+      await this.uploadDataExport(targets, key, schoolId, kdf, seq);
       return results;
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  private async uploadDataExport(
+    targets: Array<{ id: string; driver: StorageDriver }>,
+    key: Buffer,
+    schoolId: string,
+    kdf: KdfParams,
+    seq: number,
+  ): Promise<void> {
+    if (!this.dataTransfer) return;
+    let plaintext: Buffer;
+    try {
+      ({ buffer: plaintext } = await this.dataTransfer.exportAll());
+    } catch (err) {
+      this.logger.error(`Data-export copy skipped (export failed): ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    if (!plaintext.length) return;
+    const isoDate = new Date().toISOString().slice(0, 10);
+    const objectKey = `${schoolId}/exports/${isoDate}_${String(seq).padStart(10, "0")}.json.zst.enc`;
+    try {
+      const encoded = await encodeObject({
+        schoolId,
+        objectKey,
+        kind: "data_export",
+        kdf,
+        key,
+        compression: compressionAlgorithm(),
+        seqFrom: 0,
+        seqTo: seq,
+        appVersion: process.env.APP_VERSION,
+        plaintext: () => Readable.from([plaintext]),
+      });
+      for (const target of targets) {
+        try {
+          await target.driver.put(objectKey, encoded.openStream(), encoded.size);
+          await this.db.client
+            .insert(backupManifest)
+            .values({
+              target_id: target.id,
+              object_key: objectKey,
+              kind: "data_export",
+              covers_from_seq: 0,
+              covers_to_seq: seq,
+              uncompressed_sha256: encoded.header.uncompressed_sha256,
+              uncompressed_bytes: encoded.header.uncompressed_bytes,
+              stored_bytes: encoded.size,
+              format_version: encoded.header.format_version,
+            })
+            .onConflictDoNothing();
+        } catch (err) {
+          this.logger.error(`Data-export upload to ${target.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      this.logger.log(`Data-export copy uploaded (${plaintext.length} bytes → ${objectKey}).`);
+    } catch (err) {
+      this.logger.error(`Data-export copy skipped (encode failed): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

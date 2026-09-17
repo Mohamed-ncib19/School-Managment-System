@@ -25,6 +25,7 @@ import { CreateExceptionDto } from "./dto/student-exception.dto";
 import { CreateEntryExceptionDto, ListEntryExceptionsDto, OccurrenceFiltersDto, SplitScheduleEntryDto } from "./dto/entry-exception.dto";
 import { UpsertWorkingHoursDto } from "./dto/working-hours.dto";
 import { CreateClassroomDto, UpdateClassroomDto, ClassroomAvailabilityQueryDto } from "./dto/classroom.dto";
+import { CreateTimeSlotDto, UpdateTimeSlotDto, ReorderTimeSlotsDto } from "./dto/time-slot.dto";
 
 @Controller("scheduling")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -56,9 +57,8 @@ export class SchedulingController {
     return this.service.getClassroom(id);
   }
 
-  // The DTOs below were declared but never bound — both bodies were typed
-  // `any`, and `ValidationPipe` only validates class metatypes, so every
-  // classroom field arrived unchecked (the colour pattern included).
+  // Bodies are class-typed DTOs throughout this controller so the global
+  // ValidationPipe actually validates them (it ignores `any`).
   @Post("classrooms")
   @Roles("super_admin")
   @ApiOperation({ summary: "Create a classroom" })
@@ -85,19 +85,19 @@ export class SchedulingController {
 
   @Post("time-slots")
   @Roles("super_admin")
-  async createTimeSlot(@Body() dto: any, @Req() req: any) {
+  async createTimeSlot(@Body() dto: CreateTimeSlotDto, @Req() req: any) {
     return this.service.createTimeSlot(dto, req.user.id);
   }
 
   @Put("time-slots/:id")
   @Roles("super_admin")
-  async updateTimeSlot(@Param("id", ParseUUIDPipe) id: string, @Body() dto: any, @Req() req: any) {
+  async updateTimeSlot(@Param("id", ParseUUIDPipe) id: string, @Body() dto: UpdateTimeSlotDto, @Req() req: any) {
     return this.service.updateTimeSlot(id, dto, req.user.id);
   }
 
   @Put("time-slots/reorder")
   @Roles("super_admin")
-  async reorderTimeSlots(@Body() dto: { ids: string[] }, @Req() req: any) {
+  async reorderTimeSlots(@Body() dto: ReorderTimeSlotsDto, @Req() req: any) {
     return this.service.reorderTimeSlots(dto, req.user.id);
   }
 

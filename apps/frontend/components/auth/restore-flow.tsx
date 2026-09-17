@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RotateCcw, X, ShieldCheck, Database, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import GoogleMark from "@/components/shared/google-mark";
+import { ManualOAuthConnect } from "@/components/shared/manual-oauth-connect";
 import { cn } from "@/lib/utils/format";
 import {
   cloudBackupApi,
@@ -14,6 +15,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 
 const errorMessage = (err: unknown): string => {
+  // Same envelope unwrap as the setup wizard: the API wraps failures as
+  // { data: null, error: { message, ... } }.
+  const envelope = (err as any)?.response?.data?.error;
+  if (envelope?.message) return Array.isArray(envelope.message) ? envelope.message.join(" ") : envelope.message;
   const axios = (err as any)?.response?.data;
   if (axios?.message) return Array.isArray(axios.message) ? axios.message.join(" ") : axios.message;
   return (err as Error)?.message ?? "Une erreur est survenue";
@@ -79,11 +84,19 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<RestoreStatus | null>(null);
   const [done, setDone] = useState(false);
 
-
   const orderedDrivers = [...(drivers ?? [])].sort(
     (a, b) => Number(b.recommended ?? false) - Number(a.recommended ?? false),
   );
   const def = drivers?.find((d) => d.id === picked) ?? null;
+
+  // Same rule as the setup wizard: developer credentials hide behind a
+  // toggle, and hidden required fields must not block the form.
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const shownFields = showAdvanced ? (def?.fields ?? []) : (def?.fields.filter((f) => !f.advanced) ?? []);
+  const advancedCount = (def?.fields.filter((f) => f.advanced) ?? []).length;
+  // Consent links already issued per oauth field: the paste panel opens on
+  // its own with the link, so approving anywhere always lands back here.
+  const [oauthLinks, setOauthLinks] = useState<Record<string, { url: string; state: string }>>({});
 
   /**
    * Connect a Dropbox or Google account from the login screen.
@@ -93,30 +106,68 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
    * never saw, because the whole point of an app-level client is that they
    * never handle one.
    */
+  /**
+   * One consent URL for both connect paths (see the settings wizard): the
+   * popup opens it directly, the "other computer" mode shows it as a link
+   * whose `code` is pasted back and exchanged below.
+   */
+  const requestRestoreOAuthUrl = async (): Promise<{ url: string; state: string }> => {
+    const isDropbox = def?.id === "dropbox";
+    if (!def) throw new Error("No driver selected");
+    const redirectUri = `${window.location.origin}/api/cloud-backup/oauth/${
+      isDropbox ? "dropbox" : "gdrive"
+    }/callback`;
+    return isDropbox
+      ? cloudBackupApi.restoreDropboxOAuthUrl({
+          appKey: values["appKey"] || undefined,
+          appSecret: values["appSecret"] || undefined,
+          redirectUri,
+        })
+      : cloudBackupApi.restoreGdriveOAuthUrl({
+          clientId: values["clientId"] || undefined,
+          clientSecret: values["clientSecret"] || undefined,
+          redirectUri,
+        });
+  };
+
+  /**
+   * Copy-code variant: fixed loopback redirect (see manualOAuthRedirectUri),
+   * so the link works opened from any machine — never the LAN address.
+   */
+  const requestRestoreManualOAuthUrl = async (): Promise<{ url: string; state: string }> => {
+    const isDropbox = def?.id === "dropbox";
+    if (!def) throw new Error("No driver selected");
+    const provider = isDropbox ? "dropbox" : "gdrive";
+    const redirectUri = cloudBackupApi.manualOAuthRedirectUri(provider);
+    return isDropbox
+      ? cloudBackupApi.restoreDropboxOAuthUrl({
+          appKey: values["appKey"] || undefined,
+          appSecret: values["appSecret"] || undefined,
+          redirectUri,
+        })
+      : cloudBackupApi.restoreGdriveOAuthUrl({
+          clientId: values["clientId"] || undefined,
+          clientSecret: values["clientSecret"] || undefined,
+          redirectUri,
+        });
+  };
+
   const runOAuth = async (fieldName: string) => {
     setBusy(true);
     setError(null);
     try {
       const isDropbox = def?.id === "dropbox";
       const messageType = isDropbox ? "iq-dropbox-oauth" : "iq-gdrive-oauth";
-      const redirectUri = `${window.location.origin}/api/cloud-backup/oauth/${
-        isDropbox ? "dropbox" : "gdrive"
-      }/callback`;
-      const { url } = isDropbox
-        ? await cloudBackupApi.restoreDropboxOAuthUrl({
-            appKey: values["appKey"] || undefined,
-            appSecret: values["appSecret"] || undefined,
-            redirectUri,
-          })
-        : await cloudBackupApi.restoreGdriveOAuthUrl({
-            clientId: values["clientId"] || undefined,
-            clientSecret: values["clientSecret"] || undefined,
-            redirectUri,
-          });
+      const { url, state } = await requestRestoreOAuthUrl();
+      // Publish the link first: whatever happens with the popup, the code
+      // has somewhere to be pasted.
+      setOauthLinks((v) => ({ ...v, [fieldName]: { url, state } }));
       const popup = window.open(url, messageType, "width=560,height=720");
+      // The popup carries on on its own from here — the button must not spin
+      // forever if the approval happens in another tab.
+      setBusy(false);
       if (!popup) {
         setError(t("cloudSafeSave.popupBlocked", "Autorisez les fenêtres pop-up pour ce site."));
-        setBusy(false);
         return;
       }
       const onMessage = (ev: MessageEvent) => {
@@ -124,12 +175,25 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
         if (ev.origin !== window.location.origin) return;
         if (ev.data?.type !== messageType) return;
         window.removeEventListener("message", onMessage);
-        setBusy(false);
-        if (ev.data.ok) {
-          setValues((v) => ({ ...v, [fieldName]: ev.data.refreshToken }));
-        } else {
-          setError(ev.data.error ? String(ev.data.error) : t("cloudSafeSave.oauthDenied", "Autorisation refusée."));
-        }
+        // The popup hands back the authorization code (never a token); swap
+        // it server-side, exactly like the copy-code flow does.
+        void (async () => {
+          try {
+            if (ev.data.ok && ev.data.code) {
+              const res = await cloudBackupApi.restoreOAuthExchange({ state: ev.data.state, code: ev.data.code });
+              setValues((v) => ({ ...v, [fieldName]: res.refreshToken }));
+              setOauthLinks((v) => {
+                const next = { ...v };
+                delete next[fieldName];
+                return next;
+              });
+            } else {
+              setError(ev.data.error ? String(ev.data.error) : t("cloudSafeSave.oauthDenied", "Autorisation refusée."));
+            }
+          } catch (err) {
+            setError(errorMessage(err));
+          }
+        })();
       };
       window.addEventListener("message", onMessage);
     } catch (err) {
@@ -137,7 +201,7 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
       setError(errorMessage(err));
     }
   };
-  const canStart = picked && schoolId.trim() && phrase.trim() && (def?.fields.every((f) => !f.required || (values[f.name] ?? "").trim()) ?? false);
+  const canStart = picked && schoolId.trim() && phrase.trim() && (shownFields.every((f) => !f.required || (values[f.name] ?? "").trim()) ?? false);
 
   const targetInput = def
     ? {
@@ -252,6 +316,8 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                     type="button"
                     onClick={() => {
                       setPicked(d.id);
+                      setShowAdvanced(false);
+                      setOauthLinks({});
                       setError(null);
                     }}
                     className={cn(
@@ -276,7 +342,7 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                       screen, so the consent popup is unavailable here and the
                       refresh token has to be pasted in by hand. Hiding the
                       field left a Drive restore with no credential at all. */}
-                  {def.fields
+                  {shownFields
                     .map((field) => (
                       <div key={field.name}>
                         <label htmlFor={`res-${field.name}`} className="block text-sm font-medium text-text-primary mb-1.5">
@@ -322,6 +388,21 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                             {def?.id === "gdrive" && (
                               <p className="text-xs text-gold mt-1">{t("cloudSafeSave.googleLimitation")}</p>
                             )}
+                            {!values[field.name] && (
+                              <ManualOAuthConnect
+                                getUrl={() => requestRestoreManualOAuthUrl()}
+                                exchange={(body) => cloudBackupApi.restoreOAuthExchange(body)}
+                                onToken={(token) => {
+                                  setValues((v) => ({ ...v, [field.name]: token }));
+                                  setOauthLinks((v) => {
+                                    const next = { ...v };
+                                    delete next[field.name];
+                                    return next;
+                                  });
+                                }}
+                                initialLink={oauthLinks[field.name] ?? null}
+                              />
+                            )}
                           </>
                         ) : field.type === "select" ? (
                           <select
@@ -350,6 +431,17 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
                         {field.help && <p className="mt-1 text-xs text-text-secondary">{field.help}</p>}
                       </div>
                     ))}
+                  {advancedCount > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs text-text-secondary hover:text-primary underline"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                    >
+                      {showAdvanced
+                        ? t("cloudSafeSave.hideOwnClient", "Masquer mes propres identifiants")
+                        : t("cloudSafeSave.ownClient", "J'ai mon propre client OAuth (optionnel)")}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

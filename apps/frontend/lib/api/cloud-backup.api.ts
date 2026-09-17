@@ -47,6 +47,8 @@ export interface DriverFieldDef {
   help?: string;
   required: boolean;
   secret: boolean;
+  /** Developer credential (own OAuth client) — UI hides these behind a toggle. */
+  advanced?: boolean;
   options?: Array<{ value: string; label: string }>;
 }
 
@@ -71,8 +73,10 @@ export interface DriverDefinition {
 
 export interface RecoveryPhrase {
   words: string[];
-  mnemonic: string;
-  normalized: string;
+  /** Lowercase words joined by a single space — the canonical form to send back. */
+  phrase: string;
+  /** The phrase formatted for printing in a 3x4 grid. */
+  grid: string[];
 }
 
 export interface RestorePlan {
@@ -167,6 +171,33 @@ export const cloudBackupApi = {
 
   restoreDropboxOAuthUrl: (body: { appKey?: string; appSecret?: string; redirectUri: string }) =>
     ApiClient.post<{ url: string; state: string }>("/cloud-backup/restore/oauth/dropbox/url", body),
+
+  /**
+   * Manual code exchange for connecting from another computer on the LAN.
+   * The administrator opens the consent URL on any device and pastes the
+   * `code` here; the server exchanges it against the pending handshake, so
+   * no secret crosses the browser.
+   */
+  oauthExchange: (body: { state: string; code: string }) =>
+    ApiClient.post<{ ok: boolean; refreshToken: string }>("/cloud-backup/oauth/exchange", body),
+
+  /** Same exchange from the login screen during a restore on new hardware. */
+  restoreOAuthExchange: (body: { state: string; code: string }) =>
+    ApiClient.post<{ ok: boolean; refreshToken: string }>("/cloud-backup/restore/oauth/exchange", body),
+
+  /**
+   * Fixed loopback redirect for the "other computer" flow.
+   *
+   * The popup flow uses the page's own origin (works sitting at the server),
+   * but the copy-code link may be opened from any LAN machine — so it must
+   * NOT echo that machine's address: Google Desktop clients only accept
+   * loopback, and Dropbox only accepts pre-registered URIs. The target never
+   * loads (the code is copied out of the address bar), so loopback is
+   * correct everywhere. Publisher registers exactly these two per provider
+   * (Dropbox needs them listed; Google Desktop allows any loopback port).
+   */
+  manualOAuthRedirectUri: (provider: "dropbox" | "gdrive") =>
+    `http://127.0.0.1:3000/api/cloud-backup/oauth/${provider}/callback`,
 
   // --- Restore (public) ---
 

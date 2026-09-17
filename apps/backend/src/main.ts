@@ -14,12 +14,15 @@ async function bootstrap() {
   // The whiteboard save path posts full Excalidraw scenes, which can embed
   // images as data URLs and regularly exceed the 100 kB Express default.
   app.use(json({ limit: "5mb" }));
+  const isDev = process.env.NODE_ENV !== "production";
+  const docsOn = isDev || process.env.ENABLE_API_DOCS === "true";
   app.use(
     helmet({
-      // The portal serves its own assets same-origin and Next manages its own
-      // CSP; helmet's default CSP breaks the dev overlay.
-      contentSecurityPolicy: false,
-      crossOriginEmbedderPolicy: false,
+      // helmet's default CSP breaks the Next dev overlay and the Swagger UI's
+      // inline scripts, so it stays off wherever docs are served; a production
+      // API without docs ships the full default policy.
+      contentSecurityPolicy: docsOn ? false : undefined,
+      crossOriginEmbedderPolicy: isDev ? false : undefined,
     }),
   );
   app.enableCors({

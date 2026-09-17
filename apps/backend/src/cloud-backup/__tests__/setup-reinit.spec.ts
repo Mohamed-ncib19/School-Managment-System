@@ -23,7 +23,7 @@ function makeService(existing: Record<string, unknown> | null) {
     db as never,
     keys as never,
     { load: async () => null } as never,
-    {} as never,
+    { enabledTargets: async () => [{ id: "t", driver: { put: async () => ({ key: "", size: 0 }) } }] } as never,
     {} as never,
     {} as never,
     {} as never,
@@ -62,9 +62,15 @@ describe("re-running setup step 1", () => {
 
   it("rejects an invalid school id before touching anything", async () => {
     const { service, updates } = makeService(null);
-    await expect(service.step1({ schoolId: "x", phrase: PHRASE })).rejects.toBeInstanceOf(
+    await expect(service.step1({ schoolId: "!!!", phrase: PHRASE })).rejects.toBeInstanceOf(
       BadRequestException,
     );
     expect(updates).toHaveLength(0);
+  });
+
+  it("slugifies an accented name instead of rejecting it", async () => {
+    const { service } = makeService(null);
+    const result = await service.step1({ schoolId: "École Saint-Jean", phrase: PHRASE });
+    expect(result.schoolId).toBe("ecole-saint-jean");
   });
 });

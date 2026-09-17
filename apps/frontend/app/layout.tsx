@@ -15,6 +15,8 @@ const inter = Inter({
 // Server-side fetches need the absolute backend URL: NEXT_PUBLIC_API_URL is
 // the browser-facing relative /api (proxied by next.config.js).
 const API_BASE = process.env.BACKEND_API_URL ?? "http://127.0.0.1:3001/api";
+// Server-to-server calls carry the install key too (ApiKeyGuard).
+const API_HEADERS = { "x-api-key": process.env.NEXT_PUBLIC_API_KEY ?? "" };
 
 /**
  * `generateMetadata` is awaited before the HTML shell is sent, so anything it
@@ -38,6 +40,7 @@ async function faviconVersion(): Promise<string | null> {
     const res = await fetch(`${API_BASE}/financial/settings/logo`, {
       next: { revalidate: METADATA_TTL_SECONDS },
       signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+      headers: API_HEADERS,
     });
     if (!res.ok) return null;
     return res.headers.get("x-logo-version");
@@ -55,6 +58,7 @@ async function systemName(): Promise<string | null> {
     const res = await fetch(`${API_BASE}/system-settings`, {
       next: { revalidate: METADATA_TTL_SECONDS },
       signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+      headers: API_HEADERS,
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -90,6 +94,12 @@ export default function RootLayout({
     <html lang="fr" className={inter.variable}>
       <body className={inter.className}>
         <ThemeInit />
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-btn focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:text-white"
+        >
+          Aller au contenu principal
+        </a>
         <I18nProvider>
           <Providers>{children}</Providers>
         </I18nProvider>

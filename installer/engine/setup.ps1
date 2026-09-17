@@ -14,6 +14,7 @@
     SUPER_PASSWORD     random 24-char - the portable PostgreSQL superuser
     JWT_SECRET         random
     JWT_REFRESH_SECRET random
+    API_KEY            random 32-char alphanumeric (install API key, x-api-key)
     SEED_ADMIN_*       email + password typed in the dialog
 
   The values are written to apps\backend\.env and apps\frontend\.env.local
@@ -163,9 +164,10 @@ $dbPassword = New-RandomString 24
 $superPassword = New-RandomString 24
 $jwtSecret = New-RandomString 32
 $jwtRefresh = New-RandomString 32
+$apiKey = New-RandomString 32
 
 # --- build the .env (template first, our generated keys override) -----------
-$keysToOverride = @("SCHOOL_NAME","SCHOOL_SLUG","DATABASE_URL","DATABASE_NAME","DATABASE_USER","DATABASE_PASSWORD","POSTGRES_SUPERUSER_PASSWORD","JWT_SECRET","JWT_REFRESH_SECRET","SEED_ADMIN_NAME","SEED_ADMIN_EMAIL","SEED_ADMIN_PASSWORD")
+$keysToOverride = @("SCHOOL_NAME","SCHOOL_SLUG","DATABASE_URL","DATABASE_NAME","DATABASE_USER","DATABASE_PASSWORD","POSTGRES_SUPERUSER_PASSWORD","JWT_SECRET","JWT_REFRESH_SECRET","API_KEY","SEED_ADMIN_NAME","SEED_ADMIN_EMAIL","SEED_ADMIN_PASSWORD")
 $backendLines = @()
 $template = Join-Path $BackendDir ".env.example"
 if (Test-Path $template) {
@@ -184,6 +186,7 @@ $backendLines += "DATABASE_PASSWORD=$dbPassword"
 $backendLines += "POSTGRES_SUPERUSER_PASSWORD=$superPassword"
 $backendLines += "JWT_SECRET=$jwtSecret"
 $backendLines += "JWT_REFRESH_SECRET=$jwtRefresh"
+$backendLines += "API_KEY=$apiKey"
 $backendLines += "SEED_ADMIN_NAME=$($values.Name) Administrator"
 $backendLines += "SEED_ADMIN_EMAIL=$($values.Email)"
 $backendLines += "SEED_ADMIN_PASSWORD=$($values.Password)"
@@ -198,7 +201,15 @@ Write-Host "  Configured apps\backend\.env" -ForegroundColor Green
 # --- frontend .env.local (first run only; existing files are never touched) --
 if (-not (Test-Path $FrontendEnv)) {
   $frontExample = Join-Path $FrontendDir ".env.example"
-  if (Test-Path $frontExample) { Copy-Item $frontExample $FrontendEnv; Write-Host "  Configured apps\frontend\.env.local" -ForegroundColor Green }
+  if (Test-Path $frontExample) {
+    Copy-Item $frontExample $FrontendEnv
+    # The portal sends the install API key on every call: the template only
+    # documents the empty slot, so stamp the generated key in.
+    $frontLines = @(Get-Content $FrontendEnv | Where-Object { $_ -notmatch "^\s*NEXT_PUBLIC_API_KEY\s*=" })
+    $frontLines += "NEXT_PUBLIC_API_KEY=$apiKey"
+    Set-Content -Path $FrontendEnv -Value $frontLines -Encoding UTF8
+    Write-Host "  Configured apps\frontend\.env.local" -ForegroundColor Green
+  }
 }
 
 # --- tell the human what was created ------------------------------------------
@@ -208,6 +219,7 @@ Write-Host ""
 Write-Host "  Database    : $dbName  (user: $dbUser)" -ForegroundColor DarkGray
 Write-Host "  DB password : $dbPassword  (stored in apps\backend\.env)" -ForegroundColor DarkGray
 Write-Host "  JWT secrets : random - stored in apps\backend\.env"
+Write-Host "  API key     : random - stored in apps\backend\.env + apps\frontend\.env.local"
 Write-Host "  Admin login : $($values.Email) / $($values.Password)" -ForegroundColor Cyan
 Write-Host ""
 exit 0

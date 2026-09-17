@@ -8,6 +8,7 @@ import { ConflictService } from "./conflicts/conflict.service";
 import { GroupScheduleService } from "./group-schedule/group-schedule.service";
 import { OccurrenceService } from "./occurrences/occurrence.service";
 import { WorkingHoursService } from "./working-hours/working-hours.service";
+import { CreateTimeSlotDto, UpdateTimeSlotDto, ReorderTimeSlotsDto } from "./dto/time-slot.dto";
 
 @Injectable()
 export class SchedulingService {
@@ -35,9 +36,9 @@ export class SchedulingService {
 
   // Time slots
   listTimeSlots(dayOfWeek?: number) { return this.timeSlots.list(dayOfWeek); }
-  createTimeSlot(dto: any, userId?: string) { return this.timeSlots.create(dto, userId); }
-  updateTimeSlot(id: string, dto: any, userId?: string) { return this.timeSlots.update(id, dto, userId); }
-  reorderTimeSlots(dto: { ids: string[] }, userId?: string) { return this.timeSlots.reorder(dto, userId); }
+  createTimeSlot(dto: CreateTimeSlotDto, userId?: string) { return this.timeSlots.create(dto, userId); }
+  updateTimeSlot(id: string, dto: UpdateTimeSlotDto, userId?: string) { return this.timeSlots.update(id, dto, userId); }
+  reorderTimeSlots(dto: ReorderTimeSlotsDto, userId?: string) { return this.timeSlots.reorder(dto, userId); }
   removeTimeSlot(id: string, userId?: string) { return this.timeSlots.remove(id, userId); }
 
   // Schedule entries

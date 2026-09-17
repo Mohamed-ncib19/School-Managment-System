@@ -232,6 +232,12 @@ export default function FinancialSettingsPage() {
               className="input w-full"
             />
           </Field>
+          <p className="text-xs text-text-secondary">
+            {t(
+              "financial.settings.liveRateNote",
+              "Les paies ouvertes suivent le taux en vigueur : changer ce pourcentage recalcule immédiatement les paies non clôturées (modèles pourcentage / hybride).",
+            )}
+          </p>
         </Section>
 
         <Section

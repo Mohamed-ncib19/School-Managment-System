@@ -4,6 +4,7 @@ import { promisify } from "util";
 import * as fs from "fs";
 import * as path from "path";
 import { AuditService } from "../audit/audit.service";
+import { parsePgUrl } from "../common/pg-url";
 
 const execFileP = promisify(execFile);
 
@@ -68,17 +69,15 @@ export class BackupService {
     if (!dbUrl) {
       throw new BadRequestException("DATABASE_URL n'est pas configurée");
     }
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
-    if (!match) {
+    // The old regex rejected the postgres:// scheme, required a port, broke
+    // on passwords containing '@' and never percent-decoded — the wizard
+    // generates random passwords, so that case is real. parsePgUrl (tested
+    // in common/__tests__/pg-url.spec.ts) handles all of it.
+    try {
+      return parsePgUrl(dbUrl);
+    } catch {
       throw new BadRequestException("DATABASE_URL n'est pas une chaîne de connexion PostgreSQL valide");
     }
-    return {
-      user: match[1],
-      password: match[2],
-      host: match[3],
-      port: parseInt(match[4], 10),
-      database: match[5].split("?")[0],
-    };
   }
 
   private async findBinary(name: string): Promise<string | null> {
@@ -168,7 +167,7 @@ export class BackupService {
     });
   }
 
-  async createBackup(version?: string): Promise<BackupResult> {
+  async createBackup(version?: string, actorUserId?: string | null): Promise<BackupResult> {
     const dbConfig = this.getDbConfig();
     const pgDump = await this.findBinary("pg_dump");
     if (!pgDump) {
@@ -218,6 +217,14 @@ export class BackupService {
       JSON.stringify({ version: safeVersion, createdBy: "system", createdAt: new Date().toISOString() }, null, 2),
     );
 
+    await this.audit.record({
+      action: "backup.created",
+      entityType: "backup",
+      entityLabel: filename,
+      actorId: actorUserId ?? null,
+      meta: { version: safeVersion, size: stat.size },
+    });
+
     return {
       success: true,
       message: `Sauvegarde créée : ${filename} (${Math.round(stat.size / 1024)} Ko)`,
@@ -232,7 +239,7 @@ export class BackupService {
     };
   }
 
-  async restoreBackup(backupId: string): Promise<RestoreResult> {
+  async restoreBackup(backupId: string, actorUserId?: string | null): Promise<RestoreResult> {
     const dumps = this.listDumpFiles();
     const dump = dumps.find((d) => d.name === backupId);
     if (!dump) {
@@ -248,7 +255,7 @@ export class BackupService {
 
     this.logger.log(`Restoring from backup '${backupId}'`);
 
-    const safetyResult = await this.createBackup("pre-restore-safety");
+    const safetyResult = await this.createBackup("pre-restore-safety", actorUserId);
     this.logger.log(`Safety backup created: ${safetyResult.backup.filename}`);
 
     const env = { ...process.env, PGPASSWORD: dbConfig.password };
@@ -271,6 +278,14 @@ export class BackupService {
     } catch (err: any) {
       throw new BadRequestException(`Échec de pg_restore : ${err.stderr || err.message || err}`);
     }
+
+    await this.audit.record({
+      action: "backup.restored",
+      entityType: "backup",
+      entityLabel: backupId,
+      actorId: actorUserId ?? null,
+      meta: { restored_from: backupId, safety_backup: safetyResult.backup.filename },
+    });
 
     return {
       success: true,

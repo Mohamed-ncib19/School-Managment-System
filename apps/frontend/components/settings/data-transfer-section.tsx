@@ -20,6 +20,8 @@ export default function DataTransferSection() {
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [phrase, setPhrase] = useState("");
+  const [pendingEnc, setPendingEnc] = useState<File | null>(null);
   const [fills, setFills] = useState<FillValues>({});
   const [included, setIncluded] = useState<Record<string, boolean>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -34,6 +36,8 @@ export default function DataTransferSection() {
   const reset = () => {
     setFile(null);
     setPreview(null);
+    setPhrase("");
+    setPendingEnc(null);
     setFills({});
     setIncluded({});
     setConfirmOpen(false);
@@ -46,19 +50,26 @@ export default function DataTransferSection() {
     if (!next) return;
     setError(null);
     setDone(null);
-    importPreview.mutate(next, {
-      onSuccess: (result) => {
-        setFile(next);
-        setPreview(result);
+    importPreview.mutate(
+      { file: next, phrase: phrase || undefined },
+      {
+        onSuccess: (result) => {
+          setFile(next);
+          setPreview(result);
+          setPendingEnc(null);
         setFills({});
         setIncluded(Object.fromEntries(result.tables.map((table) => [table.table, true])));
       },
-      onError: (err) => {
-        setFile(null);
-        setPreview(null);
-        setError(errorMessage(err));
+        onError: (err) => {
+          setFile(null);
+          setPreview(null);
+          setError(errorMessage(err));
+          // Encrypted Dropbox copy without its phrase yet: keep it for retry
+          // once the phrase is typed below instead of asking for the file again.
+          setPendingEnc(next.name.toLowerCase().endsWith(".enc") ? next : null);
+        },
       },
-    });
+    );
   };
 
   const blockers = useMemo(() => {
@@ -99,11 +110,12 @@ export default function DataTransferSection() {
       }
     }
     dataImport.mutate(
-      { file, fills: payload },
+      { file, fills: payload, phrase: phrase || undefined },
       {
         onSuccess: (result) => {
           setConfirmOpen(false);
           setConfirmKeyword("");
+          setPhrase("");
           setDone(result.message);
         },
         onError: (err) => {
@@ -174,7 +186,7 @@ export default function DataTransferSection() {
               <h4 className="text-sm font-semibold text-text-primary">{t("settings.importTitle", "Importer des données")}</h4>
             </div>
             <p className="text-xs text-text-secondary mb-4">
-              {t("settings.importDesc", "Importe un fichier d'export, quelle que soit la version. Les tables présentes dans le fichier remplacent les données actuelles. Les colonnes absentes sont listées dans l'aperçu pour être remplies manuellement.")}
+              {t("settings.importDesc", "Importe un fichier d'export, quelle que soit la version. Les tables présentes dans le fichier remplacent les données actuelles. Les colonnes absentes sont listées dans l'aperçu pour être remplies manuellement. Les copies chiffrées de Dropbox (fichiers .enc, une par sauvegarde) se restaurent ici aussi : déposez le fichier et saisissez la phrase de récupération.")}
             </p>
             {!preview ? (
               <div
@@ -218,7 +230,7 @@ export default function DataTransferSection() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".json,application/json"
+                  accept=".json,application/json,.enc"
                   className="hidden"
                   onChange={(e) => {
                     onFile(e.target.files?.[0] ?? null);
@@ -228,7 +240,7 @@ export default function DataTransferSection() {
                 <div className={cn("flex h-11 w-11 items-center justify-center rounded-full transition-all duration-200", isDragging ? "bg-primary/15 text-primary scale-110" : "bg-neutral-soft text-text-secondary group-hover:text-primary group-hover:scale-105")}>
                   {importPreview.isPending ? <RefreshCw size={20} className="animate-spin" /> : <Upload size={20} aria-hidden="true" />}
                 </div>
-                <p className="text-sm font-semibold text-text-primary">{t("settings.importDropTitle", "Déposez un fichier .json ici")}</p>
+                <p className="text-sm font-semibold text-text-primary">{t("settings.importDropTitle", "Déposez un fichier .json ou .enc ici")}</p>
                 <p className="text-xs text-text-secondary">{t("settings.importDropSubtitle", "ou cliquez pour parcourir — aperçu avant toute modification")}</p>
               </div>
             ) : (
@@ -244,6 +256,36 @@ export default function DataTransferSection() {
                   <Trash2 size={12} />
                   {t("fields.cancel")}
                 </button>
+              </div>
+            )}
+            {(file?.name.toLowerCase().endsWith(".enc") || pendingEnc) && (
+              <div className="mt-3 rounded-btn border border-border p-3">
+                <label className="block text-[11px] font-medium text-text-secondary mb-1">
+                  {t("settings.recoveryPhraseLabel", "Phrase de récupération (copie Dropbox chiffrée)")}
+                </label>
+                <input
+                  type="password"
+                  value={phrase}
+                  onChange={(e) => setPhrase(e.target.value)}
+                  placeholder={t("settings.recoveryPhrasePlaceholder", "Les 12 mots, dans l'ordre")}
+                  autoComplete="off"
+                  className="input w-full text-xs"
+                />
+                {pendingEnc && !preview && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const retry = pendingEnc;
+                      setPendingEnc(null);
+                      onFile(retry);
+                    }}
+                    disabled={!phrase.trim() || importPreview.isPending}
+                    className="btn btn-primary w-full text-xs min-h-[36px] mt-2 disabled:opacity-50"
+                  >
+                    {importPreview.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
+                    {t("settings.decryptPreview", "Déchiffrer et prévisualiser")}
+                  </button>
+                )}
               </div>
             )}
           </div>

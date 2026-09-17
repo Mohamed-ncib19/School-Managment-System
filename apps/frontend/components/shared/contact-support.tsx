@@ -8,16 +8,16 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { cn } from "@/lib/utils/format";
 
 /** Fallback contacts used when a school did not configure their own. */
-const FALLBACK_EMAIL = "mohamedncib900@gmail.com";
-const FALLBACK_PHONE_DISPLAY = "+216 55 518 492";
-const FALLBACK_PHONE_LINK = "21655518492";
+export const FALLBACK_EMAIL = "mohamedncib900@gmail.com";
+export const FALLBACK_PHONE_DISPLAY = "+216 55 518 492";
+export const FALLBACK_PHONE_LINK = "21655518492";
 
 type ReportType = "technique" | "payment" | "attendance" | "other";
 
 const REPORT_TYPES: ReportType[] = ["technique", "payment", "attendance", "other"];
 
-/** Digits only, for wa.me / tel: links. */
-function digitsOnly(value: string): string {
+/** Digits only, for wa.me / tel: links. Shared with the settings preview. */
+export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 

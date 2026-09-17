@@ -89,6 +89,9 @@ export class CloudBackupController {
         help: f.help,
         required: f.required ?? false,
         secret: f.secret ?? false,
+        // Developer credential (own OAuth client): the UI hides these behind
+        // a toggle so a school only ever sees the connect button.
+        advanced: f.advanced ?? false,
         options: f.options,
       })),
     }));
@@ -421,42 +424,64 @@ export class CloudBackupController {
     @Res() res: Response,
   ) {
     const pending = state ? this.pendingOAuth.get(state) : undefined;
-    this.pendingOAuth.delete(state ?? "");
-    const appOrigin = pending ? new URL(pending.redirectUri).origin : "null";
-    const reply = (payload: Record<string, unknown>) =>
+    // No delete here: the code is exchanged by POST oauth/exchange (the popup
+    // posts it back) or pasted by hand — exchange consumes the handshake.
+    // Stale entries are swept when the next consent URL is issued.
+    const appOrigin = this.safeOrigin(pending?.redirectUri);
+    if (error || !pending || !code || pending.provider !== "dropbox") {
       res
         .set("Content-Type", "text/html; charset=utf-8")
-        .send(
-          `<script>if(window.opener){window.opener.postMessage(${JSON.stringify(payload)},${JSON.stringify(
-            appOrigin,
-          )});}setTimeout(()=>window.close(),500);</script>`,
-        );
-
-    if (error || !pending || !code || pending.provider !== "dropbox") {
-      reply({ type: "iq-dropbox-oauth", ok: false, error: "denied" });
+        .send(this.oauthResultPage("iq-dropbox-oauth", "Dropbox", appOrigin, { ok: false }));
       return;
     }
+    res
+      .set("Content-Type", "text/html; charset=utf-8")
+      .send(this.oauthResultPage("iq-dropbox-oauth", "Dropbox", appOrigin, { ok: true, code, state: state! }));
+  }
+
+  /**
+   * The consent landing page, for popups AND for humans.
+   *
+   * Opened as a popup it hands the code to the app via postMessage and
+   * closes itself. Opened in a tab (the copy-code flow) there is no opener —
+   * the old reply was a blank page — so the code is shown big, ready to
+   * copy back into the app. Either way the code is single-use and bound to
+   * its handshake state; the exchange endpoint enforces both.
+   */
+  private safeOrigin(redirectUri: string | undefined): string {
     try {
-      const auth = Buffer.from(`${pending.clientId}:${pending.clientSecret}`).toString("base64");
-      const tokenRes = await fetch("https://api.dropbox.com/oauth2/token", {
-        method: "POST",
-        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          code,
-          redirect_uri: pending.redirectUri,
-        }),
-      });
-      const text = await tokenRes.text();
-      if (!tokenRes.ok) throw new Error(`Dropbox a refusé l'autorisation (${tokenRes.status}) : ${text}`);
-      const tokens = JSON.parse(text) as { refresh_token?: string };
-      if (!tokens.refresh_token) {
-        throw new Error("Dropbox n'a pas renvoyé de jeton d'actualisation — réessayez l'autorisation.");
-      }
-      reply({ type: "iq-dropbox-oauth", ok: true, refreshToken: tokens.refresh_token });
-    } catch (err) {
-      reply({ type: "iq-dropbox-oauth", ok: false, error: redactLogError(err) });
+      return redirectUri ? new URL(redirectUri).origin : "null";
+    } catch {
+      return "null";
     }
+  }
+
+  private escapeHtml(value: string): string {
+    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  private oauthResultPage(
+    messageType: string,
+    providerLabel: string,
+    appOrigin: string,
+    result: { ok: true; code: string; state: string } | { ok: false },
+  ): string {
+    const payload = result.ok
+      ? { type: messageType, ok: true, code: result.code, state: result.state }
+      : { type: messageType, ok: false, error: "denied" };
+    const body = result.ok
+      ? `<p>Compte ${providerLabel} autorisé. Recopiez ce code dans l'application :</p>
+         <input readonly value="${this.escapeHtml(result.code)}" onfocus="this.select()" />
+         <p class="hint">Ne partagez pas ce code : il n'est valable que quelques minutes, pour cette connexion uniquement.</p>`
+      : `<p class="error">Autorisation refusée ou lien invalide. Fermez cette page et recommencez depuis l'application.</p>`;
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Autorisation ${providerLabel}</title>
+      <style>body{font-family:Segoe UI,system-ui,sans-serif;background:#f4f6fb;display:flex;min-height:100vh;margin:0;align-items:center;justify-content:center}
+      .card{background:#fff;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.12);padding:32px;max-width:440px;text-align:center}
+      input{width:100%;font-family:Consolas,monospace;font-size:13px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;margin:12px 0;box-sizing:border-box}
+      .hint{font-size:12px;color:#64748b}.error{color:#b91c1c;font-weight:600}</style></head>
+      <body><div class="card">${body}</div>
+      <script>if(window.opener){window.opener.postMessage(${JSON.stringify(payload)},${JSON.stringify(appOrigin)});setTimeout(function(){window.close()},500);}</script>
+      </body></html>`;
   }
 
   // --- Google Drive --------------------------------------------------------
@@ -540,34 +565,95 @@ export class CloudBackupController {
     @Res() res: Response,
   ) {
     const pending = state ? this.pendingOAuth.get(state) : undefined;
-    this.pendingOAuth.delete(state ?? "");
-    // The popup was opened by the SPA at this origin; the refresh token goes
-    // there and nowhere else. The wildcard `"*"` this used to pass handed a
-    // long-lived Google credential to any window listening.
-    const appOrigin = pending ? new URL(pending.redirectUri).origin : "null";
-    const reply = (payload: Record<string, unknown>) =>
+    // Same no-delete rule as Dropbox above: exchange consumes the handshake.
+    // The popup origin check stays strict: the code goes to the app that
+    // started this handshake and nowhere else.
+    const appOrigin = this.safeOrigin(pending?.redirectUri);
+    if (error || !pending || !code || pending.provider !== "gdrive") {
       res
         .set("Content-Type", "text/html; charset=utf-8")
-        .send(
-          `<script>if(window.opener){window.opener.postMessage(${JSON.stringify(payload)},${JSON.stringify(
-            appOrigin,
-          )});}setTimeout(()=>window.close(),500);</script>`,
-        );
-
-    if (error || !pending || !code || pending.provider !== "gdrive") {
-      reply({ type: "iq-gdrive-oauth", ok: false, error: "denied" });
+        .send(this.oauthResultPage("iq-gdrive-oauth", "Google", appOrigin, { ok: false }));
       return;
     }
+    res
+      .set("Content-Type", "text/html; charset=utf-8")
+      .send(this.oauthResultPage("iq-gdrive-oauth", "Google", appOrigin, { ok: true, code, state: state! }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Manual code exchange — connecting from another computer on the LAN.
+  //
+  // The popup flow only works sitting at the server (loopback redirect). From
+  // any other machine the administrator instead opens the SAME consent URL on
+  // any device, copies the `code` out of the address bar after the provider
+  // redirects (the redirect target never needs to load), and pastes it here.
+  // The exchange below runs server-side against the pending handshake, so no
+  // secret ever crosses the browser.
+  // ---------------------------------------------------------------------------
+
+  @Post("oauth/exchange")
+  @UseGuards(JwtAuthGuard)
+  async oauthExchange(@Body() body: { state?: string; code?: string }) {
+    return this.exchangeOAuthCode(body);
+  }
+
+  /** The same exchange from the login screen, for a restore on new hardware. */
+  @Post("restore/oauth/exchange")
+  @UseGuards(RestoreThrottleGuard)
+  async restoreOAuthExchange(@Body() body: { state?: string; code?: string }) {
+    const state = await this.db.client.query.cloudState.findFirst({
+      where: eq(cloudState.singleton, "global"),
+    });
+    if (state?.setup_complete) {
+      throw new BadRequestException(
+        "Cette installation a déjà une sauvegarde active — la connexion de restauration est réservée à un poste neuf.",
+      );
+    }
+    return this.exchangeOAuthCode(body);
+  }
+
+  private async exchangeOAuthCode(body: {
+    state?: string;
+    code?: string;
+  }): Promise<{ ok: true; refreshToken: string }> {
+    const pending = body.state ? this.pendingOAuth.get(body.state) : undefined;
+    this.pendingOAuth.delete(body.state ?? "");
+    if (!pending || !body.code?.trim()) {
+      throw new BadRequestException("Lien ou code invalide — recommencez la connexion.");
+    }
+    if (Date.now() - pending.createdAt > 10 * 60_000) {
+      throw new BadRequestException("Le lien a expiré (10 minutes) — recommencez la connexion.");
+    }
     try {
-      const { google } = await import("googleapis");
-      const oauth2 = new google.auth.OAuth2(pending.clientId, pending.clientSecret, pending.redirectUri);
-      const { tokens } = await oauth2.getToken(code);
-      if (!tokens.refresh_token) {
-        throw new Error("Aucun refresh token renvoyé — autorisez le compte avec le mode hors ligne.");
+      if (pending.provider === "gdrive") {
+        const { google } = await import("googleapis");
+        const oauth2 = new google.auth.OAuth2(pending.clientId, pending.clientSecret, pending.redirectUri);
+        const { tokens } = await oauth2.getToken(body.code.trim());
+        if (!tokens.refresh_token) {
+          throw new Error("Aucun refresh token renvoyé — autorisez le compte avec le mode hors ligne.");
+        }
+        return { ok: true as const, refreshToken: tokens.refresh_token };
       }
-      reply({ type: "iq-gdrive-oauth", ok: true, refreshToken: tokens.refresh_token });
+      const auth = Buffer.from(`${pending.clientId}:${pending.clientSecret}`).toString("base64");
+      const tokenRes = await fetch("https://api.dropbox.com/oauth2/token", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code: body.code.trim(),
+          redirect_uri: pending.redirectUri,
+        }),
+      });
+      const text = await tokenRes.text();
+      if (!tokenRes.ok) throw new Error(`Dropbox a refusé le code (${tokenRes.status}) : ${text}`);
+      const tokens = JSON.parse(text) as { refresh_token?: string };
+      if (!tokens.refresh_token) {
+        throw new Error("Dropbox n'a pas renvoyé de jeton d'actualisation.");
+      }
+      return { ok: true as const, refreshToken: tokens.refresh_token };
     } catch (err) {
-      reply({ type: "iq-gdrive-oauth", ok: false, error: redactLogError(err) });
+      if (err instanceof BadRequestException) throw err;
+      throw new BadRequestException(redactLogError(err));
     }
   }
 

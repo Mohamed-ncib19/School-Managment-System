@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
+import { ApiKeyGuard } from "./auth/guards/api-key.guard";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
 import { FieldsModule } from "./fields/fields.module";
@@ -50,6 +52,12 @@ import { HealthModule } from "./health/health.module";
     CloudBackupModule,
     HealthModule,
   ],
-  providers: [MachineBindingService],
+  providers: [
+    MachineBindingService,
+    // Runs before every route guard: no key, no handler — except the key-free
+    // routes (health, login trio, update check, login branding, OAuth
+    // callbacks) declared in the guard itself.
+    { provide: APP_GUARD, useClass: ApiKeyGuard },
+  ],
 })
 export class AppModule {}

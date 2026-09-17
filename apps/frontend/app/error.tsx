@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { WifiOff, RefreshCw, LayoutDashboard } from "lucide-react";
+import { SafeText } from "@/components/shared/error-boundary";
 
 /**
  * Catches render/network errors on any page under the root layout and replaces
@@ -29,11 +30,13 @@ export default function ErrorPage({
           <WifiOff size={28} className="text-text-secondary" aria-hidden="true" />
         </div>
         <h1 className="text-xl font-bold text-text-primary">
-          Quelque chose s&apos;est mal passé
+          <SafeText k="errors.pageTitle" fallback="Quelque chose s'est mal passé" />
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-          La page n&apos;a pas pu être affichée. Vos données sont en sécurité —
-          rechargez la page pour réessayer.
+          <SafeText
+            k="errors.pageDesc"
+            fallback="La page n'a pas pu être affichée. Vos données sont en sécurité — rechargez la page pour réessayer."
+          />
         </p>
 
         <div className="mt-8 flex flex-col gap-3">
@@ -42,11 +45,11 @@ export default function ErrorPage({
             className="btn btn-primary w-full"
           >
             <RefreshCw size={16} aria-hidden="true" />
-            Recharger la page
+            <SafeText k="errors.retryPage" fallback="Recharger la page" />
           </button>
           <Link href="/dashboard" className="btn btn-secondary w-full">
             <LayoutDashboard size={16} aria-hidden="true" />
-            Retour au tableau de bord
+            <SafeText k="errors.backToDashboard" fallback="Retour au tableau de bord" />
           </Link>
         </div>
       </div>

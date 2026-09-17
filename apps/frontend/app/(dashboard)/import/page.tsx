@@ -352,6 +352,12 @@ function UploadStep({
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-h4 font-bold text-text-primary">{t("import.step2")}</h2>
+            <p className="mt-1 text-small text-text-secondary">
+              {t(
+                "import.largeFileNote",
+                "Les gros fichiers (plus de 2 000 lignes) peuvent prendre un moment : l'import s'exécute en une seule opération pour ne jamais laisser un fichier à moitié importé.",
+              )}
+            </p>
 
             <div
               onDragOver={(e) => {

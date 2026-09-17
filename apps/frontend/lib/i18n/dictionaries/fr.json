@@ -275,6 +275,9 @@
   "settings": {
     "title": "Paramètres",
     "subtitle": "Gérez votre profil et les préférences système",
+    "navGroupAccount": "Compte",
+    "navGroupCustom": "Personnalisation",
+    "navGroupSystemData": "Système et données",
     "profileTitle": "Profil",
     "profileDescription": "Met à jour tes informations personnelles",
     "securityTitle": "Sécurité",
@@ -297,6 +300,10 @@
     "supportWhatsappLabel": "Numéro WhatsApp",
     "supportWhatsappPlaceholder": "21600000000",
     "supportHint": "Un champ vide garde le canal par défaut ou le masque s'il ne reste qu'un canal. Le message envoyé contient toujours le nom de l'école, la date et le type de problème.",
+    "supportBanner": "Les rapports envoyés depuis le bouton « Signaler un problème » de la barre latérale arrivent à ces coordonnées. Un champ vide garde le contact du développeur.",
+    "supportDestinationTitle": "Destination actuelle des rapports",
+    "supportDefaultBadge": "Développeur",
+    "supportCustomBadge": "École",
     "featuresTitle": "Fonctionnalités",
     "featuresDescription": "Choisissez les modules utilisés par cette école. Les modules masqués disparaissent de la barre latérale.",
     "systemSaved": "Paramètres système enregistrés",
@@ -312,6 +319,7 @@
     "features": {
       "groupAcademics": "Académique",
       "groupFinancial": "Gestion financière",
+      "groupSchedule": "Emploi du temps",
       "groupAdministration": "Administration",
       "fields": {
         "title": "Spécialités",
@@ -365,6 +373,24 @@
         "settings": {
           "title": "Paramètres financiers",
           "desc": "Devise, répartition des revenus et numérotation des reçus"
+        }
+      },
+      "schedule": {
+        "calendar": {
+          "title": "Calendrier",
+          "desc": "Vue calendrier des séances et disponibilités"
+        },
+        "entries": {
+          "title": "Séances",
+          "desc": "Séances d'emploi du temps par groupe"
+        },
+        "classrooms": {
+          "title": "Salles de classe",
+          "desc": "Salles et disponibilités pour les séances"
+        },
+        "workingHours": {
+          "title": "Heures d'ouverture",
+          "desc": "Fenêtres d'ouverture de l'école par jour"
         }
       },
       "import": {
@@ -1521,10 +1547,19 @@
     "hardDeleted": "Supprimé définitivement",
     "hardDeletedDetail": "{count} élément(s) supprimé(s) avec leur historique."
   },
-"notFound": {
+  "notFound": {
     "title": "Page introuvable",
     "description": "La page que vous recherchez n'existe pas ou a ActAc dAcplacAce. VAcrifiez l'adresse ou revenez au tableau de bord.",
     "goBack": "Retour",
+    "backToDashboard": "Retour au tableau de bord"
+  },
+  "errors": {
+    "sectionTitle": "Cette section n'a pas pu être affichée",
+    "sectionDesc": "Le reste de l'application fonctionne normalement. Recharger cette section la rétablit généralement.",
+    "retrySection": "Recharger la section",
+    "pageTitle": "Quelque chose s'est mal passé",
+    "pageDesc": "La page n'a pas pu être affichée. Vos données sont en sécurité — rechargez la page pour réessayer.",
+    "retryPage": "Recharger la page",
     "backToDashboard": "Retour au tableau de bord"
   },
   "cloudSafeSave": {
@@ -1552,7 +1587,21 @@
     "dropboxConnected": "Compte Dropbox connecté",
     "googleConnected": "Compte Google connecté",
     "googleChangeAccount": "Changer de compte",
-    "googleLimitation": "Google Drive : la connexion doit être ouverte depuis le serveur. Depuis un autre poste du réseau, le code d'autorisation est envoyé à la mauvaise machine et la connexion échoue silencieusement. Utilisez Dropbox pour une configuration à distance.",
+    "googleLimitation": "Astuce : depuis un autre poste que le serveur, choisissez « Sur un autre poste ? » ci-dessous — ouvrez le lien sur n'importe quel appareil et recopiez le code.",
+    "otherComputer": "Sur un autre poste ? Connectez sans être devant le serveur",
+    "manualOAuthHelp": "1. Ouvrez le lien sur n'importe quel appareil et acceptez. 2. Recopiez ici le code affiché sur la page (ou dans la barre d'adresse).",
+    "consentLink": "Lien d'autorisation",
+    "copyLink": "Copier",
+    "copied": "Copié",
+    "copyFailed": "Copie impossible — sélectionnez le lien manuellement.",
+    "pasteCode": "Collez le code ici",
+    "validateCode": "Valider",
+    "verifyingAuto": "Vérification en cours — chaque destination est testée automatiquement…",
+    "missingIdOrPhrase": "L'identifiant d'école ou la phrase manque — retournez à l'étape précédente et vérifiez les deux champs.",
+    "alreadyLinked": "{n} destination(s) déjà liée(s) — Continuer, ou ajoutez-en une autre ci-dessous.",
+    "driverAlreadyLinked": "Cette destination est déjà liée — Continuer ci-dessous.",
+    "ownClient": "J'ai mon propre client OAuth (optionnel)",
+    "hideOwnClient": "Masquer mes propres identifiants",
     "step2Title": "Identifiant d'école et phrase de récupération",
     "step2Subtitle": "L'identifiant d'école sert d'espace de stockage. La phrase est la seule clé des données chiffrées : elle n'est jamais stockée sur cette machine ni sur le cloud.",
     "schoolId": "Identifiant d'école",

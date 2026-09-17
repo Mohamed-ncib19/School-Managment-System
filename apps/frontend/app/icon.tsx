@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 // Server-side fetches need the absolute backend URL: NEXT_PUBLIC_API_URL is
 // the browser-facing relative /api (proxied by next.config.js).
 const API_BASE = process.env.BACKEND_API_URL ?? "http://127.0.0.1:3001/api";
+// Server-to-server calls carry the install key too (ApiKeyGuard).
+const API_HEADERS = { "x-api-key": process.env.NEXT_PUBLIC_API_KEY ?? "" };
 
 /**
  * The browser-tab icon. The uploaded academy logo wins when one is set; the
@@ -18,7 +20,7 @@ const API_BASE = process.env.BACKEND_API_URL ?? "http://127.0.0.1:3001/api";
  */
 async function schoolName(): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/system-settings`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/system-settings`, { cache: "no-store", headers: API_HEADERS });
     if (!res.ok) return null;
     const body = await res.json();
     const name = body?.data?.system_name;
@@ -30,7 +32,7 @@ async function schoolName(): Promise<string | null> {
 
 export default async function Icon(): Promise<Response> {
   try {
-    const res = await fetch(`${API_BASE}/financial/settings/logo`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/financial/settings/logo`, { cache: "no-store", headers: API_HEADERS });
     const type = res.headers.get("content-type") ?? "";
     if (res.ok && type.startsWith("image/")) {
       return new Response(await res.arrayBuffer(), {

@@ -112,15 +112,47 @@ export const DRIVER_DEFINITIONS: DriverDefinition[] = [
       },
     ],
     setupHelp:
-      "C'est l'option la plus simple et elle protège déjà contre la panne la plus fréquente — le disque du poste qui lâche. " +
-      "Elle ne protège pas contre un incendie ou un vol, puisque le disque est dans le même bâtiment : ajoutez ensuite une " +
-      "destination en ligne. Les deux fonctionnent en parallèle.",
+      "Le plus simple contre la panne la plus fréquente (le disque du poste). " +
+      "Ajoutez ensuite Google Drive : le cloud protège aussi contre le vol et l'incendie.",
     create: (config) => new FolderDriver(config as FolderConfig),
+  },
+  {
+    id: "gdrive",
+    displayName: "Google Drive",
+    description: "Votre compte Google suffit — 15 Go gratuits, un dossier dédié est créé automatiquement.",
+    recommended: true,
+    freeTier: "15 Go gratuits",
+    requiresOAuth: true,
+    // setupHelp is resolved per request by driverSetupHelp(); it depends on
+    // env that is not reliably loaded when this module is first evaluated.
+    fields: [
+      // These two are developer credentials, not customer input. They are
+      // filtered out of the form whenever the app ships its own OAuth client
+      // (see driverFields below), which is the normal case — an administrator
+      // should only ever see the "Se connecter avec Google" button.
+      {
+        name: "clientId",
+        type: "text",
+        label: "Client ID OAuth (Console Google Cloud)",
+        required: true,
+        advanced: true,
+        help: "Uniquement si vous utilisez votre propre client OAuth : Google Cloud Console → Identifiants → ID client OAuth → Application de bureau.",
+      },
+      { name: "clientSecret", type: "password", label: "Client Secret", required: true, secret: true, advanced: true },
+      {
+        name: "refreshToken",
+        type: "oauth",
+        label: "Compte Google",
+        required: true,
+        help: "Connectez-vous via le bouton, ou via « Sur un autre poste ? » avec le code.",
+      },
+    ],
+    create: (config) => new GDriveDriver(withAppGoogleOAuth(config as Record<string, string>) as unknown as GDriveConfig),
   },
   {
     id: "dropbox",
     displayName: "Dropbox",
-    description: "Connectez votre compte Dropbox en un clic. Rien d'autre à saisir.",
+    description: "Votre compte suffit — 2 Go gratuits, connexion en un clic, sans validation.",
     recommended: true,
     freeTier: "2 Go gratuits",
     requiresOAuth: true,
@@ -131,7 +163,7 @@ export const DRIVER_DEFINITIONS: DriverDefinition[] = [
         help: "Uniquement si vous utilisez votre propre application Dropbox." },
       { name: "appSecret", type: "password", label: "App secret", required: true, secret: true, advanced: true },
       { name: "refreshToken", type: "oauth", label: "Compte Dropbox", required: true,
-        help: "Cliquez pour vous connecter à votre compte Dropbox et autoriser la sauvegarde." },
+        help: "Connectez-vous via le bouton, ou via « Sur un autre poste ? » avec le code." },
     ],
     create: (config) =>
       new DropboxDriver(withAppDropbox(config as Record<string, string>) as unknown as DropboxConfig),
@@ -172,39 +204,6 @@ export const DRIVER_DEFINITIONS: DriverDefinition[] = [
       { name: "folder", type: "folder", label: "Dossier distant", placeholder: "/Sauvegardes", required: true, help: "Un dossier dans votre stockage, créé automatiquement si absent." },
     ],
     create: (config) => new WebDavDriver(config as WebDavConfig),
-  },
-  {
-    id: "gdrive",
-    displayName: "Google Drive",
-    description: "Connectez votre compte Google en un clic. Un dossier dédié est créé automatiquement.",
-    recommended: true,
-    freeTier: "15 Go gratuits",
-    requiresOAuth: true,
-    // setupHelp is resolved per request by driverSetupHelp(); it depends on
-    // env that is not reliably loaded when this module is first evaluated.
-    fields: [
-      // These two are developer credentials, not customer input. They are
-      // filtered out of the form whenever the app ships its own OAuth client
-      // (see driverFields below), which is the normal case — an administrator
-      // should only ever see the "Se connecter avec Google" button.
-      {
-        name: "clientId",
-        type: "text",
-        label: "Client ID OAuth (Console Google Cloud)",
-        required: true,
-        advanced: true,
-        help: "Uniquement si vous utilisez votre propre client OAuth : Google Cloud Console → Identifiants → ID client OAuth → Application de bureau.",
-      },
-      { name: "clientSecret", type: "password", label: "Client Secret", required: true, secret: true, advanced: true },
-      {
-        name: "refreshToken",
-        type: "oauth",
-        label: "Compte Google",
-        required: true,
-        help: "Cliquez pour vous connecter à votre compte Google et autoriser la sauvegarde.",
-      },
-    ],
-    create: (config) => new GDriveDriver(withAppGoogleOAuth(config as Record<string, string>) as unknown as GDriveConfig),
   },
 ];
 
@@ -255,11 +254,8 @@ export function driverSetupHelp(def: DriverDefinition): string | null {
 function googleSetupHelp(): string {
   if (hasAppGoogleOAuth()) {
     return (
-      "Cliquez sur « Se connecter avec Google » et choisissez le compte à utiliser. " +
-      "L'application ne voit que les fichiers qu'elle a elle-même créés dans votre Drive.\n\n" +
-      "Note : la connexion Google doit se faire depuis le poste où le logiciel est installé " +
-      "(adresse localhost). Depuis un autre ordinateur du réseau, Google refuse l'autorisation — " +
-      "utilisez Backblaze B2 ou un disque externe dans ce cas."
+      "Cliquez sur « Se connecter avec Google » et choisissez le compte. " +
+      "L'application ne voit que ses propres fichiers."
     );
   }
   return (

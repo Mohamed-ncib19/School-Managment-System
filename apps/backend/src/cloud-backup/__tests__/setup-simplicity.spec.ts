@@ -85,16 +85,15 @@ describe("the picker offers free options first", () => {
     delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
     expect(promoted()).toEqual(["folder"]);
 
-    // Dropbox is the cloud this product ships credentials for: one form to
-    // register, no review, and no loopback restriction. It joins the folder
-    // as soon as they are set.
+    // Dropbox joins the folder as soon as its app credentials are set.
     process.env.DROPBOX_APP_KEY = "app-key";
     process.env.DROPBOX_APP_SECRET = "app-secret";
     expect(promoted()).toEqual(["dropbox", "folder"]);
 
-    // Drive is promoted only for a self-hoster who registered their own
-    // client — and even then it can only be connected from the server, which
-    // is why it is not the recommendation.
+    // Drive joins too once credentials exist (publisher or self-hosted) — it
+    // is offered after Dropbox in the UI: same one-click, but Google gates
+    // unreviewed apps behind test users. The sorted expectation below is
+    // alphabetical.
     process.env.GOOGLE_OAUTH_CLIENT_ID = "id.apps.googleusercontent.com";
     process.env.GOOGLE_OAUTH_CLIENT_SECRET = "client-secret";
     expect(promoted()).toEqual(["dropbox", "folder", "gdrive"]);

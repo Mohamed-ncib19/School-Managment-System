@@ -42,9 +42,8 @@ interface Cached {
  * so the "installed version" IS the local HEAD commit and "latest" means the
  * upstream repository on GitHub is ahead. The repo and owner are discovered from
  * the install's own git config — nothing is hard-coded — and the tracked branch
- * is `UPDATE_BRANCH` (default: the install's current branch, then "main"). Each
- * school install gets the same `UPDATE_BRANCH=selfhosted` when the school rollout
- * follows a dedicated release branch. GITHUB_TOKEN is required whenever the
+ * is `UPDATE_BRANCH` (default `selfhosted`). Every school install pins the same
+ * release branch. GITHUB_TOKEN is required whenever the
  * release repository is private.
  *
  * Public repos work without a token (subject to GitHub's unauthenticated rate
@@ -125,6 +124,14 @@ export class UpdatesService {
     const script = isWindows
       ? "installer\\engine\\do-update.ps1"
       : "installer/macos/scripts/update.sh";
+
+    if (!existsSync(join(root, script))) {
+      // Docker images exclude installer/ (.dockerignore), so there is no
+      // engine to spawn in-container — fail loudly instead of spawning a
+      // shell on a missing file.
+      this.logger.warn(`Update engine not found in this install: ${script}`);
+      return { ok: false, started: false };
+    }
 
     try {
       if (isWindows) {

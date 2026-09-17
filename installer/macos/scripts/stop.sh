@@ -66,8 +66,8 @@ find_pids() {
     # macOS / Linux with lsof
     pids=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
   elif command -v ss &>/dev/null; then
-    # Linux with ss
-    pids=$(ss -tlnp "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
+    # Linux with ss (sed, not grep -oP: macOS grep has no -P)
+    pids=$(ss -tlnp "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' || true)
   elif command -v netstat &>/dev/null; then
     # Fallback
     pids=$(netstat -tlnp 2>/dev/null | grep ":$port " | awk '{print $NF}' | cut -d/ -f1 || true)

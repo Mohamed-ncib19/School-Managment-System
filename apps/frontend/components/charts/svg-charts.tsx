@@ -94,10 +94,10 @@ export function BarChartSvg({
   return (
     <div ref={ref} style={{ height }} className="relative w-full select-none" role="img" aria-label={ariaLabel}>
       <svg width={width} height={height} aria-hidden="true">
-        {yTicks.map((tick) => {
+        {yTicks.map((tick, i) => {
           const y = toY(tick);
           return (
-            <g key={tick}>
+            <g key={i}>
               <line
                 x1={margin.left}
                 x2={width - margin.right}

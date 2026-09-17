@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Trash2, Clock, Save } from "lucide-react";
 import { useWorkingHours, useWorkingHoursBounds, useUpsertWorkingHours, useWorkingHoursEmpty } from "@/hooks/use-scheduling";
+import { hhmm } from "@/lib/utils/scheduling";
 import type { WorkingHourWindow } from "@/lib/api/scheduling.api";
 import { PageLoader } from "@/components/shared/skeletons";
 import { FormButton } from "@/components/forms/form-helpers";
@@ -23,7 +24,7 @@ function toDayMap(rows: WorkingHourWindow[] | undefined): DayWindows {
     // flattens them into per-day windows so the grid stays predictable.
     const target = row.day_of_week === null ? [0, 1, 2, 3, 4, 5, 6] : [row.day_of_week];
     for (const day of target) {
-      if (day >= 0 && day <= 6) out[day].push({ start_time: row.start_time, end_time: row.end_time });
+      if (day >= 0 && day <= 6) out[day].push({ start_time: hhmm(row.start_time), end_time: hhmm(row.end_time) });
     }
   }
   return out;
@@ -39,8 +40,8 @@ export default function WorkingHoursPage() {
   const [error, setError] = useState("");
 
   const windows = draft ?? toDayMap(rows);
-  const minTime = bounds?.min ?? "08:00";
-  const maxTime = bounds?.max ?? "18:00";
+  const minTime = bounds?.min ? hhmm(bounds.min) : "08:00";
+  const maxTime = bounds?.max ? hhmm(bounds.max) : "18:00";
 
   const setWindowTime = (day: number, index: number, field: "start_time" | "end_time", value: string) => {
     setDraft((d) => {
@@ -79,7 +80,7 @@ export default function WorkingHoursPage() {
           setError(t("workingHours.invalidWindow").replace("{day}", DAY_NAMES[day]));
           return;
         }
-        flat.push({ day_of_week: day, start_time: w.start_time, end_time: w.end_time });
+        flat.push({ day_of_week: day, start_time: hhmm(w.start_time), end_time: hhmm(w.end_time) });
       }
     }
     upsert.mutate(flat, {

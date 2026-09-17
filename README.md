@@ -3,6 +3,23 @@
 Admin portal for managing the academic hierarchy (Field → Professor → Level → Group → Student)
 and monthly cash tuition payments.
 
+## Download & install
+
+**Windows (recommended):** download `SystemeGestionScolaire-Setup-1.1.0.exe` from
+[Releases](https://github.com/Mohamed-ncib19/School-Managment-System/releases),
+run it and answer the school-details wizard once. The installer provides Node.js
+(if missing), creates the database and role, and puts a “Système de gestion
+scolaire” shortcut on the desktop — from then on, double-click that shortcut to
+start, stop and open the system (see Daily use below).
+
+**macOS / Linux:** clone the repository, then run `./installer/macos/start.sh`.
+
+You need Windows 10/11 (or macOS/Linux with Node.js 20.9+) and an internet
+connection for the first install. **Updating never needs the installer:**
+on an existing install, log in and apply the in-app update (Settings →
+Mises à jour du système) — code, dependencies, schema and restart are handled
+with a safety database dump taken first, and no data is touched.
+
 ## Stack
 
 | Layer | Choice |
@@ -139,7 +156,9 @@ folder.
 ## Manual setup (for development)
 
 Requires Node.js 20.9 or newer (see `engines` in the root `package.json`) and a
-reachable PostgreSQL 16. On Windows, the control panel's **Démarrer** button does all of this
+reachable PostgreSQL 16. The Docker image pins `node:22-alpine` and the Windows
+installer ships Node 20 LTS — anything in the `>=20.9` range runs the code.
+On Windows, the control panel's **Démarrer** button does all of this
 for you — including installing Node and creating the database — so this section
 is for non-Windows machines and for working on the project itself.
 

@@ -34,5 +34,5 @@ export const backupApi = {
   create: (version?: string) =>
     ApiClient.post<BackupResult>("/backup/create", { version: version ?? "latest" }),
   restore: (backupId: string) =>
-    ApiClient.post<RestoreResult>(`/backup/restore/${backupId}`),
+    ApiClient.post<RestoreResult>(`/backup/restore/${backupId}`, { confirm: "RESTORE" }),
 };

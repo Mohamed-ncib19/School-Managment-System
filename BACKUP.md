@@ -27,7 +27,7 @@ PostgreSQL trigger ──► sync_queue (local table)
 
 1. **Capture** — triggers on every business table write `(table, id, operation, payload)` rows into `sync_queue` with a monotonic `seq`. Triggers are installed idempotently at backend boot (`SyncTriggerBootstrap`) because the schema is managed with `drizzle-kit push`.
 2. **Event batches** — the worker drains queued rows in sequence order, groups them, compresses + encrypts them into one immutable object per batch, then marks rows processed. A crash mid-drain re-processes from the last acknowledged sequence — replay is idempotent (`ON CONFLICT DO UPDATE`).
-3. **Snapshots** — a full `pg_dump` runs daily during quiet hours, immediately after a schema migration is detected, or on demand (`POST /api/cloud-backup/backup/now`). Snapshots make restores fast; event batches cover the gap between snapshots.
+3. **Snapshots** — a full `pg_dump` runs daily during quiet hours, immediately after a schema migration is detected, or on demand (`POST /api/cloud-backup/backup/now`). Snapshots make restores fast; event batches cover the gap between snapshots. Every snapshot also uploads an **Importer-compatible export** (`kind: "data_export"`, the `iq-data-export` JSON in the same envelope with the same phrase) — the copy that survives an instance loss via Settings → Données → "Importer des données" (best-effort; never fails the snapshot).
 4. **Manifests** — after each upload the worker writes an encrypted manifest recording the latest contiguous sequence and the newest snapshot key. Restore reads the manifest first, so it knows exactly what to pull.
 
 ### Multi-instance safety (split-brain)
@@ -38,14 +38,17 @@ The sync worker re-asserts its claim on every drain cycle. A claim with no heart
 
 ### Choosing a destination
 
-The wizard shows **two** destinations. Both are free, neither needs a payment card, and either is done in under a minute:
+The wizard shows **three** destinations. All are free, none needs a payment card, and each is done in under a minute:
 
 | Destination | What the administrator provides | Cost |
 |---|---|---|
+| **Dropbox** | One click on "Se connecter avec Dropbox" — no vendor validation, no test list, works from any computer | 2 GB free |
+| **Google Drive** | One click on "Se connecter avec Google" — or the code flow below from any computer | 15 GB free |
 | **Disque externe ou dossier réseau** | A path — a USB disk, a NAS, a mapped drive | Free |
-| **Dropbox** | One click on "Se connecter avec Dropbox" | 2 GB free |
 
-**Why Dropbox rather than Google Drive or Backblaze.** Every cloud provider requires a registered application — that is universal, not a Google quirk. The only question is whose clicks it costs. Backblaze spends the *school's*: an account, a bucket, an application key and a region, four screens deep in someone else's site. Google spends the *publisher's*, heavily: a Cloud project, a consent screen, and a redirect URI Google will only accept on `localhost`, which breaks every LAN-accessed install. Dropbox's registration is one form — name, "Scoped access", "App folder" — about two minutes, no review, done once for every school that will ever run this software.
+**Connecting from another computer (no need to sit at the server).** Under each connect button, **« Sur un autre poste ? »** shows a link: open it on any device (phone included), approve, then copy the `code` out of the address bar — that page never needs to load — and paste it back. The server swaps the code for its credential itself, so the secret never crosses the browser. This works for Google Drive and Dropbox alike.
+
+**Why these three first, in this order.** Dropbox leads because its consent never shows a validation wall: App-folder registration needs no review and has no test-user list, so login-and-link works for every school on day one. Google Drive holds more (15 GB) but Google gates unreviewed apps behind test users — fine once the app is verified or the school's account is listed, otherwise the consent page refuses with `access_denied`. The external disk covers the offline case. Google's loopback redirect used to force the administrator to sit at the server; the copy-code flow above removes that — any computer on the network connects the account in two pastes.
 
 `App folder` scope also means the app can only ever see the directory it created. It cannot read the user's other files even in principle, which makes the consent screen honest.
 
@@ -73,11 +76,9 @@ Everything written to a folder is byte-identical to what goes to S3: same envelo
 
 ### Connecting Google Drive
 
-Google Drive sits behind *Autres options* rather than on the first screen, and this is why.
-
-**It can only be connected from the server itself.** For an installed application Google accepts a redirect URI on `localhost`/`127.0.0.1` and nowhere else — no LAN address, no machine name. The consent flow therefore returns the authorization code to loopback *on whichever computer opened the browser*. An administrator who connects Drive from their own PC while the system runs on the office server hands the code to their own machine, and the server never sees it. Dropbox has no such restriction, which is the single biggest reason it is the recommended cloud.
-
 Sitting at the server, the flow is one click: press **Se connecter avec Google**, pick an account, done. No client id, no client secret, no token to copy.
+
+From any other computer on the network, use **« Sur un autre poste ? »** under the same button instead: open the shown link anywhere, approve, and paste the code back. The consent still returns to a loopback address (the only kind Google accepts for an installed app), but only the *code* travels — copied out of the address bar by hand — so it no longer matters which machine opened the browser.
 
 That works because the application ships its own Google OAuth client, set once in the release build:
 
@@ -165,6 +166,7 @@ All keys are prefixed by `school_id`:
 {school_id}/meta/instances.json     instance registry (plaintext, append-only)
 {school_id}/meta/check.json.enc     known-plaintext probe to verify the phrase
 {school_id}/snapshots/{iso}_{seq}.sql.zst.enc
+{school_id}/exports/{iso}_{seq}.json.zst.enc   Importer-compatible copy (same envelope, same phrase)
 {school_id}/events/{iso}/{from}-{to}.jsonl.zst.enc
 {school_id}/manifests/{iso}.json.enc
 ```
@@ -175,16 +177,26 @@ Objects are **never deleted or overwritten** by the app — ransomware-style rol
 
 ## 4. Setting up (Settings → Data safety)
 
-A four-step wizard:
+A four-step wizard, with only two decisions. The administrator chooses a destination, then writes down the recovery phrase; verification and the first snapshot start on their own and move on when done:
 
-1. **Choose a destination** — S3-compatible (AWS S3, Cloudflare R2, Backblaze B2), Google Drive, or WebDAV. Test the connection.
+1. **Choose a destination** — Google Drive, Dropbox, or an external disk / network folder. Test the connection.
 2. **Generate the recovery phrase** — 12 words, shown once. Print the recovery sheet. There is no way to recover data without it.
-3. **Verify** — the app uploads an encrypted probe and decrypts it back with your phrase.
-4. **Activate** — first snapshot runs immediately; continuous sync starts.
+3. **Verify** — automatic: the app uploads an encrypted probe and decrypts it back with your phrase.
+4. **Activate** — automatic: first snapshot runs immediately; continuous sync starts.
 
 ## 5. Restoring
 
-### In-app (new machine)
+### Via "Importer des données" (Dropbox copy — instance lost or deleted)
+
+Each snapshot leaves `{school_id}/exports/{iso}_{seq}.json.zst.enc` in Dropbox: the full data export, encrypted with the same 12-word phrase. To recover on a fresh install:
+
+1. Download the newest `exports/*.json.zst.enc` from Dropbox (web or app).
+2. Log in as the new admin → Settings → **Données** → **Importer des données**.
+3. Drop the `.enc` file, type the 12-word phrase, preview, then confirm with `IMPORTER`.
+
+Unlike the login-page restore it works on a live database (tables in the file replace current rows, original ids preserved) and needs no school id, no OAuth handshake, no empty database. The cloud still only ever sees ciphertext — the phrase never leaves the server.
+
+### In-app (new machine, full fidelity)
 
 On the login page: **"Restaurer une sauvegarde"**. Enter the connection details of the same cloud destination + the 12-word phrase. The app verifies the phrase against `check.json.enc`, downloads the newest snapshot, loads it via `psql`, replays event batches up to the manifest's sequence, and drops you straight into the dashboard. The target database must be empty/fresh — restore refuses to run on a school that already has data.
 

@@ -12,6 +12,11 @@
 # A Redis 7 service used to sit alongside this one. Nothing in the codebase ever
 # connected to it — there is no job runner and no broker — so it was removed
 # rather than left running and misleading.
+#
+# The full stack (postgres + app image with API :3001 and portal :3000) runs
+# under the `app` profile — `docker compose up` alone stays database-only so a
+# plain dev checkout is not surprised by a full image build:
+#   docker compose --profile app up --build -d
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,5 +36,29 @@ services:
       timeout: 3s
       retries: 5
 
+  app:
+    profiles: ["app"]
+    build: .
+    container_name: school-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Host `postgres` is this file's service above, not localhost.
+      DATABASE_URL: postgresql://school_user:change_me@postgres:5432/school_db
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    volumes:
+      # Local pg_dump safety nets (see docker-entrypoint.sh) survive recreation.
+      - app_backups:/app/backups
+      # No machine-id on Alpine: the generated machine key that wraps the
+      # cloud-backup credentials must be volumed or it is unrecoverable
+      # after a recreate (see BACKUP.md).
+      - app_cloud_creds:/app/.cloud-creds
+
 volumes:
   postgres_data:
+  app_backups:
+  app_cloud_creds:

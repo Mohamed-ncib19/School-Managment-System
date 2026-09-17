@@ -85,10 +85,13 @@ export class CloudSetupService {
     instanceUuid: string;
     kdf: KdfParams;
   }> {
-    const schoolId = input.schoolId.trim().toLowerCase().replace(/\s+/g, "-");
-    if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(schoolId)) {
+    // Slugify, don't reject: "École Saint-Jean" becomes "ecole-saint-jean".
+    // The strict regex used to bounce accented names with a 400 that read
+    // like a system fault for something the app can normalize itself.
+    const schoolId = slugifySchoolId(input.schoolId);
+    if (!isValidSchoolId(schoolId)) {
       throw new BadRequestException(
-        "Identifiant d'école invalide : 3 à 64 caractères, lettres minuscules, chiffres et tirets.",
+        "Identifiant d'école invalide : utilisez au moins 3 lettres ou chiffres.",
       );
     }
 
@@ -156,7 +159,16 @@ export class CloudSetupService {
     );
   }
 
-  /** Step 2 — live drain run + coverage check against every target. */
+  /**
+   * Step 2 — live round-trip probe against every enabled target.
+   *
+   * This used to read the `last_success_at` bookkeeping the worker writes —
+   * which a fresh setup never has (seeding bypasses the worker, and an empty
+   * queue drains nothing), so step 2 failed every target with no message.
+   * Now each target proves itself here with a real write/read round trip and
+   * the bookkeeping is stamped from the outcome, which is also what the
+   * wizard subtitle promises ("Une écriture de test … puis relue").
+   */
   async verify(): Promise<{
     ok: boolean;
     drained: boolean;
@@ -164,12 +176,31 @@ export class CloudSetupService {
     targets: Array<{ id: string; ok: boolean; lastError: string | null }>;
   }> {
     const drained = await this.worker.runDrainNow();
-    const targets = await this.db.client.select().from(cloudTargets).where(eq(cloudTargets.enabled, true));
-    const targetStatus = targets.map((t) => ({
-      id: t.id,
-      ok: !t.last_error && t.last_success_at !== null,
-      lastError: t.last_error,
-    }));
+    const rows = await this.db.client.select().from(cloudTargets).where(eq(cloudTargets.enabled, true));
+    const live = new Map((await this.enabledTargetDrivers()).map((t) => [t.id, t.driver] as const));
+    const targetStatus: Array<{ id: string; ok: boolean; lastError: string | null }> = [];
+    for (const row of rows) {
+      const driver = live.get(row.id);
+      if (!driver) {
+        targetStatus.push({ id: row.id, ok: false, lastError: "Destination inconnue — supprimez-la et recréez-la." });
+        continue;
+      }
+      try {
+        await driver.testConnection();
+        await this.db.client
+          .update(cloudTargets)
+          .set({ last_success_at: new Date(), last_error: null })
+          .where(eq(cloudTargets.id, row.id));
+        targetStatus.push({ id: row.id, ok: true, lastError: null });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await this.db.client
+          .update(cloudTargets)
+          .set({ last_error: message })
+          .where(eq(cloudTargets.id, row.id));
+        targetStatus.push({ id: row.id, ok: false, lastError: message });
+      }
+    }
     const pending = await this.pendingCount();
     return {
       ok: targetStatus.length > 0 && targetStatus.every((t) => t.ok) && pending === 0,

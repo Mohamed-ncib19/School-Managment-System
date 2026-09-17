@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ScheduleModule } from "@nestjs/schedule";
+import { DataTransferModule } from "../data-transfer/data-transfer.module";
 import { CloudBackupController } from "./cloud-backup.controller";
 import { SyncTriggerBootstrap } from "./queue/sync-trigger-bootstrap";
 import { SyncQueueService } from "./queue/sync-queue.service";
@@ -13,7 +14,10 @@ import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
 import { CloudSetupService } from "./setup/setup.service";
 
 @Module({
-  imports: [ScheduleModule.forRoot()],
+  // DataTransferModule so each snapshot can also push the Importer-compatible
+  // encrypted export (`kind: "data_export"`). One direction only — the data
+  // transfer side never imports this module, so there is no module cycle.
+  imports: [ScheduleModule.forRoot(), DataTransferModule],
   controllers: [CloudBackupController],
   providers: [
     SyncTriggerBootstrap,

@@ -8,7 +8,7 @@
  */
 
 const DEFAULT_PORT = 3000;
-const DEFAULT_BACKEND_URL = "http://127.0.0.1:3001/api/system-settings";
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:3001/api/health";
 const DEFAULT_ROUTES = [
   "/login",
   "/dashboard",
@@ -64,7 +64,10 @@ async function waitForBackend(url, timeoutMs) {
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
-      if (res.ok) {
+      // Any HTTP status means the backend TCP port is listening. Do not use
+      // res.ok here: keyed routes answer 401/503 while up, which previously
+      // made this wait always time out with "backend not ready".
+      if (res.status) {
         console.log(`[prewarm] backend ready (${res.status} on ${url})`);
         return;
       }

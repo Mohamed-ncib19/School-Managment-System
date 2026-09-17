@@ -19,7 +19,7 @@ import type { KdfParams } from "./kdf";
 
 export const FORMAT_VERSION = 1;
 
-export type ObjectKind = "snapshot" | "event_batch" | "check" | "manifest";
+export type ObjectKind = "snapshot" | "event_batch" | "check" | "manifest" | "data_export";
 
 export interface ObjectHeader {
   format_version: number;

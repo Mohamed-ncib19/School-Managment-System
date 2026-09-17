@@ -44,6 +44,10 @@ Palette,
   Headset,
   FileJson,
   Cloud,
+  CalendarRange,
+  CalendarDays,
+  DoorOpen,
+  AlarmClock,
 } from "lucide-react";
 import { usersApi } from "@/lib/api/users.api";
 import { authApi } from "@/lib/api/auth.api";
@@ -60,6 +64,8 @@ import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-
 import UpdateProgressTracker from "@/components/shared/update-progress";
 import DataTransferSection from "@/components/settings/data-transfer-section";
 import DataSafetySection from "@/components/settings/data-safety-section";
+import SupportSection from "@/components/settings/support-section";
+import { FALLBACK_EMAIL, FALLBACK_PHONE_DISPLAY, FALLBACK_PHONE_LINK, digitsOnly } from "@/components/shared/contact-support";
 import { SettingsSkeleton, PageLoader } from "@/components/shared/skeletons";
 import BrandMark from "@/components/shared/brand-mark";
 import { apiBaseUrl } from "@/lib/api/client";
@@ -88,6 +94,15 @@ type PasswordForm = z.infer<typeof passwordSchema>;
 
 type SectionId = "profile" | "security" | "branding" | "theme" | "system" | "support" | "features" | "hierarchy" | "updates" | "backups" | "data" | "datasafety";
 
+type SectionGroupId = "account" | "custom" | "systemdata";
+
+/** Navigation categories grouping the twelve sections. */
+const SECTION_GROUPS: Array<{ id: SectionGroupId; icon: LucideIcon; labelKey: string; fallback: string }> = [
+  { id: "account", icon: User, labelKey: "settings.navGroupAccount", fallback: "Compte" },
+  { id: "custom", icon: Palette, labelKey: "settings.navGroupCustom", fallback: "Personnalisation" },
+  { id: "systemdata", icon: Database, labelKey: "settings.navGroupSystemData", fallback: "Système et données" },
+];
+
 const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   fields: BookOpen,
   levels: Layers,
@@ -102,6 +117,10 @@ const FEATURE_ICONS: Record<FeatureKey, LucideIcon> = {
   "financial.reports": FileText,
   "financial.transactions": Receipt,
   "financial.settings": SlidersHorizontal,
+  "schedule.calendar": CalendarRange,
+  "schedule.entries": CalendarDays,
+  "schedule.classrooms": DoorOpen,
+  "schedule.workingHours": AlarmClock,
   import: Upload,
   audit: UserCog,
   backups: Database,
@@ -139,6 +158,10 @@ const FEATURE_ITEMS: Record<FeatureKey, string[]> = {
   "financial.reports": ["nav.financialReports"],
   "financial.transactions": ["nav.transactionsHistory"],
   "financial.settings": ["nav.financialSettings"],
+  "schedule.calendar": ["nav.scheduleCalendar"],
+  "schedule.entries": ["nav.scheduleEntries"],
+  "schedule.classrooms": ["nav.classrooms"],
+  "schedule.workingHours": ["nav.workingHours"],
   import: ["nav.import"],
   audit: ["nav.audit"],
   backups: ["settings.backupTitle"],
@@ -163,6 +186,10 @@ const FEATURE_GROUPS: Array<{ labelKey: string; keys: FeatureKey[] }> = [
     ],
   },
   {
+    labelKey: "settings.features.groupSchedule",
+    keys: ["schedule.calendar", "schedule.entries", "schedule.classrooms", "schedule.workingHours"],
+  },
+  {
     labelKey: "settings.features.groupAdministration",
     keys: ["import", "audit", "backups"],
   },
@@ -177,6 +204,14 @@ const PREVIEW_FINANCIAL: Array<{ feature: FeatureKey; labelKey: string; icon: Lu
   { feature: "financial.reports", labelKey: "nav.financialReports", icon: FileText },
   { feature: "financial.transactions", labelKey: "nav.transactionsHistory", icon: Receipt },
   { feature: "financial.settings", labelKey: "nav.financialSettings", icon: SlidersHorizontal },
+];
+
+/** Schedule screens shown in the sidebar preview, one per feature toggle. */
+const PREVIEW_SCHEDULE: Array<{ feature: FeatureKey; labelKey: string; icon: LucideIcon }> = [
+  { feature: "schedule.calendar", labelKey: "nav.scheduleCalendar", icon: CalendarRange },
+  { feature: "schedule.entries", labelKey: "nav.scheduleEntries", icon: CalendarDays },
+  { feature: "schedule.classrooms", labelKey: "nav.classrooms", icon: DoorOpen },
+  { feature: "schedule.workingHours", labelKey: "nav.workingHours", icon: AlarmClock },
 ];
 
 /** A feature is on unless the stored row explicitly says false. */
@@ -363,22 +398,24 @@ export default function SettingsPage() {
     });
   };
 
-  const SECTIONS: Array<{ id: SectionId; icon: LucideIcon; label: string; description: string }> = [
-    { id: "profile", icon: User, label: t("settings.profileTitle"), description: t("settings.profileDescription") },
-    { id: "security", icon: Lock, label: t("settings.securityTitle"), description: t("settings.securityDescription") },
-    { id: "branding", icon: Palette, label: t("settings.brandingTitle"), description: t("settings.brandingDescription") },
-    { id: "theme", icon: SunMoon, label: t("settings.themeTitle"), description: t("settings.themeDescription") },
-    { id: "system", icon: Globe, label: t("settings.systemTitle"), description: t("settings.systemDescription") },
-    { id: "support", icon: Headset, label: t("settings.supportSectionTitle"), description: t("settings.supportSectionDescription") },
-    { id: "features", icon: ToggleLeft, label: t("settings.featuresTitle"), description: t("settings.featuresDescription") },
-    { id: "hierarchy", icon: Network, label: t("hierarchy.title", "Navigation Hierarchy"), description: t("hierarchy.subtitle", "Configure hierarchy navigation order") },
-    { id: "updates", icon: Download, label: t("settings.updatesTitle", "System Updates"), description: t("settings.updatesDescription", "Check for and apply new versions of the system") },
+  const SECTIONS: Array<{ id: SectionId; group: SectionGroupId; icon: LucideIcon; label: string; description: string }> = [
+    { id: "profile", group: "account", icon: User, label: t("settings.profileTitle"), description: t("settings.profileDescription") },
+    { id: "security", group: "account", icon: Lock, label: t("settings.securityTitle"), description: t("settings.securityDescription") },
+    { id: "branding", group: "custom", icon: Palette, label: t("settings.brandingTitle"), description: t("settings.brandingDescription") },
+    { id: "theme", group: "custom", icon: SunMoon, label: t("settings.themeTitle"), description: t("settings.themeDescription") },
+    { id: "system", group: "custom", icon: Globe, label: t("settings.systemTitle"), description: t("settings.systemDescription") },
+    { id: "support", group: "custom", icon: Headset, label: t("settings.supportSectionTitle"), description: t("settings.supportSectionDescription") },
+    { id: "features", group: "custom", icon: ToggleLeft, label: t("settings.featuresTitle"), description: t("settings.featuresDescription") },
+    { id: "hierarchy", group: "custom", icon: Network, label: t("hierarchy.title", "Navigation Hierarchy"), description: t("hierarchy.subtitle", "Configure hierarchy navigation order") },
+    { id: "updates", group: "systemdata", icon: Download, label: t("settings.updatesTitle", "System Updates"), description: t("settings.updatesDescription", "Check for and apply new versions of the system") },
     ...(isFeatureEnabled(system?.features, "backups")
-      ? [{ id: "backups" as SectionId, icon: Database, label: t("settings.backupTitle", "Database Backup"), description: t("settings.backupDescription", "Create, list, and restore versioned database backups") }]
+      ? [{ id: "backups" as SectionId, group: "systemdata" as SectionGroupId, icon: Database, label: t("settings.backupTitle", "Database Backup"), description: t("settings.backupDescription", "Create, list, and restore versioned database backups") }]
       : []),
-    { id: "data", icon: FileJson, label: t("settings.dataTitle", "Données"), description: t("settings.dataDescription", "Exporter ou importer l'intégralité des données du système") },
-    { id: "datasafety", icon: Cloud, label: t("cloudSafeSave.title", "Sauvegarde cloud"), description: t("cloudSafeSave.sectionDescription", "Sauvegarde chiffrée automatique sur vos propres espaces cloud") },
+    { id: "data", group: "systemdata", icon: FileJson, label: t("settings.dataTitle", "Données"), description: t("settings.dataDescription", "Exporter ou importer l'intégralité des données du système") },
+    { id: "datasafety", group: "systemdata", icon: Cloud, label: t("cloudSafeSave.title", "Sauvegarde cloud"), description: t("cloudSafeSave.sectionDescription", "Sauvegarde chiffrée automatique sur vos propres espaces cloud") },
   ];
+  const activeSection = SECTIONS.find((section) => section.id === active);
+  const activeGroup = SECTION_GROUPS.find((group) => group.id === activeSection?.group);
   const goTo = (id: SectionId) => {
     setActive(id);
   };
@@ -422,34 +459,73 @@ export default function SettingsPage() {
           {/* Section navigator */}
           <aside className="lg:sticky lg:top-8">
             <nav
-              className="card p-3 flex lg:flex-col gap-1.5 overflow-x-auto scrollbar-thin lg:overflow-visible"
+              className="card p-3 flex lg:flex-col gap-4 overflow-x-auto scrollbar-thin lg:overflow-visible"
               aria-label={t("settings.title")}
             >
-              {SECTIONS.map((section) => {
-                const Icon = section.icon;
-                const isActive = active === section.id;
+              {SECTION_GROUPS.map((group) => {
+                const items = SECTIONS.filter((section) => section.group === group.id);
+                if (items.length === 0) return null;
+                const GroupIcon = group.icon;
+                const groupActive = items.some((section) => section.id === active);
                 return (
-                  <button
-                    key={section.id}
-                    onClick={() => goTo(section.id)}
-                    aria-current={isActive ? "true" : undefined}
-                    className={cn(
-                      "flex items-center gap-3 rounded-btn px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-150 shrink-0 lg:shrink lg:w-full",
-                      isActive
-                        ? "bg-primary text-white shadow-sm"
-                        : "text-text-secondary hover:bg-neutral-soft hover:text-text-primary",
-                    )}
-                  >
-                    <Icon size={16} className="shrink-0" />
-                    <span>{section.label}</span>
-                  </button>
+                  <div key={group.id} className="shrink-0">
+                    <div className="flex items-center gap-2 px-4 pb-1.5 whitespace-nowrap">
+                      <span
+                        className={cn(
+                          "flex h-6 w-6 items-center justify-center rounded-btn transition-colors",
+                          groupActive
+                            ? "bg-primary-50 dark:bg-primary/15 text-primary"
+                            : "bg-neutral-soft text-text-secondary",
+                        )}
+                      >
+                        <GroupIcon size={13} />
+                      </span>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+                        {t(group.labelKey, group.fallback)}
+                      </p>
+                      <span className="ml-auto rounded-full bg-neutral-soft px-2 py-0.5 text-[10px] font-semibold tabular-nums text-text-secondary">
+                        {items.length}
+                      </span>
+                    </div>
+                    <div className="flex lg:flex-col gap-1.5">
+                      {items.map((section) => {
+                        const Icon = section.icon;
+                        const isActive = active === section.id;
+                        return (
+                          <button
+                            key={section.id}
+                            onClick={() => goTo(section.id)}
+                            aria-current={isActive ? "true" : undefined}
+                            title={section.description}
+                            className={cn(
+                              "group flex items-center gap-3 rounded-btn px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-150 shrink-0 lg:shrink lg:w-full",
+                              isActive
+                                ? "bg-primary text-white shadow-sm"
+                                : "text-text-secondary hover:bg-neutral-soft dark:hover:bg-white/10 hover:text-text-primary",
+                            )}
+                          >
+                            <Icon size={16} className="shrink-0" />
+                            <span className="flex-1 text-left">{section.label}</span>
+                            {isActive && <ChevronRight size={14} className="shrink-0 opacity-80" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
             </nav>
           </aside>
 
           {/* Active section content */}
-          <div className="space-y-6 min-w-0">
+          <div className="space-y-4 min-w-0">
+            {activeGroup && activeSection && (
+              <nav aria-label={t("settings.title")} className="flex items-center gap-1.5 text-xs text-text-secondary">
+                <span className="font-medium uppercase tracking-wider text-[11px]">{t(activeGroup.labelKey, activeGroup.fallback)}</span>
+                <ChevronRight size={12} className="shrink-0 opacity-60" />
+                <span className="font-semibold text-text-primary">{activeSection.label}</span>
+              </nav>
+            )}
             {active === "profile" && (
               <div className="card max-w-xl">
                 {/* Profile Section */}
@@ -913,89 +989,13 @@ export default function SettingsPage() {
             )}
 
             {active === "support" && (
-              <div className="card">
-                <div className="flex items-center gap-3 mb-5">
-                  <div className="h-10 w-10 rounded-card bg-primary-50 dark:bg-primary/15 flex items-center justify-center text-primary">
-                    <Headset size={20} />
-                  </div>
-                  <div>
-                    <h3 className="text-h4 font-bold text-text-primary">{t("settings.supportSectionTitle")}</h3>
-                    <p className="text-xs text-text-secondary">{t("settings.supportSectionDescription")}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div>
-                    <label htmlFor="support_email" className="block text-sm font-medium text-text-primary mb-1.5">
-                      {t("settings.supportEmailLabel")}
-                    </label>
-                    <input
-                      id="support_email"
-                      type="email"
-                      value={supportDraft.email}
-                      onChange={(e) => setSupportDraft((d) => ({ ...d, email: e.target.value }))}
-                      placeholder={t("settings.supportEmailPlaceholder")}
-                      maxLength={120}
-                      className="input w-full max-w-md"
-                    />
-                    <p className="text-xs text-text-secondary mt-1">{t("settings.supportEmailHint")}</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
-                    <div>
-                      <label htmlFor="support_phone" className="block text-sm font-medium text-text-primary mb-1.5">
-                        {t("settings.supportPhoneLabel")}
-                      </label>
-                      <input
-                        id="support_phone"
-                        type="tel"
-                        value={supportDraft.phone}
-                        onChange={(e) => setSupportDraft((d) => ({ ...d, phone: e.target.value }))}
-                        placeholder={t("settings.supportPhonePlaceholder")}
-                        maxLength={60}
-                        className="input w-full"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="support_whatsapp" className="block text-sm font-medium text-text-primary mb-1.5">
-                        {t("settings.supportWhatsappLabel")}
-                      </label>
-                      <input
-                        id="support_whatsapp"
-                        type="tel"
-                        value={supportDraft.whatsapp}
-                        onChange={(e) => setSupportDraft((d) => ({ ...d, whatsapp: e.target.value }))}
-                        placeholder={t("settings.supportWhatsappPlaceholder")}
-                        maxLength={60}
-                        className="input w-full"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-text-secondary">{t("settings.supportHint")}</p>
-
-                  <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
-                    {supportDirty && (
-                      <span className="flex items-center gap-1.5 text-xs text-text-secondary">
-                        <span className="h-2 w-2 rounded-full bg-gold animate-pulse" />
-                        {t("settings.unsaved")}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={saveSystem}
-                      disabled={!supportDirty || updateSystem.isPending}
-                      className="btn btn-primary text-xs min-h-[36px] disabled:opacity-50"
-                    >
-                      {updateSystem.isPending ? (
-                        <RefreshCw size={14} className="animate-spin" />
-                      ) : (
-                        <Save size={14} />
-                      )}
-                      {t("settings.saveChanges")}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <SupportSection
+                supportDraft={supportDraft}
+                setSupportDraft={setSupportDraft}
+                supportDirty={supportDirty}
+                saveSystem={saveSystem}
+                updatePending={updateSystem.isPending}
+              />
             )}
 
             {active === "features" && (
@@ -1067,7 +1067,7 @@ export default function SettingsPage() {
                                 }}
                                 className={cn(
                                   "flex items-center gap-4 px-4 py-3.5 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-inset",
-                                  enabled ? "hover:bg-neutral-soft/60" : "bg-neutral-soft/30 hover:bg-neutral-soft/50",
+                                  enabled ? "hover:bg-neutral-soft/60 dark:hover:bg-white/10" : "bg-neutral-soft/30 dark:bg-white/5 hover:bg-neutral-soft/50 dark:hover:bg-white/10",
                                 )}
                               >
                                 <div
@@ -1203,6 +1203,17 @@ export default function SettingsPage() {
                         visible: ENTITY_FEATURE[entity]
                           ? isFeatureEnabled(featuresDraft, ENTITY_FEATURE[entity] as FeatureKey)
                           : true,
+                      }))}
+                      hiddenLabel={t("settings.featuresHidden")}
+                    />
+
+                    <PreviewGroup
+                      label={t("nav.scheduleManagement")}
+                      icon={CalendarDays}
+                      subItems={PREVIEW_SCHEDULE.map((item) => ({
+                        label: t(item.labelKey),
+                        icon: item.icon,
+                        visible: isFeatureEnabled(featuresDraft, item.feature),
                       }))}
                       hiddenLabel={t("settings.featuresHidden")}
                     />

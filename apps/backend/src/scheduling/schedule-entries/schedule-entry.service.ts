@@ -8,6 +8,7 @@ import {
   timeSlots,
 } from "../../db/schema";
 import { AuditService } from "../../audit/audit.service";
+import { runExclusive } from "../../common/async-mutex";
 import { ConflictService, TimeSlotRef } from "../conflicts/conflict.service";
 import { WorkingHoursService } from "../working-hours/working-hours.service";
 import { TimeSlotService } from "../time-slots/time-slot.service";
@@ -170,6 +171,15 @@ export class ScheduleEntryService {
    * refused.
    */
   async create(dto: CreateScheduleEntryDto, userId?: string): Promise<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[] }> {
+    // Serialise same-window creates: the conflict check below reads, the
+    // insert writes, and two requests interleaved between the two would both
+    // pass and double-book the room (see common/async-mutex).
+    const windowKey = dto.time_slot_id ?? `${dto.day_of_week}:${dto.start_time}:${dto.end_time}`;
+    const key = `schedule:${windowKey}:room:${dto.classroom_id ?? "-"}:prof:${dto.prof_id}:group:${dto.group_id}`;
+    return runExclusive(key, () => this.createInner(dto, userId));
+  }
+
+  private async createInner(dto: CreateScheduleEntryDto, userId?: string): Promise<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[] }> {
     // Starts today unless a date is given, and runs open-ended. The form no
     // longer asks for either; see `CreateScheduleEntryDto.effective_from`.
     const effectiveFrom = dto.effective_from ?? new Date().toISOString().slice(0, 10);
@@ -282,6 +292,17 @@ export class ScheduleEntryService {
    * admin deliberately overrode the preview.
    */
   async splitAndUpdate(
+    entryId: string,
+    fromDate: string,
+    newValues: { day_of_week?: number; start_time?: string; end_time?: string; time_slot_id?: string; classroom_id?: string | null; prof_id?: string; subject?: string; notes?: string; effective_until?: string | null },
+    userId?: string,
+  ): Promise<{ entry: ScheduleEntry; conflicts: Conflict[]; warnings: string[]; split: boolean }> {
+    // Serialise concurrent edits of the same rule (double submit / two tabs):
+    // truncate-then-clone must not interleave with itself.
+    return runExclusive(`schedule-entry:${entryId}`, () => this.splitAndUpdateInner(entryId, fromDate, newValues, userId));
+  }
+
+  private async splitAndUpdateInner(
     entryId: string,
     fromDate: string,
     newValues: { day_of_week?: number; start_time?: string; end_time?: string; time_slot_id?: string; classroom_id?: string | null; prof_id?: string; subject?: string; notes?: string; effective_until?: string | null },

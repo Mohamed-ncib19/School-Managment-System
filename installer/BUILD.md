@@ -123,6 +123,11 @@ must not lose its records. The uninstaller says so before it starts.
   `.ps1` here has one; keep it that way when editing.
 - **macOS and Linux are unchanged.** There is no Inno Setup equivalent, so
   `installer/macos/start.sh` remains the entry point there.
+- **Update checks are public by design.** `GET /api/updates` and
+  `GET /api/updates/progress` need no login so any machine on the LAN can see
+  whether a new version exists — they reveal commit ids only. Applying an
+  update (`POST /api/updates/apply`) and every backup/import route require a
+  `super_admin` login.
 
 ## Verifying a build without installing
 

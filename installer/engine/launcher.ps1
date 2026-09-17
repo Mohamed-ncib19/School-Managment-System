@@ -141,6 +141,20 @@ function Get-EnvValue {
   return $null
 }
 
+# CSPRNG alphanumeric key for the install API (x-api-key). Same alphabet as
+# the setup wizard's New-RandomString, so the value is header- and URL-safe.
+function New-ApiKey {
+  $chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  $sb = New-Object System.Text.StringBuilder
+  $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+  $buf = New-Object byte[] 1
+  for ($i = 0; $i -lt 32; $i++) {
+    do { $rng.GetBytes($buf) } while ($buf[0] -ge 248)
+    [void]$sb.Append($chars[$buf[0] % $chars.Length])
+  }
+  return $sb.ToString()
+}
+
 function Find-Tool {
   param([string]$Name, [string]$PgBin)
   if ($PgBin) {
@@ -296,6 +310,21 @@ if (-not (Test-Path $frontendEnv)) {
   }
 }
 
+# Upgrade backfill: installs created before the install API key existed have
+# neither value, and the API now refuses keyed routes without one.
+$installApiKey = Get-EnvValue $backendEnv "API_KEY"
+if (-not $installApiKey) {
+  $installApiKey = New-ApiKey
+  Add-Content -Path $backendEnv -Value "API_KEY=$installApiKey"
+  Write-Ok "Generated install API key" "apps\backend\.env"
+}
+if ((Test-Path $frontendEnv) -and (-not (Get-EnvValue $frontendEnv "NEXT_PUBLIC_API_KEY"))) {
+  $frontLines = @(Get-Content $frontendEnv | Where-Object { $_ -notmatch "^\s*NEXT_PUBLIC_API_KEY\s*=" })
+  $frontLines += "NEXT_PUBLIC_API_KEY=$installApiKey"
+  Set-Content -Path $frontendEnv -Value $frontLines -Encoding UTF8
+  Write-Ok "Synced install API key" "apps\frontend\.env.local"
+}
+
 $schoolName = Get-EnvValue $backendEnv "SCHOOL_NAME"
 if (-not $schoolName) { $schoolName = "School Management System" }
 
@@ -307,22 +336,37 @@ if (-not $databaseUrl) { Fail "DATABASE_URL is missing from apps\backend\.env" }
 if ($databaseUrl -notmatch "postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^?]+)") {
   Fail "DATABASE_URL in apps\backend\.env is not a valid PostgreSQL connection string."
 }
+# Capture the URL parts now: every Get-EnvValue call below runs its own
+# -match and clobbers the automatic $Matches variable (the old fallbacks
+# below used to read those stale groups).
+$urlUser = $Matches[1]
+$urlPass = $Matches[2]
+$urlHost = $Matches[3]
+$urlPort = [int]$Matches[4]
+$urlDb = ($Matches[5] -split '\?')[0]
 $dbUser = Get-EnvValue $backendEnv "DATABASE_USER"
-if (-not $dbUser) { $dbUser = $Matches[1] }
+if (-not $dbUser) { $dbUser = $urlUser }
 $dbPass = Get-EnvValue $backendEnv "DATABASE_PASSWORD"
-if (-not $dbPass) { $dbPass = $Matches[2] }
-$dbHost = $Matches[3]
-$dbPort = [int]$Matches[4]
+if (-not $dbPass) { $dbPass = $urlPass }
+$dbHost = $urlHost
+$dbPort = $urlPort
 $dbName = Get-EnvValue $backendEnv "DATABASE_NAME"
 if (-not $dbName -or $dbName -match '^\s*=' -or $dbName -eq "public") {
-  $extracted = $Matches[5]
-  if ($extracted -and $extracted -notmatch '^\s*=' -and $extracted -ne "public") {
-    $dbName = $extracted
+  if ($urlDb -and $urlDb -notmatch '^\s*=' -and $urlDb -ne "public") {
+    $dbName = $urlDb
   } else {
     $dbName = "school_db"
   }
 }
 Write-Ok "Database target" "$dbName @ $dbHost`:$dbPort"
+# The app connects with DATABASE_URL while the scripts below use the split
+# fields — if they disagree, say so now instead of failing halfway through.
+if ($urlUser -and $dbUser -ne $urlUser) {
+  Write-Warn2 "DATABASE_USER ($dbUser) disagrees with DATABASE_URL ($urlUser) - the app uses the URL."
+}
+if ($urlDb -and $dbName -ne $urlDb) {
+  Write-Warn2 "DATABASE_NAME ($dbName) disagrees with DATABASE_URL ($urlDb) - the app uses the URL."
+}
 
 # ===========================================================================
 #  3. POSTGRESQL

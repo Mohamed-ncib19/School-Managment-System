@@ -68,7 +68,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           title={titleFor(pathname)}
           breadcrumb={showBreadcrumb ? <PageBreadcrumbs pathname={pathname} /> : undefined}
         />
-        <main className="flex-1 p-4 lg:p-8 overflow-y-auto">
+        <main id="main-content" tabIndex={-1} className="flex-1 p-4 lg:p-8 overflow-y-auto">
           <AnimatedPage>{children}</AnimatedPage>
         </main>
       </div>
