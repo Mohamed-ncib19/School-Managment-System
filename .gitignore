@@ -46,6 +46,11 @@ uploads/
 # Machine binding (anti-copy protection) - created on first run, machine-specific
 machine.lock
 
+# Internal working material - never publish to schools: agent skills and
+# session plans stay local only (still read before every task on this machine)
+skills/
+docs/
+
 .vscode
 .idea
 .DS_Store

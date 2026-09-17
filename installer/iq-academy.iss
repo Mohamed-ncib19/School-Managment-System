@@ -12,7 +12,7 @@
 #define AppName "Système de gestion scolaire"
 #define AppShortName "SchoolManagementSystem"
 #define AppPublisher "Mohamed Ncib"
-#define AppVersion "1.1.1"
+#define AppVersion "1.1.2"
 #define AppExeName "launch.vbs"
 
 [Setup]
@@ -63,7 +63,7 @@ Name: "startup"; Description: "Démarrer le système automatiquement à l'ouvert
 ; The whole application tree, minus everything that is generated, private to
 ; a machine, or only meaningful in a developer checkout.
 Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; \
-  Excludes: "\.git\*,\node_modules\*,\apps\*\node_modules\*,\packages\*\node_modules\*,\dist-installer\*,\apps\backend\dist\*,\apps\frontend\.next\*,\apps\frontend\.next-build\*,\logs\*,\backups\*,\.postgres\*,\.cloud-creds\*,machine.lock,*.log,\apps\backend\.env,\apps\frontend\.env.local,\docs\plans\*"
+  Excludes: "\.git\*,\node_modules\*,\apps\*\node_modules\*,\packages\*\node_modules\*,\dist-installer\*,\apps\backend\dist\*,\apps\frontend\.next\*,\apps\frontend\.next-build\*,\logs\*,\backups\*,\.postgres\*,\.cloud-creds\*,machine.lock,*.log,\apps\backend\.env,\apps\frontend\.env.local,\skills\*,\docs\*"
 
 [Icons]
 ; Both shortcuts point at the VBS shim so no console window flashes.
