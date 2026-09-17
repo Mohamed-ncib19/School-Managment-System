@@ -64,9 +64,11 @@ export default function DataTransferSection() {
           setFile(null);
           setPreview(null);
           setError(errorMessage(err));
-          // Encrypted Dropbox copy without its phrase yet: keep it for retry
-          // once the phrase is typed below instead of asking for the file again.
-          setPendingEnc(next.name.toLowerCase().endsWith(".enc") ? next : null);
+          // Keep the file for one-click retry: the usual case is an
+          // encrypted Dropbox copy dropped before its phrase was typed.
+          // Whether it is encrypted is decided by the server reading the
+          // content, never by the file extension.
+          setPendingEnc(next);
         },
       },
     );
@@ -258,7 +260,7 @@ export default function DataTransferSection() {
                 </button>
               </div>
             )}
-            {(file?.name.toLowerCase().endsWith(".enc") || pendingEnc) && (
+            {((file ?? pendingEnc)?.name.toLowerCase().endsWith(".enc") || /chiffr|cup/i.test(error ?? "")) && (
               <div className="mt-3 rounded-btn border border-border p-3">
                 <label className="block text-[11px] font-medium text-text-secondary mb-1">
                   {t("settings.recoveryPhraseLabel", "Phrase de récupération (copie Dropbox chiffrée)")}
@@ -267,6 +269,14 @@ export default function DataTransferSection() {
                   type="password"
                   value={phrase}
                   onChange={(e) => setPhrase(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && pendingEnc && !preview && phrase.trim() && !importPreview.isPending) {
+                      e.preventDefault();
+                      const retry = pendingEnc;
+                      setPendingEnc(null);
+                      onFile(retry);
+                    }
+                  }}
                   placeholder={t("settings.recoveryPhrasePlaceholder", "Les 12 mots, dans l'ordre")}
                   autoComplete="off"
                   className="input w-full text-xs"
