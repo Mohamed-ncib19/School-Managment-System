@@ -55,7 +55,14 @@ $SuperUser = "postgres"
 # via -SuperPassword.
 $SuperPassword = if ($SuperPassword) { $SuperPassword } else { "iq_academy_local" }
 
-function Say { param($Message, $Colour = "White") if (-not $Quiet) { Write-Host "    $Message" -ForegroundColor $Colour } }
+function Say {
+  param($Message, $Colour = "White", [switch]$Force)
+  # Quiet mode hides routine chatter (polls, waits) but never phases that
+  # take minutes, nor warnings or results: a silent 44 MB download looks
+  # exactly like a hang, which is worse than noise.
+  $significant = $Force -or ($Colour -in @("Green", "Yellow", "Red", "Blue"))
+  if ((-not $Quiet) -or $significant) { Write-Host "    $Message" -ForegroundColor $Colour }
+}
 
 <#
   Invoke-WebRequest silently truncates large downloads on some connections,
@@ -399,7 +406,7 @@ if (-not $pgBin) {
   $assetName = "postgresql-$Version-x86_64-pc-windows-msvc.zip"
   $zipPath = Join-Path $PgHome $assetName
 
-  Say "Downloading PostgreSQL $Version (~44 MB)..." "Cyan"
+  Say "Downloading PostgreSQL $Version (~44 MB)..." "Cyan" -Force
   Get-RemoteFile -Url "$base/$assetName" -OutFile $zipPath
 
   # Verify the download before trusting it - this binary runs as a server.
@@ -424,7 +431,7 @@ if (-not $pgBin) {
     Say "Checksum verified" "Green"
   }
 
-  Say "Extracting..." "Cyan"
+  Say "Extracting..." "Cyan" -Force
   if (Test-Path $RuntimeDir) { Remove-Item $RuntimeDir -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
   Expand-Archive -Path $zipPath -DestinationPath $RuntimeDir -Force
@@ -441,7 +448,7 @@ $pgCtl = Join-Path $pgBin "pg_ctl.exe"
 
 # --- initialise the data directory (first run only) ------------------------
 if (-not (Test-Path (Join-Path $DataDir "PG_VERSION"))) {
-  Say "Creating the database cluster..." "Cyan"
+  Say "Creating the database cluster..." "Cyan" -Force
   if (Test-Path $DataDir) { Remove-Item $DataDir -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
@@ -505,7 +512,7 @@ for ($attempt = 1; $attempt -le 3 -and -not $started; $attempt++) {
   Remove-Item $logUsed -Force -ErrorAction SilentlyContinue
 
   $attemptStart = Get-Date
-  Say "Starting PostgreSQL (attempt $attempt/3)..." "Cyan"
+  Say "Starting PostgreSQL (attempt $attempt/3)..." "Cyan" -Force
   # Capturing pg_ctl output through a PowerShell pipeline dead-locks on
   # Windows: the spawned postmaster inherits the pipe handles, so EOF never
   # comes even though pg_ctl has exited. Start-Process -Wait+Redirect waits
