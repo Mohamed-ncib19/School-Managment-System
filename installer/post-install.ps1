@@ -210,9 +210,6 @@ try {
 } finally {
   Pop-Location
 }
-} finally {
-  Pop-Location
-}
 
 # --- 4b. Link version control when possible ----------------------------------
 # Setup-installed copies ship without .git (the installer excludes it), which
