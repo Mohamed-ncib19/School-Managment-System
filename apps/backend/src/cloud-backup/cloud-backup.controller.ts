@@ -72,6 +72,10 @@ export class CloudBackupController {
       displayName: d.displayName,
       description: d.description,
       requiresOAuth: d.requiresOAuth ?? false,
+      // Retired destinations stay listed with selectable: false so existing
+      // installs keep reading them (restore dialog); setup pickers filter
+      // them out and POST /targets refuses them below.
+      selectable: d.selectable !== false,
       // Free, no card, under a minute — shown on the first screen. Google
       // Drive qualifies only when this server actually has an OAuth client.
       recommended: isRecommended(d),
@@ -195,6 +199,11 @@ export class CloudBackupController {
     if (!body.driverId || !body.config) throw new BadRequestException("Paramètres de destination incomplets.");
     const def = DRIVER_DEFINITIONS.find((d) => d.id === body.driverId);
     if (!def) throw new BadRequestException("Type de destination inconnu.");
+    if (def.selectable === false) {
+      throw new BadRequestException(
+        "Cette destination n'est plus proposée aux nouvelles sauvegardes. Les sauvegardes existantes continuent de fonctionner et restent restaurables.",
+      );
+    }
 
     // Fills in the app's Google OAuth client, so the browser never sent one.
     const config = this.prepareConfig(body.driverId, body.config);

@@ -72,7 +72,7 @@ describe("the picker offers free options first", () => {
 
   it("leads with what always works and gates the one-click clouds on credentials", () => {
     const promoted = () =>
-      DRIVER_DEFINITIONS.filter((d) => isRecommended(d))
+      DRIVER_DEFINITIONS.filter((d) => d.selectable !== false && isRecommended(d))
         .map((d) => d.id)
         .sort();
 
@@ -90,13 +90,14 @@ describe("the picker offers free options first", () => {
     process.env.DROPBOX_APP_SECRET = "app-secret";
     expect(promoted()).toEqual(["dropbox", "folder"]);
 
-    // Drive joins too once credentials exist (publisher or self-hosted) — it
-    // is offered after Dropbox in the UI: same one-click, but Google gates
-    // unreviewed apps behind test users. The sorted expectation below is
+    // Drive is retired from new setups even with credentials (its consent
+    // wall refuses most schools) — it stays registered so existing Drive
+    // backups keep syncing and restoring. The sorted expectation below is
     // alphabetical.
     process.env.GOOGLE_OAUTH_CLIENT_ID = "id.apps.googleusercontent.com";
     process.env.GOOGLE_OAUTH_CLIENT_SECRET = "client-secret";
-    expect(promoted()).toEqual(["dropbox", "folder", "gdrive"]);
+    expect(promoted()).toEqual(["dropbox", "folder"]);
+    expect(DRIVER_DEFINITIONS.find((d) => d.id === "gdrive")?.selectable).toBe(false);
   });
   it("states the cost on every recommended card", () => {
     for (const def of recommended) {

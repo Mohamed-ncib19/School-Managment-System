@@ -540,14 +540,17 @@ function StepTargets({
     }
   };
 
-  // Setup offers exactly three destinations — the safe, free, one-minute
-  // ones. Expert drivers (S3, WebDAV…) still work through the API and appear
+  // Setup offers exactly two destinations — the safe, free, one-minute
+  // ones (external disk, Dropbox). Google Drive is retired from new setups
+  // (its consent wall refuses most schools) but existing Drive backups stay
+  // readable through the restore dialog, which does not filter on selectable.
+  // Expert drivers (S3, WebDAV…) still work through the API and appear
   // in the restore dialog, but a school setting up backup should never have
-  // to choose between six providers. Dropbox leads: no vendor validation,
+  // to choose between providers. Dropbox leads: no vendor validation,
   // no test-user list, LAN-friendly — the login-and-link flow.
-  const SIMPLE_IDS = ["folder", "dropbox", "gdrive"];
+  const SIMPLE_IDS = ["folder", "dropbox"];
   const simple = SIMPLE_IDS.map((id) => drivers.find((d) => d.id === id)).filter(
-    (d): d is DriverDefinition => Boolean(d),
+    (d): d is DriverDefinition => d !== undefined && d.selectable !== false,
   );
   const primary = simple.length > 0 ? simple : drivers.filter((d) => d.recommended);
 
@@ -568,7 +571,7 @@ function StepTargets({
           </p>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {primary.map((d) => (
             <DriverCard
               key={d.id}

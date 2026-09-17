@@ -51,6 +51,13 @@ export interface DriverDefinition {
   freeTier?: string;
   /** True when setup requires a two-step OAuth handshake instead of a form. */
   requiresOAuth?: boolean;
+  /**
+   * False for retired destinations: hidden from every setup picker and
+   * refused by POST /targets, but kept registered so existing targets keep
+   * syncing and restores keep reading. Deleting the definition instead would
+   * strand schools whose backups already live there.
+   */
+  selectable?: boolean;
   create(config: unknown): StorageDriver;
 }
 
@@ -113,7 +120,7 @@ export const DRIVER_DEFINITIONS: DriverDefinition[] = [
     ],
     setupHelp:
       "Le plus simple contre la panne la plus fréquente (le disque du poste). " +
-      "Ajoutez ensuite Google Drive : le cloud protège aussi contre le vol et l'incendie.",
+      "Ajoutez ensuite Dropbox : le cloud protège aussi contre le vol et l'incendie.",
     create: (config) => new FolderDriver(config as FolderConfig),
   },
   {
@@ -123,6 +130,11 @@ export const DRIVER_DEFINITIONS: DriverDefinition[] = [
     recommended: true,
     freeTier: "15 Go gratuits",
     requiresOAuth: true,
+    // Retired from new setups: Google gates unreviewed apps behind test
+    // users, so the consent page refuses with access_denied for most
+    // schools. Existing Drive targets keep syncing and restores keep
+    // reading — only the setup choice is gone.
+    selectable: false,
     // setupHelp is resolved per request by driverSetupHelp(); it depends on
     // env that is not reliably loaded when this module is first evaluated.
     fields: [

@@ -64,6 +64,11 @@ export interface DriverDefinition {
   oauthReady?: boolean;
   /** Free, no card, under a minute — shown on the first screen. */
   recommended?: boolean;
+  /**
+   * False for retired destinations (Google Drive): hidden from setup
+   * pickers, still listed so restores of existing backups keep working.
+   */
+  selectable?: boolean;
   /** What the school gets for nothing, stated plainly on the card. */
   freeTier?: string | null;
   /** Where to click in the provider's own site to obtain these values. */

@@ -38,17 +38,18 @@ The sync worker re-asserts its claim on every drain cycle. A claim with no heart
 
 ### Choosing a destination
 
-The wizard shows **three** destinations. All are free, none needs a payment card, and each is done in under a minute:
+The wizard shows **two** destinations. Both are free, neither needs a payment card, and either is done in under a minute:
 
 | Destination | What the administrator provides | Cost |
 |---|---|---|
 | **Dropbox** | One click on "Se connecter avec Dropbox" — no vendor validation, no test list, works from any computer | 2 GB free |
-| **Google Drive** | One click on "Se connecter avec Google" — or the code flow below from any computer | 15 GB free |
 | **Disque externe ou dossier réseau** | A path — a USB disk, a NAS, a mapped drive | Free |
 
-**Connecting from another computer (no need to sit at the server).** Under each connect button, **« Sur un autre poste ? »** shows a link: open it on any device (phone included), approve, then copy the `code` out of the address bar — that page never needs to load — and paste it back. The server swaps the code for its credential itself, so the secret never crosses the browser. This works for Google Drive and Dropbox alike.
+**Connecting from another computer (no need to sit at the server).** Under the Dropbox connect button, **« Sur un autre poste ? »** shows a link: open it on any device (phone included), approve, then copy the `code` out of the address bar — that page never needs to load — and paste it back. The server swaps the code for its credential itself, so the secret never crosses the browser.
 
-**Why these three first, in this order.** Dropbox leads because its consent never shows a validation wall: App-folder registration needs no review and has no test-user list, so login-and-link works for every school on day one. Google Drive holds more (15 GB) but Google gates unreviewed apps behind test users — fine once the app is verified or the school's account is listed, otherwise the consent page refuses with `access_denied`. The external disk covers the offline case. Google's loopback redirect used to force the administrator to sit at the server; the copy-code flow above removes that — any computer on the network connects the account in two pastes.
+**Why these two, in this order.** Dropbox leads because its consent never shows a validation wall: App-folder registration needs no review and has no test-user list, so login-and-link works for every school on day one. The external disk covers the offline case. The copy-code flow above removes the old loopback restriction — any computer on the network connects the account in two pastes.
+
+**Google Drive is retired from new setups** (its consent page refuses with `access_denied` for most schools: Google gates unreviewed apps behind test users). Installs that already back up to Drive are unaffected — their targets keep syncing and the login-page restore still reads Drive. No new Drive destination can be created; the API refuses with an explicit message.
 
 `App folder` scope also means the app can only ever see the directory it created. It cannot read the user's other files even in principle, which makes the consent screen honest.
 
@@ -59,12 +60,11 @@ Everything else sits behind **Autres options**, for a school that already has an
 | Destination | Cost | Note |
 |---|---|---|
 | **Backblaze B2** | 10 GB free | Bucket + application key, about 3 minutes |
-| **Google Drive** | 15 GB free | Needs an OAuth client from the publisher; `localhost` only |
 | **Cloudflare R2** | 10 GB free | Cloudflare requires a payment card to enable R2 |
 | **Nextcloud / WebDAV** | Free if self-hosted | URL, user, app password |
 | **Autre service S3** | Varies | The escape hatch: MinIO, AWS, Wasabi, anything S3 |
 
-Dropbox and Google Drive appear on the first screen **only when this server has app credentials configured** (`DROPBOX_APP_KEY` / `GOOGLE_OAUTH_CLIENT_ID`). Without them their connect button can only return an error, so they drop into *Autres options* with a note explaining that the missing step belongs to the publisher, not the school.
+Dropbox appears on the first screen **only when this server has app credentials configured** (`DROPBOX_APP_KEY`). Without them the connect button can only return an error, so it drops into *Autres options* with a note explaining that the missing step belongs to the publisher, not the school.
 
 Wasabi had its own entry and lost it: no free tier, only a 30-day trial. It is still reachable through the generic S3 entry for anyone who pays for it deliberately.
 
@@ -74,24 +74,11 @@ The S3 entries are one driver with the endpoint, region and addressing style sup
 
 Everything written to a folder is byte-identical to what goes to S3: same envelope, same AES-256-GCM, same recovery phrase. A lost USB drive is ciphertext.
 
-### Connecting Google Drive
+### Google Drive (existing installs only)
 
-Sitting at the server, the flow is one click: press **Se connecter avec Google**, pick an account, done. No client id, no client secret, no token to copy.
+Google Drive no longer appears in the setup wizard: its consent page refuses most schools (`access_denied` — Google gates unreviewed apps behind test users). Installs configured before the retirement keep working untouched — existing Drive targets keep syncing, and the login-page restore still connects a Drive account the same copy-code way described for Dropbox. No *new* Drive destination can be created.
 
-From any other computer on the network, use **« Sur un autre poste ? »** under the same button instead: open the shown link anywhere, approve, and paste the code back. The consent still returns to a loopback address (the only kind Google accepts for an installed app), but only the *code* travels — copied out of the address bar by hand — so it no longer matters which machine opened the browser.
-
-That works because the application ships its own Google OAuth client, set once in the release build:
-
-```
-GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=....
-```
-
-Create it at **console.cloud.google.com → APIs & Services → Credentials → Create credentials → OAuth client ID → Desktop app**. A desktop client is designed to be distributed inside an installed application, which is why its "secret" is not treated as confidential ([RFC 8252 §8.5](https://datatracker.ietf.org/doc/html/rfc8252#section-8.5)) — the same pattern rclone and the gcloud CLI use. Security rests on the user's own consent and on the loopback redirect, not on hiding that value.
-
-The backup requests only the `drive.file` scope, which can see nothing but the files this app itself created. Google classifies it as non-sensitive, so no verification review is required and the quota is generous for a handful of objects a day per school.
-
-Leave both variables blank and the app falls back to asking each install for its own OAuth client — the old behaviour, kept for self-hosters who want it.
+The technical notes below stay for those installs: the app ships its own Google OAuth client (`GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`, a **Desktop app** client at console.cloud.google.com → APIs & Services → Credentials), requests only the `drive.file` scope (sees nothing but files it created), and accepts the loopback redirect on any computer via the copied code. Leave both variables blank and the app falls back to asking each install for its own OAuth client.
 
 ### Running in a container
 
@@ -179,7 +166,7 @@ Objects are **never deleted or overwritten** by the app — ransomware-style rol
 
 A four-step wizard, with only two decisions. The administrator chooses a destination, then writes down the recovery phrase; verification and the first snapshot start on their own and move on when done:
 
-1. **Choose a destination** — Google Drive, Dropbox, or an external disk / network folder. Test the connection.
+1. **Choose a destination** — Dropbox or an external disk / network folder. Test the connection.
 2. **Generate the recovery phrase** — 12 words, shown once. Print the recovery sheet. There is no way to recover data without it.
 3. **Verify** — automatic: the app uploads an encrypted probe and decrypts it back with your phrase.
 4. **Activate** — automatic: first snapshot runs immediately; continuous sync starts.
@@ -222,7 +209,7 @@ The SQL dump is a plain `pg_dump` (custom-format-free, plain SQL) once decoded.
 | AWS S3 | Access key ID + secret, region, bucket | Dedicated IAM user with `s3:PutObject`, `s3:GetObject`, `s3:ListBucket` scoped to one bucket/prefix. No delete permissions. |
 | Cloudflare R2 | Account ID + access key + secret, bucket | R2 API token with Object Read & Write on a single bucket only. |
 | Backblaze B2 | keyID + applicationKey, bucket | Application key limited to one bucket, type *read/write* (no deleteNativeFiles). |
-| Google Drive | OAuth consent in-app (refresh token stored locally) | Use a dedicated Google account for backups; the app only touches files it created under its own folder. |
+| Google Drive (existing installs only, no new setups) | OAuth consent in-app (refresh token stored locally) | Use a dedicated Google account for backups; the app only touches files it created under its own folder. |
 | WebDAV | Base URL, username, password (or app password) | Create a dedicated account whose home is the backup directory; disable overwrite/delete rights if your server supports per-method ACLs. |
 
 Credentials are stored with OS-level protection (Windows Credential Manager / DPAPI; keychain-equivalent elsewhere) — never in the database, never in the cloud.
