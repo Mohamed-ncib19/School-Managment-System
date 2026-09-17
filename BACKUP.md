@@ -152,13 +152,13 @@ All keys are prefixed by `school_id`:
 {school_id}/meta/salt.json          KDF parameters (plaintext)
 {school_id}/meta/instances.json     instance registry (plaintext, append-only)
 {school_id}/meta/check.json.enc     known-plaintext probe to verify the phrase
-{school_id}/snapshots/{iso}_{seq}.sql.zst.enc
-{school_id}/exports/{iso}_{seq}.json.zst.enc   Importer-compatible copy (same envelope, same phrase)
+{school_id}/snapshots/{iso}_{seq}_{hhmmss}_{rand}.sql.zst.enc
+{school_id}/exports/{iso}_{seq}_{hhmmss}_{rand}.json.zst.enc   Importer-compatible copy (same envelope, same phrase)
 {school_id}/events/{iso}/{from}-{to}.jsonl.zst.enc
 {school_id}/manifests/{iso}.json.enc
 ```
 
-Objects are **never deleted or overwritten** by the app — ransomware-style rollback through the app is impossible. Prune old objects manually at the provider if cost matters (keep at least the newest snapshot + its manifest).
+Objects are **never deleted** by the app — ransomware-style rollback through the app is impossible — and snapshots/exports **never reuse a key**: every run mints `{date}_{seq}_{time}_{random}`, so a new copy is always a new file and a backend refusing overwrites (Dropbox 409) can never wedge the sync. Two deliberate exceptions, both same-content rewrites rather than history changes: an event batch re-uploads its exact sequence range until acknowledged (idempotent — the retry carries the same events), and the daily manifest is a rewritten pointer to the newest objects. Prune old objects manually at the provider if cost matters (keep at least the newest snapshot + its manifest).
 
 ---
 

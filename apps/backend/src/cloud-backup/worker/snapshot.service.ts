@@ -16,8 +16,25 @@ import { RedactingLogger } from "../redaction/redaction";
 import { findPgBin } from "./pg-bin";
 import { computeSchemaHash } from "./schema-hash";
 import { Readable } from "node:stream";
+import { randomBytes } from "node:crypto";
 import { Optional } from "@nestjs/common";
 import { DataTransferService } from "../../data-transfer/data-transfer.service";
+
+/**
+ * Unique suffix per run (clock time + randomness): snapshot and export keys
+ * must never repeat. The previous `{date}_{seq}` scheme reused the same key
+ * for a second snapshot on the same day (or any snapshot while the queue was
+ * stuck at one sequence), so backends refusing overwrites answered 409 and
+ * the copy silently stopped updating. The `{date}_{seq}` prefix keeps
+ * lexicographic order chronological for restore discovery.
+ */
+function uniqueSuffix(): string {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `${hh}${mm}${ss}_${randomBytes(3).toString("hex")}`;
+}
 
 const PG_TIMEOUT_MS = 30 * 60_000;
 
@@ -149,7 +166,7 @@ export class SnapshotService {
 
       const seq = (await this.maxQueueSeq()) + 1;
       const isoDate = new Date().toISOString().slice(0, 10);
-      const objectKey = `${schoolId}/snapshots/${isoDate}_${String(seq).padStart(10, "0")}.sql.zst.enc`;
+      const objectKey = `${schoolId}/snapshots/${isoDate}_${String(seq).padStart(10, "0")}_${uniqueSuffix()}.sql.zst.enc`;
 
       this.logger.log(`Snapshot (${reason}) — queue seq through ${seq} — starting.`);
 
@@ -218,7 +235,7 @@ compression: compressionAlgorithm(),
     }
     if (!plaintext.length) return;
     const isoDate = new Date().toISOString().slice(0, 10);
-    const objectKey = `${schoolId}/exports/${isoDate}_${String(seq).padStart(10, "0")}.json.zst.enc`;
+    const objectKey = `${schoolId}/exports/${isoDate}_${String(seq).padStart(10, "0")}_${uniqueSuffix()}.json.zst.enc`;
     try {
       const encoded = await encodeObject({
         schoolId,
@@ -285,7 +302,9 @@ compression: compressionAlgorithm(),
     });
     for (const target of targets) {
       try {
-        await target.driver.put(objectKey, encoded.openStream(), encoded.size);
+        // The daily manifest is a rewritten pointer, not versioned data:
+        // same key every upload by design, so it must overwrite.
+        await target.driver.put(objectKey, encoded.openStream(), encoded.size, { overwrite: true });
       } catch (err) {
         this.logger.error(`Manifest upload to ${target.id} failed: ${err instanceof Error ? err.message : String(err)}`);
       }

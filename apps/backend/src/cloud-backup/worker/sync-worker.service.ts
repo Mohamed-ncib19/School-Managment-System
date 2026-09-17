@@ -389,7 +389,12 @@ export class SyncWorkerService implements OnApplicationBootstrap, OnApplicationS
       let reachedAtLeastOne = false;
       for (const target of targets) {
         try {
-          await target.driver.put(objectKey, encoded.openStream(), encoded.size);
+          // Idempotent re-upload: a batch key names its exact sequence
+          // range, so a retry carries the same events. Without overwrite a
+          // first attempt that landed but failed to acknowledge wedges the
+          // queue forever (Dropbox 409, folder "already exists"): every
+          // retry collides, every cycle marks failed, nothing ever drains.
+          await target.driver.put(objectKey, encoded.openStream(), encoded.size, { overwrite: true });
           await this.db.client
             .insert(backupManifest)
             .values({
