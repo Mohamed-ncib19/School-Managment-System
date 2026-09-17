@@ -1631,6 +1631,8 @@
     "noTargets": "Aucune destination liée.",
     "targetEnabled": "Active",
     "targetDisabled": "Désactivée",
+    "targetRetired": "Retirée",
+    "targetRetiredNote": "Retirée de la synchronisation — les copies déjà envoyées restent sur le cloud.",
     "targetLastSuccess": "Dernier succès :",
     "targetFailures": "échecs",
     "testTarget": "Tester",

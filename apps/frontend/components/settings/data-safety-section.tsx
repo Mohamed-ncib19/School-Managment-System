@@ -330,7 +330,7 @@ function ConfiguredOverview({
                   >
                     {target.enabled
                       ? t("cloudSafeSave.targetEnabled", "Active")
-                      : t("cloudSafeSave.targetDisabled", "Désactivée")}
+                      : t("cloudSafeSave.targetRetired", "Retirée")}
                   </span>
                 </div>
                 <div className="mt-1.5 space-y-1 text-xs text-text-secondary">
@@ -360,25 +360,33 @@ function ConfiguredOverview({
                     </p>
                   )}
                 </div>
-                <div className="mt-2.5 flex gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-secondary text-xs min-h-[32px]"
-                    onClick={() => void runTest(target.id)}
-                    disabled={test?.running || deleting}
-                  >
-                    {test?.running ? <RefreshCw size={12} className="animate-spin" /> : <TestTube2 size={12} />}
-                    {t("cloudSafeSave.testTarget", "Tester")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary text-xs min-h-[32px] hover:text-danger"
-                    onClick={() => void runDelete(target.id, target.name)}
-                    disabled={test?.running || deleting}
-                  >
-                    {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                    {t("cloudSafeSave.deleteTarget", "Retirer")}
-                  </button>
+                <div className="mt-2.5 flex gap-2 flex-wrap items-center">
+                  {target.enabled ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-secondary text-xs min-h-[32px]"
+                        onClick={() => void runTest(target.id)}
+                        disabled={test?.running || deleting}
+                      >
+                        {test?.running ? <RefreshCw size={12} className="animate-spin" /> : <TestTube2 size={12} />}
+                        {t("cloudSafeSave.testTarget", "Tester")}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary text-xs min-h-[32px] hover:text-danger"
+                        onClick={() => void runDelete(target.id, target.name)}
+                        disabled={test?.running || deleting}
+                      >
+                        {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        {t("cloudSafeSave.deleteTarget", "Retirer")}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-text-secondary">
+                      {t("cloudSafeSave.targetRetiredNote", "Retirée de la synchronisation — les copies déjà envoyées restent sur le cloud.")}
+                    </p>
+                  )}
                 </div>
               </div>
             );
