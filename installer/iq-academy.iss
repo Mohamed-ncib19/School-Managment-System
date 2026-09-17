@@ -100,6 +100,13 @@ Filename: "powershell.exe"; \
   Parameters: "-NoLogo -NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\engine\stop.ps1"" -StopDatabase"; \
   Flags: runhidden waituntilterminated; RunOnceId: "StopServers"
 
+[InstallDelete]
+; Leftovers from releases that shipped them (<= 1.1.1): an upgrade overwrites
+; and adds files but never removes ones that left the package, so without this
+; the unpublished skills/ and docs/ folders would sit in {app} forever.
+Type: filesandordirs; Name: "{app}\skills"
+Type: filesandordirs; Name: "{app}\docs"
+
 [UninstallDelete]
 ; Build output and logs are ours to remove. The school's data is NOT:
 ; backups\, .postgres\ and the .env files are deliberately left behind so an
