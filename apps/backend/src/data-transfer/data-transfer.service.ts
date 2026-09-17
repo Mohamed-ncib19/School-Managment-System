@@ -243,17 +243,32 @@ const current = getTableColumns(def.table) as Record<string, any>;
       const fileColumns = fileTable.columns.filter((column) => current[column]);
 
       if (fileTable.rows.length > 0) {
-        // Every NOT NULL column without a default must be present in the file
-        // or provided as a fill value — otherwise the insert fails and the
-        // whole transaction is lost. Fail the import before opening one.
+        // Every NOT NULL column without a default must hold a value in every
+        // row — or be provided as a fill value, which patches only the empty
+        // cells. Checking here (not just column presence) turns an opaque
+        // mid-transaction 500 into a 400 naming the exact row. Empty means
+        // null/undefined/"" — exactly what buildRow drops below.
+        const isEmptyCell = (row: unknown, index: number) =>
+          !Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === "";
         for (const [column, col] of Object.entries(current)) {
           const required = col.notNull && !col.hasDefault;
-          if (!required || fileColumns.includes(column)) continue;
+          if (!required) continue;
           const fill = opts[column];
-          if (fill === undefined || String(fill).trim() === "") {
+          const filled = fill !== undefined && String(fill).trim() !== "";
+          if (!fileColumns.includes(column)) {
+            if (filled) continue;
             throw new BadRequestException(
               `Import ${def.label} impossible : la colonne « ${column} » manque dans le fichier. ` +
                 `Renseignez-la dans l'aperçu (une valeur pour toutes les lignes) avant d'importer.`,
+            );
+          }
+          if (filled) continue;
+          const colIndex = fileTable.columns.indexOf(column);
+          const bad = fileTable.rows.findIndex((row) => isEmptyCell(row, colIndex));
+          if (bad >= 0) {
+            throw new BadRequestException(
+              `Import ${def.label} impossible : la colonne « ${column} » est vide à la ligne ${bad + 1} du fichier. ` +
+                `Renseignez-la dans l'aperçu (une valeur pour les lignes vides) avant d'importer.`,
             );
           }
         }
@@ -415,7 +430,19 @@ const current = getTableColumns(def.table) as Record<string, any>;
     const missingRequired: TableColumnIssue[] = [];
     const missingOptional: TableColumnIssue[] = [];
     for (const [column, col] of Object.entries(current)) {
-      if (fileSet.has(column)) continue;
+      if (fileSet.has(column)) {
+        // Required column present but with empty cells (null/""): the file
+        // cannot import as-is, so it joins missingRequired and the same fill
+        // flow patches only those cells at import time.
+        if (col.notNull && !col.hasDefault) {
+          const index = fileTable.columns.indexOf(column);
+          const sparse = fileTable.rows.some(
+            (row) => !Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === "",
+          );
+          if (sparse) missingRequired.push({ column, type: this.describeType(col.columnType) });
+        }
+        continue;
+      }
       const issue = { column, type: this.describeType(col.columnType) };
       if (col.notNull && !col.hasDefault) missingRequired.push(issue);
       else missingOptional.push(issue);

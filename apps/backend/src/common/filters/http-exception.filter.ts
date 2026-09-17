@@ -16,12 +16,21 @@ import { Request, Response } from "express";
 function mapPgError(
   exception: unknown,
 ): { status: number; code: string; message: string } | null {
-  const err = exception as {
+  // Drizzle wraps every driver failure in DrizzleQueryError, which carries
+  // the query text and params but NOT the pg code — it sits one level down
+  // in `.cause`. Without unwrapping, every constraint violation in the app
+  // (duplicate, foreign key, not-null, …) falls through to an opaque 500.
+  let err = exception as {
     code?: string;
     detail?: string;
     constraint?: string;
     table?: string;
+    cause?: unknown;
   };
+  for (let depth = 0; depth < 3 && err; depth++) {
+    if (err?.code && typeof err.code === "string") break;
+    err = err?.cause as typeof err;
+  }
   if (!err?.code || typeof err.code !== "string") return null;
 
   switch (err.code) {

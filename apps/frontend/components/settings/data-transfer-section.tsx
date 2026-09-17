@@ -385,7 +385,7 @@ export default function DataTransferSection() {
                       {table.missingRequired.length > 0 && (
                         <div className="rounded-btn border border-danger/20 bg-danger-soft/50 dark:bg-danger-dark-soft/40 p-3 space-y-2">
                           <p className="text-[11px] font-semibold text-danger-strong dark:text-danger-dark-strong">
-                            {t("settings.fillRequiredHint", "Ces colonnes manquent dans le fichier — une valeur sera appliquée à toutes les lignes :")}
+                            {t("settings.fillRequiredHint", "Ces colonnes manquent dans le fichier ou contiennent des cases vides — une valeur sera appliquée aux lignes concernées :")}
                           </p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {table.missingRequired.map((column) => (
