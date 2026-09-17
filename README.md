@@ -15,10 +15,14 @@ start, stop and open the system (see Daily use below).
 **macOS / Linux:** clone the repository, then run `./installer/macos/start.sh`.
 
 You need Windows 10/11 (or macOS/Linux with Node.js 20.9+) and an internet
-connection for the first install. **Updating never needs the installer:**
-on an existing install, log in and apply the in-app update (Settings →
-Mises à jour du système) — code, dependencies, schema and restart are handled
-with a safety database dump taken first, and no data is touched.
+connection for the first install. **Updating:** a git checkout updates
+itself — log in and apply the in-app update (Settings → Mises à jour du
+système), which handles code, dependencies, schema and restart with a safety
+database dump taken first, and no data is touched. An install made with
+Setup.exe updates by running the newest Setup.exe over the existing folder
+(Next/Next): configuration, database and backups are preserved; only the
+program files refresh, and the installer links version control when it can so
+later updates arrive in the app.
 
 ## Stack
 

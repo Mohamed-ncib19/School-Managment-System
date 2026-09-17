@@ -193,6 +193,33 @@ try {
   Pop-Location
 }
 
+# --- 4b. Link version control when possible ----------------------------------
+# Setup-installed copies ship without .git (the installer excludes it), which
+# disables both the in-app updater and the launcher's self-update - both need
+# a clone. When git exists and the release branch is reachable WITHOUT an
+# interactive login, clone it shallowly into a temp dir and keep only the
+# .git metadata, so this machine updates itself from now on. Anything missing
+# (no git, offline, private repo without cached credentials) skips silently:
+# the install works exactly as before, it just updates via the next Setup.exe.
+try {
+  $hasGitDir = Test-Path (Join-Path $AppRoot ".git")
+  $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+  if (-not $hasGitDir -and $gitCmd) {
+    $env:GIT_TERMINAL_PROMPT = "0"
+    $tmpClone = Join-Path $env:TEMP ("iq-git-" + [Guid]::NewGuid().ToString("N"))
+    # Same release repository the updater polls (see updates.service.ts).
+    $remote = "https://github.com/Mohamed-ncib19/School-Managment-System.git"
+    & git clone --quiet --depth 1 --branch selfhosted --no-checkout $remote $tmpClone 2>$null | Out-Null
+    if (($LASTEXITCODE -eq 0) -and (Test-Path (Join-Path $tmpClone ".git"))) {
+      Move-Item (Join-Path $tmpClone ".git") (Join-Path $AppRoot ".git") -Force
+      Push-Location $AppRoot
+      try { & git reset --quiet 2>$null | Out-Null } finally { Pop-Location }
+      Log "Version control linked - future updates arrive inside the app."
+    }
+    Remove-Item $tmpClone -Recurse -Force -ErrorAction SilentlyContinue
+  }
+} catch { }
+
 Log "Installation terminée."
 Log "Journal : $LogFile"
 exit 0
