@@ -473,6 +473,51 @@ Write-Ok "PostgreSQL accepting connections" "port $dbPort"
 $psql = Find-Tool -Name "psql" -PgBin $pgBin
 
 <#
+  Reads the native cluster's own files to learn whether the superuser needs
+  a password at all: resolves the data directory from the Windows service
+  ImagePath (-D), honors a relocated hba_file, and evaluates pg_hba.conf
+  first-match-wins for loopback TCP as user postgres. Returns "trust" (empty
+  password works), "password" (a password is required), or "unknown" (no
+  service, unreadable files, or the service targets another port).
+#>
+function Get-NativeLoopbackAuth {
+  param([int]$Port)
+  try {
+    $svc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $svc) { return "unknown" }
+    $detail = Get-CimInstance Win32_Service -Filter "Name = '$($svc.Name)'" -ErrorAction SilentlyContinue
+    if (-not $detail -or -not $detail.PathName) { return "unknown" }
+    $m = [regex]::Match($detail.PathName, '-D\s+"([^"]+)"')
+    if (-not $m.Success) { $m = [regex]::Match($detail.PathName, '-D\s+(\S+)') }
+    if (-not $m.Success) { return "unknown" }
+    $dataDir = $m.Groups[1].Value
+    $conf = Join-Path $dataDir "postgresql.conf"
+    $hba = Join-Path $dataDir "pg_hba.conf"
+    if ((Test-Path $conf)) {
+      $hm = Select-String -Path $conf -Pattern "^\s*hba_file\s*=\s*'([^']+)'" -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($hm) { $hba = $hm.Matches[0].Groups[1].Value }
+      $pm = Select-String -Path $conf -Pattern "^\s*port\s*=\s*(\d+)" -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($pm -and ([int]$pm.Matches[0].Groups[1].Value) -ne $Port) { return "unknown" }
+    }
+    if (-not (Test-Path $hba)) { return "unknown" }
+    foreach ($line in Get-Content $hba) {
+      $t = $line.Trim()
+      if (-not $t -or $t.StartsWith("#")) { continue }
+      $parts = $t -split "\s+"
+      if ($parts.Count -lt 5 -or $parts[0] -ne "host") { continue }
+      if ($parts[1] -notin @("all", "postgres")) { continue }
+      if ($parts[2] -notin @("all", "postgres")) { continue }
+      if ($parts[3] -notmatch "^(127\.0\.0\.1/32|::1/128|samehost|samenet)$") { continue }
+      $method = $parts[4]
+      if ($method -eq "trust") { return "trust" }
+      if ($method -eq "reject") { return "password" }
+      return "password"
+    }
+    return "unknown"
+  } catch { return "unknown" }
+}
+
+<#
   Ensures the application role and database exist via the first working
   superuser password. Returns that password, or $null when no candidate
   authenticates. Reads the live $psql/$dbHost/$dbPort/$dbUser/$dbPass/$dbName
@@ -487,6 +532,12 @@ function Ensure-AppRoleAndDb {
     "postgres",
     ""
   ) | Where-Object { $_ -ne $null } | Select-Object -Unique
+  # The cluster's own files outrank guessing: loopback trust means the empty
+  # password works right now, so try it first instead of last.
+  if ((Get-NativeLoopbackAuth -Port $dbPort) -eq "trust") {
+    Write-Info "pg_hba.conf allows passwordless loopback - using empty superuser password."
+    $candidates = @("") + @($candidates | Where-Object { $_ -ne "" })
+  }
 
   $working = $null
   foreach ($sp in $candidates) {
