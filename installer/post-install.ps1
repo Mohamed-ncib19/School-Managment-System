@@ -193,6 +193,27 @@ try {
   Pop-Location
 }
 
+# --- 4b. Build native dependency binaries ------------------------------------
+# pnpm 10 refuses to run install scripts until approved. The allow-list is
+# committed in pnpm-workspace.yaml, but a cold machine still has to execute
+# the newly-allowed builds once — otherwise the native zstd binding
+# (cloud-backup compression) silently stays unbuilt and every backup falls
+# back to gzip. `pnpm rebuild` with package names is non-interactive (never
+# prompts, unlike bare `pnpm approve-builds`) and a no-op when built.
+Log "Compilation des binaires natifs (zstd)…"
+Push-Location $AppRoot
+try {
+  $rebuildCode = Invoke-Native -Exe "pnpm" -Arguments @("rebuild", "@mongodb-js/zstd")
+  if ($rebuildCode -ne 0) {
+    Log "Rebuild impossible — la compression utilisera gzip au lieu de zstd."
+  }
+} finally {
+  Pop-Location
+}
+} finally {
+  Pop-Location
+}
+
 # --- 4b. Link version control when possible ----------------------------------
 # Setup-installed copies ship without .git (the installer excludes it), which
 # disables both the in-app updater and the launcher's self-update - both need

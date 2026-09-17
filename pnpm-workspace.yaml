@@ -4,9 +4,11 @@ packages:
 
 # pnpm 10 blocks build scripts by default. @nestjs/core needs its postinstall so that
 # its @swc/core native dependency also compiles on a cold machine.
-# Note: this only covers direct workspace dependencies. For transitive deps like
-# @swc/core (nested under @nestjs/core), users must also run `pnpm approve-builds`
-# interactively on first pull — the approval is stored per-machine.
+# @mongodb-js/zstd carries the native zstd binding behind cloud-backup
+# compression: without approval every install silently falls back to gzip.
+# Committed here (not per-machine) so fresh installs, updates and dev
+# checkouts all build the same binaries with zero interactive steps.
 onlyBuiltDependencies:
   - "@nestjs/core"
   - "@swc/core"
+  - "@mongodb-js/zstd"

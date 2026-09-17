@@ -230,6 +230,15 @@ $installJob = Start-Job -ScriptBlock {
 Wait-BackgroundJob -Job $installJob -Label "Installing packages (pnpm)" -TimeoutSec 900 -FailMessage "pnpm install failed"
 Write-Ok "Dependencies up to date"
 
+# pnpm 10 refuses to run install scripts until approved per-machine. The
+# allow-list is committed, but a machine that never executed the builds would
+# silently lose the native zstd binding on the next dependency change.
+# `pnpm rebuild` with names is non-interactive (never prompts, unlike bare
+# `pnpm approve-builds`) and a no-op when already built.
+Push-Location $Root
+& pnpm rebuild "@mongodb-js/zstd" 2>&1 | Out-Null
+Pop-Location
+
 # ---------------------------------------------------------------------------
 # 6. Database schema (drizzle-kit push is idempotent and additive)
 # ---------------------------------------------------------------------------
