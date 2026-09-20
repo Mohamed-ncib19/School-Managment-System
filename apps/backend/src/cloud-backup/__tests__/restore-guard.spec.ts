@@ -69,12 +69,16 @@ describe("restore throttle", () => {
     // Assert the property instead. Every POST under restore/ does real work:
     // it starts a job, applies a snapshot, replays events, or mints an OAuth
     // url. The two unguarded restore routes are GETs that read a flag.
-    const members = controller.split(/\n\n(?=  @)/);
+    // Tolerate CRLF checkouts: split on blank lines whatever the line endings.
+    const members = controller.split(/\r?\n\r?\n(?=  @)/);
     const writes = members.filter((m) => /@Post\("restore\//.test(m));
 
     expect(writes.length).toBeGreaterThanOrEqual(5);
     const unguarded = writes
-      .filter((m) => !m.includes("@UseGuards(RestoreThrottleGuard)"))
+      // Substring, not the full decorator: the throttle is now composed with
+      // the loopback gate — `@UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)`
+      // — and the property under test is throttling, not decorator spelling.
+      .filter((m) => !m.includes("RestoreThrottleGuard"))
       .map((m) => m.match(/async (\w+)\(/)?.[1] ?? "(unnamed)");
     expect(unguarded).toEqual([]);
   });});

@@ -27,7 +27,10 @@ services:
       POSTGRES_PASSWORD: change_me
       POSTGRES_DB: school_db
     ports:
-      - "5432:5432"
+      # Loopback only: a school LAN shares wifi with students' devices, and the
+      # documented default password below must never sit on a routable
+      # interface. The backend reaches it over 127.0.0.1 like any native install.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

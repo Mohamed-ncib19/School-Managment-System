@@ -82,6 +82,13 @@ export class AuthService {
       await this.recordFailedLogin("account_deactivated", email, user.id, ipAddress, userAgent);
       throw new UnauthorizedException("Votre compte a été désactivé");
     }
+    // A successful sign-in clears the revocation floor: the person typing the
+    // current password just proved the credential is live, so an old floor no
+    // longer needs to kill freshly minted tokens (clock skew between the DB
+    // write and the token mint could otherwise invalidate a brand-new login).
+    if (user.tokens_valid_after) {
+      await this.db.client.update(users).set({ tokens_valid_after: null }).where(eq(users.id, user.id));
+    }
 const {
       password_hash: _passwordHash,
       full_name,
@@ -90,6 +97,7 @@ const {
       updated_at: _updatedAt,
       reset_token: _resetToken,
       reset_token_expires: _resetTokenExpires,
+      tokens_valid_after: _tokensValidAfter,
       ...rest
     } = user;
     await this.auditService.record({
@@ -146,9 +154,9 @@ const {
    */
   async refresh(refreshToken: string) {
     if (!refreshToken) throw new UnauthorizedException("Session expirée, veuillez vous reconnecter");
-    let payload: { sub: string; type?: string };
+    let payload: { sub: string; type?: string; iat?: number };
     try {
-      payload = await this.jwtService.verifyAsync<{ sub: string; type?: string }>(refreshToken, {
+      payload = await this.jwtService.verifyAsync<{ sub: string; type?: string; iat?: number }>(refreshToken, {
         secret: JWT_REFRESH_SECRET(),
       });
     } catch {
@@ -160,10 +168,20 @@ const {
 
     const user = await this.db.client.query.users.findFirst({
       where: eq(users.id, payload.sub),
-      columns: { id: true, email: true, role: true, full_name: true, is_active: true },
+      columns: { id: true, email: true, role: true, full_name: true, is_active: true, tokens_valid_after: true },
     });
     if (!user || !user.is_active) {
       throw new UnauthorizedException("Le compte est inactif ou n'existe pas");
+    }
+    // The refresh endpoint would otherwise resurrect a session the floor
+    // killed: it re-mints tokens from a still-cryptographically-valid cookie
+    // without ever passing through JwtStrategy. Same iat check as the access
+    // path, so changing the password truly evicts the 30-day refresh cookie.
+    if (user.tokens_valid_after && payload.iat !== undefined) {
+      if (payload.iat * 1000 < user.tokens_valid_after.getTime()) {
+        throw new UnauthorizedException("Session révoquée — veuillez vous reconnecter.");
+      }
+      await this.db.client.update(users).set({ tokens_valid_after: null }).where(eq(users.id, user.id));
     }
 
     const tokens = await this.mintTokens(user);
@@ -224,7 +242,14 @@ const {
     }
 
     const passwordHash = await hash(newPassword, bcryptRounds());
-    await this.db.client.update(users).set({ password_hash: passwordHash }).where(eq(users.id, userId));
+    // The revocation floor evicts every session minted before now — including
+    // the one that made this request — so a stolen laptop loses its 30-day
+    // refresh cookie the moment the password is changed. The current browser
+    // is logged out too; that is the point, and the login screen explains it.
+    await this.db.client
+      .update(users)
+      .set({ password_hash: passwordHash, tokens_valid_after: new Date() })
+      .where(eq(users.id, userId));
 
     // The event is recorded; the credential itself never is.
     await this.auditService.record({

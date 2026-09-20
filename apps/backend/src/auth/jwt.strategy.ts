@@ -27,13 +27,29 @@ export class JwtStrategy extends PassportStrategy(Strategy, "jwt") {
     });
   }
 
-  async validate(payload: { sub: string; email: string; role: string }) {
+  async validate(payload: { sub: string; email: string; role: string; iat?: number }) {
     const user = await this.db.client.query.users.findFirst({
       where: eq(users.id, payload.sub),
-      columns: { id: true, email: true, role: true, is_active: true, full_name: true },
+      columns: { id: true, email: true, role: true, is_active: true, full_name: true, tokens_valid_after: true },
     });
     if (!user || !user.is_active) {
       throw new UnauthorizedException("Le compte est inactif ou n'existe pas");
+    }
+    // Server-side revocation floor: a session minted before the last
+    // credential event (password change) is dead even though its JWT still
+    // verifies. Without this, logout-and-change-password cannot evict a
+    // stolen refresh token that lives for 30 days on a stolen laptop.
+    if (user.tokens_valid_after && payload.iat !== undefined) {
+      if (payload.iat * 1000 < user.tokens_valid_after.getTime()) {
+        throw new UnauthorizedException("Session révoquée — veuillez vous reconnecter.");
+      }
+      // A token minted after the floor was set proves the credential is
+      // current; clear the floor so future clock normalisation never
+      // re-kills a session that was legitimately minted afterwards.
+      await this.db.client
+        .update(users)
+        .set({ tokens_valid_after: null })
+        .where(eq(users.id, user.id));
     }
     return {
       id: user.id,

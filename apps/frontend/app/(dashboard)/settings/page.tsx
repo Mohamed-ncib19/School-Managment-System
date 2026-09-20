@@ -55,6 +55,7 @@ import { updatesApi } from "@/lib/api/updates.api";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { useUpdateStore } from "@/hooks/use-update-store";
 import { useTranslation } from "@/lib/i18n/context";
+import { useRouter } from "next/navigation";
 import { FormButton } from "@/components/forms/form-helpers";
 import { useBackups, useCreateBackup, useRestoreBackup } from "@/hooks/use-backups";
 import { useFinancialSettings, useUploadLogo, useRemoveLogo } from "@/hooks/use-financial";
@@ -77,12 +78,14 @@ const profileSchema = z.object({
   email: z.string().email("Saisissez un e-mail valide"),
 });
 
-// 8, matching the setup wizard and the server-side ChangePasswordDto. This
-// asked for 6, so a 6- or 7-character password passed here and was then
-// rejected by the API — back when the API checked at all.
+// 12, matching the setup wizard and the server-side ChangePasswordDto. This
+// asked for 6, then 8 — each time the client lagged the server rule, so a
+// short password passed here and was then rejected by the API. Changing the
+// password also revokes every existing session server-side, so the browser is
+// redirected to /login right after (see below).
 const passwordSchema = z.object({
   current_password: z.string().min(1, "Le mot de passe actuel est obligatoire"),
-  new_password: z.string().min(8, "Le mot de passe doit contenir au moins 8 caractères"),
+  new_password: z.string().min(12, "Le mot de passe doit contenir au moins 12 caractères"),
   confirm_password: z.string().min(1, "Veuillez confirmer le mot de passe"),
 }).refine((data) => data.new_password === data.confirm_password, {
   message: "Les mots de passe ne correspondent pas",
@@ -221,7 +224,8 @@ const normalized = (features: Record<string, boolean> | undefined): Record<strin
 export default function SettingsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { user, setSession } = useAuthStore();
+  const { user, setSession, logout } = useAuthStore();
+  const router = useRouter();
   const [active, setActive] = useState<SectionId>("profile");
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -353,7 +357,14 @@ export default function SettingsPage() {
       passwordForm.reset();
       setSuccess(t("settings.passwordChanged"));
       setError(null);
-      setTimeout(() => setSuccess(null), 3000);
+      // Changing the password revokes every session minted before now —
+      // including this browser's — so the old cookies are already dead on the
+      // server. Route through the standard logout so the session cookie the
+      // backend clears matches the local state, then land on /login.
+      setTimeout(() => {
+        void logout();
+        router.push("/login");
+      }, 1200);
     },
     onError: () => {
       setError("Échec du changement de mot de passe");

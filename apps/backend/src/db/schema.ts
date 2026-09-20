@@ -199,6 +199,10 @@ export const users = pgTable("users", {
 	password_hash: text("password_hash").notNull(),
 	role: userRole().default('super_admin').notNull(),
 	is_active: boolean("is_active").default(true).notNull(),
+	/** Sessions minted before this instant are refused — the server-side "log
+	 * out everywhere" that cookie clearing alone cannot do. Set on password
+	 * change; NULL means no floor (every existing session stays valid). */
+	tokens_valid_after: timestamp("tokens_valid_after", { precision: 3, mode: 'date' }),
 	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
 	reset_token: text("reset_token"),

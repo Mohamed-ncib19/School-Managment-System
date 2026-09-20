@@ -223,9 +223,9 @@ if [[ ! -f "$BACKEND_ENV" ]]; then
   [[ -z "$school_name_answer" ]] && school_name_answer="School"
   read -rp "  Admin email (Enter = admin@$(to_slug "$school_name_answer").com): " admin_email_answer
   admin_email_answer="${admin_email_answer:-admin@$(to_slug "$school_name_answer").com}"
-  read -rp "  Admin password (at least 8 chars): " admin_password_answer
-  if [[ ${#admin_password_answer} -lt 8 ]]; then
-    fail "The admin password must be at least 8 characters."
+  read -rp "  Admin password (at least 12 chars): " admin_password_answer
+  if [[ ${#admin_password_answer} -lt 12 ]]; then
+    fail "The admin password must be at least 12 characters."
   fi
 fi
 

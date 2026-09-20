@@ -11,6 +11,7 @@ import { CloudKeyService } from "./credential-store/cloud-key.service";
 import { CredentialStoreService } from "./credential-store/credential-store.service";
 import { RestoreService } from "./restore/restore.service";
 import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
+import { RestoreLoopbackGuard } from "./restore/restore-loopback.guard";
 import { CloudSetupService } from "./setup/setup.service";
 
 @Module({
@@ -29,6 +30,7 @@ import { CloudSetupService } from "./setup/setup.service";
     CredentialStoreService,
     RestoreService,
     RestoreThrottleGuard,
+    RestoreLoopbackGuard,
     CloudSetupService,
   ],
   exports: [

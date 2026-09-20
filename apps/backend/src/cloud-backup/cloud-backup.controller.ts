@@ -27,6 +27,7 @@ import { CloudKeyService } from "./credential-store/cloud-key.service";
 import { CloudSetupService } from "./setup/setup.service";
 import { RestoreService, RestoreInput } from "./restore/restore.service";
 import { RestoreThrottleGuard } from "./restore/restore-throttle.guard";
+import { RestoreLoopbackGuard } from "./restore/restore-loopback.guard";
 import { SnapshotService } from "./worker/snapshot.service";
 import {
   DRIVER_DEFINITIONS,
@@ -371,7 +372,7 @@ export class CloudBackupController {
 
   /** The same URL from the login screen, for a restore on new hardware. */
   @Post("restore/oauth/dropbox/url")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreDropboxUrl(@Body() body: { appKey?: string; appSecret?: string; redirectUri?: string }) {
     const state = await this.db.client.query.cloudState.findFirst({
       where: eq(cloudState.singleton, "global"),
@@ -513,7 +514,7 @@ export class CloudBackupController {
    * secret never leaves the server.
    */
   @Post("restore/oauth/gdrive/url")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreGdriveUrl(@Body() body: { clientId?: string; clientSecret?: string; redirectUri?: string }) {
     const state = await this.db.client.query.cloudState.findFirst({
       where: eq(cloudState.singleton, "global"),
@@ -608,7 +609,7 @@ export class CloudBackupController {
 
   /** The same exchange from the login screen, for a restore on new hardware. */
   @Post("restore/oauth/exchange")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreOAuthExchange(@Body() body: { state?: string; code?: string }) {
     const state = await this.db.client.query.cloudState.findFirst({
       where: eq(cloudState.singleton, "global"),
@@ -671,24 +672,26 @@ export class CloudBackupController {
   // ---------------------------------------------------------------------------
 
   @Get("restore/check")
+  @UseGuards(RestoreLoopbackGuard)
   async restoreCheck() {
     const state = await this.db.client.query.cloudState.findFirst({ where: eq(cloudState.singleton, "global") });
     return { allowed: !state?.setup_complete };
   }
 
   @Post("restore/start")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreStart(@Body() body: RestoreInput) {
     return this.restore.startRestore(body);
   }
 
   @Get("restore/:jobId")
+  @UseGuards(RestoreLoopbackGuard)
   async restoreStatus(@Param("jobId") jobId: string) {
     return this.restore.status(jobId);
   }
 
   @Post("restore/:jobId/snapshot")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreSnapshot(@Param("jobId") jobId: string, @Body() body: { target: RestoreInput["target"]; schoolId: string; phrase: string }) {
     if (!body.target || !body.schoolId || !body.phrase) throw new BadRequestException("Paramètres de restauration incomplets.");
     await this.restore.applySnapshot(jobId, body.target, body.schoolId, body.phrase);
@@ -696,21 +699,21 @@ export class CloudBackupController {
   }
 
   @Post("restore/:jobId/replay")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreReplay(@Param("jobId") jobId: string, @Body() body: { target: RestoreInput["target"]; schoolId: string; phrase: string }) {
     if (!body.target || !body.schoolId || !body.phrase) throw new BadRequestException("Paramètres de restauration incomplets.");
     return this.restore.replayEvents(jobId, body.target, body.schoolId, body.phrase);
   }
 
   @Post("restore/:jobId/finish")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreFinish(@Param("jobId") jobId: string, @Body() body: { target: RestoreInput["target"]; schoolId: string; phrase: string }) {
     if (!body.target || !body.schoolId || !body.phrase) throw new BadRequestException("Paramètres de restauration incomplets.");
     return this.restore.finishRestore(jobId, body.target, body.schoolId, body.phrase);
   }
 
   @Post("restore/:jobId/cancel")
-  @UseGuards(RestoreThrottleGuard)
+  @UseGuards(RestoreLoopbackGuard, RestoreThrottleGuard)
   async restoreCancel(@Param("jobId") jobId: string) {
     await this.restore.cancel(jobId);
     return { ok: true };

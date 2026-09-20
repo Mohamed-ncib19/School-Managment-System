@@ -79,7 +79,7 @@ The first launch asks who the school is and does everything else automatically:
 |---|---|
 | **School name** | Becomes the banner, sidebar and settings name, the database name/user, and the default admin email (`admin@<school>.com`) |
 | **Admin email** | Login for the `super_admin` account (Enter = generated default) |
-| **Admin password** | Login password — at least 8 characters |
+| **Admin password** | Login password — at least 12 characters |
 
 Everything generated from there — database name, database user, database password,
 PostgreSQL superuser password, both JWT secrets — is random and stored in
@@ -121,6 +121,11 @@ limit when many installations share one repo.
 - **Private repository** — `GITHUB_TOKEN` must be a classic PAT or fine-grained
   token with `Contents: Read` on the repo; without it GitHub answers `404` and the
   check reports "unreachable".
+- **Trust model** — applying an update runs code fetched from the release
+  repository on the school computer (a `git pull` followed by dependency install
+  and migration). The repository is therefore part of the trust boundary:
+  whoever can push to it can run code on every school machine. Keep write access
+  to the release branch limited to the publisher.
 - The **navbar icon** (every page) shows a gold dot when a new version exists and
   re-checks on click; **Settings → System updates** shows the full status
   (branch, installed vs. latest commit, last check) with *Check now* / *Update now*.
@@ -251,6 +256,18 @@ One row per student, with the hierarchy given by name:
 - Rejected rows are reported individually with the reason; the rest still import.
 - The whole import runs in one transaction — a failure can't leave a half-built hierarchy.
 - Dates accept Excel date cells, `DD/MM/YYYY`, and ISO formats. `Status` defaults to `active`.
+
+## Security posture (self-hosted)
+
+The product assumes one trusted server: the school administration computer.
+The portal and the API speak plain HTTP and are meant to be reached **from that
+computer**. If the portal is opened to other devices over the school wifi,
+remember that logins and student data then cross the network unencrypted —
+prefer a wired connection, a separate/segmented network for staff devices, and
+never publish ports 3000/3001 through the router. The disaster-recovery
+restore endpoints additionally refuse requests that do not originate from the
+server's own machine (`RESTORE_ALLOW_REMOTE=true` to lift this deliberately),
+and Docker deployments bind PostgreSQL to `127.0.0.1` for the same reason.
 
 ## Conventions
 

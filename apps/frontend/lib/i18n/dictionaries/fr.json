@@ -443,7 +443,7 @@
     "saveChanges": "Enregistrer les modifications",
     "saving": "Enregistrement...",
     "profileUpdated": "Profil mis à jour avec succès",
-    "passwordChanged": "Mot de passe changé avec succès",
+    "passwordChanged": "Mot de passe changé avec succès — vos autres sessions ont été révoquées. Redirection vers la connexion…",
     "dashboardBreadcrumb": "Tableau de bord",
     "moduleTitle": "Paramètres",
     "description": "Configurer les préférences linguistiques, les paramètres de notification, les paramètres de facturation et les options système pour votre académie.",

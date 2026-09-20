@@ -177,8 +177,8 @@ function New-WizardDialog {
       [System.Windows.Forms.MessageBox]::Show("Please enter the school name.", "School Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
       continue
     }
-    if ($password.Length -lt 8) {
-      [System.Windows.Forms.MessageBox]::Show("The admin password must be at least 8 characters.", "School Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    if ($password.Length -lt 12) {
+      [System.Windows.Forms.MessageBox]::Show("The admin password must be at least 12 characters.", "School Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
       continue
     }
 
