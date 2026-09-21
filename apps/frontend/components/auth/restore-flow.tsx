@@ -455,7 +455,7 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
               </div>
               <div>
                 <label htmlFor="res-phrase" className="block text-sm font-medium text-text-primary mb-1.5">
-                  {t("cloudSafeSave.recoveryPhraseInput", "Phrase de récupération (12 mots)")}
+                  {t("cloudSafeSave.recoveryPhraseInput", "Mot de passe secret")}
                 </label>
                 <input
                   id="res-phrase"
@@ -476,26 +476,45 @@ function RestoreDialog({ onClose }: { onClose: () => void }) {
 
         {stage === "plan" && plan && (
           <div className="space-y-4">
-            <div className="rounded-btn border border-border bg-background p-4 text-sm space-y-2">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={16} className="text-success-strong dark:text-success-dark-strong" />
-                <span className="text-text-primary">{t("cloudSafeSave.phraseVerified", "Phrase vérifiée — la sauvegarde est accessible.")}</span>
-              </div>
-              {plan.snapshot ? (
-                <p className="text-text-secondary">
-                  {t("cloudSafeSave.planSnapshot", "Capture du {date} ({events} événements à rejouer)")
-                    .replace("{date}", new Date(plan.snapshot.created_at).toLocaleDateString("fr-FR"))
-                    .replace("{events}", plan.totalEvents.toLocaleString("fr-FR"))}
-                </p>
-              ) : (
-                <p className="text-text-secondary">{t("cloudSafeSave.planNoSnapshot", "Aucune capture complète — seuls les événements seront restaurés.")}</p>
-              )}
-            </div>
+            {plan.snapshot || plan.eventBatches.length > 0 ? (
+              <>
+                <div className="rounded-btn border border-border bg-background p-4 text-sm space-y-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-success-strong dark:text-success-dark-strong" />
+                    <span className="text-text-primary">{t("cloudSafeSave.phraseVerified", "Phrase vérifiée — la sauvegarde est accessible.")}</span>
+                  </div>
+                  {plan.snapshot ? (
+                    <p className="text-text-secondary">
+                      {t("cloudSafeSave.planSnapshot", "Capture du {date} ({events} événements à rejouer)")
+                        .replace("{date}", new Date(plan.snapshot.created_at).toLocaleDateString("fr-FR"))
+                        .replace("{events}", plan.totalEvents.toLocaleString("fr-FR"))}
+                    </p>
+                  ) : (
+                    <p className="text-text-secondary">{t("cloudSafeSave.planNoSnapshot", "Aucune capture complète — seuls les événements seront restaurés.")}</p>
+                  )}
+                </div>
 
-            <button className="btn btn-primary w-full" onClick={() => void applySnapshot()} disabled={busy} aria-busy={busy || undefined}>
-              <Database size={14} />
-              {t("cloudSafeSave.restoreApplySnapshot", "Restaurer la capture")}
-            </button>
+                <button className="btn btn-primary w-full" onClick={() => void applySnapshot()} disabled={busy} aria-busy={busy || undefined}>
+                  <Database size={14} />
+                  {t("cloudSafeSave.restoreApplySnapshot", "Restaurer la capture")}
+                </button>
+              </>
+            ) : (
+              <div className="rounded-btn border border-gold/40 bg-gold/10 p-4 text-sm space-y-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={16} className="text-success-strong dark:text-success-dark-strong" />
+                  <span className="text-text-primary">{t("cloudSafeSave.phraseVerified", "Phrase vérifiée — la sauvegarde est accessible.")}</span>
+                </div>
+                <p className="text-text-primary font-medium">
+                  {t("cloudSafeSave.planExportOnly", "Cette sauvegarde ne contient que des exports à importer.")}
+                </p>
+                <ol className="list-decimal space-y-1 pl-5 text-text-secondary">
+                  <li>{t("cloudSafeSave.planExportStep1", "Téléchargez le fichier exports/latest.json depuis votre espace cloud.")}</li>
+                  <li>{t("cloudSafeSave.planExportStep2", "Sur une installation neuve, connectez-vous en administrateur.")}</li>
+                  <li>{t("cloudSafeSave.planExportStep3", "Allez dans Paramètres → Données → Importer des données, déposez le fichier .enc et saisissez le mot de passe secret.")}</li>
+                </ol>
+              </div>
+            )}
           </div>
         )}
 

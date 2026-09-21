@@ -1,60 +1,31 @@
 import { Injectable } from "@nestjs/common";
-import { spawn } from "node:child_process";
-import { createReadStream, createWriteStream, statSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { and, desc, eq, lt, max, sql } from "drizzle-orm";
 import { DbService } from "../../db/db.service";
-import { parsePgUrl } from "../../common/pg-url";
-import { backupManifest, syncQueue } from "../../db/schema";
-import { max } from "drizzle-orm";
+import { backupManifest, cloudTargets, syncQueue } from "../../db/schema";
 import type { StorageDriver } from "../drivers/storage-driver";
 import { encodeObject } from "../crypto/object-codec";
 import { compressionAlgorithm } from "../crypto/compression";
 import type { KdfParams } from "../crypto/kdf";
 import { RedactingLogger } from "../redaction/redaction";
-import { findPgBin } from "./pg-bin";
 import { computeSchemaHash } from "./schema-hash";
 import { Readable } from "node:stream";
-import { randomBytes } from "node:crypto";
 import { Optional } from "@nestjs/common";
 import { DataTransferService } from "../../data-transfer/data-transfer.service";
+import { SyncQueueService } from "../queue/sync-queue.service";
 
 /**
- * Unique suffix per run (clock time + randomness): snapshot and export keys
- * must never repeat. The previous `{date}_{seq}` scheme reused the same key
- * for a second snapshot on the same day (or any snapshot while the queue was
- * stuck at one sequence), so backends refusing overwrites answered 409 and
- * the copy silently stopped updating. The `{date}_{seq}` prefix keeps
- * lexicographic order chronological for restore discovery.
- */
-function uniqueSuffix(): string {
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  const ss = String(now.getSeconds()).padStart(2, "0");
-  return `${hh}${mm}${ss}_${randomBytes(3).toString("hex")}`;
-}
-
-const PG_TIMEOUT_MS = 30 * 60_000;
-
-/**
- * Full logical snapshots: a complete `pg_dump` of the database, compressed
- * (zstd) then encrypted (AES-256-GCM) then streamed to every target. Runs
- * daily at the configured quiet hour, on demand after setup, and at boot when
- * the schema hash has changed (i.e. right after a migration).
+ * Export-only backups: one Importer-compatible data export (`iq-data-export`
+ * JSON with every table, compressed with zstd then encrypted with AES-256-GCM
+ * under the recovery phrase) uploaded to `{school_id}/exports/latest.json`
+ * and replaced on every run. It is the copy the school imports through
+ * Settings → Données → "Importer des données" with the phrase. Runs
+ * whenever the auto loop sees changes, on demand after setup, and at boot
+ * when the schema hash has changed (i.e. right after a migration).
  *
- * Alongside the pg_dump snapshot, an Importer-compatible data export
- * (`iq-data-export` JSON, same envelope + same recovery phrase) is uploaded
- * to `{school_id}/exports/` as `kind: "data_export"`. It is the copy that
- * survives an instance loss without the login-page restore flow: download it
- * from Dropbox, drop it into Settings → Données → "Importer des données"
- * with the phrase, and the data is back. Best-effort: an export failure never
- * fails the snapshot itself.
- *
- * Memory stays flat: pg_dump writes a plaintext temp file, a streaming
- * prepass hashes and sizes it, then the encode+upload pass streams the file
- * through the compress→encrypt pipeline in 1 MiB blocks.
+ * The per-school folder holds that one JSON file and nothing else. The
+ * legacy `snapshots/`, `events/` and `manifests/` prefixes left by earlier
+ * builds are purged from each target after a successful export (`meta/`
+ * stays — salt, check object and instance registry).
  */
 @Injectable()
 export class SnapshotService {
@@ -62,82 +33,13 @@ export class SnapshotService {
 
   constructor(
     private readonly db: DbService,
+    private readonly queue: SyncQueueService,
     @Optional() private readonly dataTransfer?: DataTransferService,
   ) {}
 
 
-  private findPgDump(): string | null {
-    return findPgBin("pg_dump");
-  }
-
-  private async dumpToFile(targetPath: string): Promise<void> {
-    const cfg = parsePgUrl(process.env.DATABASE_URL ?? "");
-    const pgDump = this.findPgDump();
-    if (!pgDump) {
-      // Fall back to pg_dump on PATH (docker/dev machines).
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const execFileP = promisify(execFile);
-      await execFileP("pg_dump", [
-        "-U", cfg.user,
-        "-h", cfg.host,
-        "-p", String(cfg.port),
-        "-d", cfg.database,
-        "--format=plain",
-        "--no-owner",
-        "--no-privileges",
-        "-f", targetPath,
-      ], { env: { ...process.env, PGPASSWORD: cfg.password }, timeout: PG_TIMEOUT_MS });
-      return;
-    }
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(
-        pgDump,
-        ["-U", cfg.user, "-h", cfg.host, "-p", String(cfg.port), "-d", cfg.database, "--format=plain", "--no-owner", "--no-privileges"],
-        { env: { ...process.env, PGPASSWORD: cfg.password }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      const out = createWriteStream(targetPath, { flags: "w" });
-
-      let stderrTail = "";
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk: string) => {
-        stderrTail = (stderrTail + chunk).slice(-4_000);
-      });
-
-      let exitCode: number | null = null;
-      let closed = false;
-      let flushed = false;
-
-      const settle = () => {
-        if (!closed || !flushed) return;
-        if (exitCode !== 0) {
-          reject(new Error(`pg_dump exited with code ${exitCode}${stderrTail ? `: ${stderrTail.trim()}` : ""}`));
-        } else {
-          resolve();
-        }
-      };
-
-      // `pipe` ends `out` itself; the previous manual out.end() plus an
-      // immediate resolve() on the child's close meant statSync could measure
-      // a still-flushing file and the encoder could read a truncated dump.
-      // Both the child exiting AND the file finishing must happen first.
-      child.stdout.pipe(out);
-      child.on("error", reject);
-      out.on("error", reject);
-      out.on("finish", () => {
-        flushed = true;
-        settle();
-      });
-      child.on("close", (code) => {
-        exitCode = code;
-        closed = true;
-        settle();
-      });
-    });
-  }
-
-  /** Max sync_queue sequence at snapshot time — everything up to here is inside
-   * the snapshot and needs no event replay. */
+  /** Max sync_queue sequence at export time — everything up to here is inside
+   * the export, so the queue can be trimmed through it afterwards. */
   private async maxQueueSeq(): Promise<number> {
     const rows = await this.db.client
       .select({ m: max(syncQueue.id) })
@@ -145,10 +47,15 @@ export class SnapshotService {
     return rows[0]?.m ?? 0;
   }
 
+  /** Legacy cloud prefixes from before the export-only cutover. `meta/`
+   * stays — salt, check object and instance registry. */
+  private static readonly LEGACY_PREFIXES = ["snapshots", "events", "manifests"];
 
   /**
-   * Runs a full snapshot and uploads it to every enabled target.
-   * Returns per-target results.
+   * Runs an export-only backup and uploads it to every enabled target.
+   * Returns per-target results. Keeps the historical `runSnapshot` name so
+   * the daily timer, the migration hook, the setup finish step and the
+   * manual trigger keep calling one method.
    */
   async runSnapshot(
     targets: Array<{ id: string; driver: StorageDriver }>,
@@ -157,87 +64,105 @@ export class SnapshotService {
     kdf: KdfParams,
     reason: string,
   ): Promise<Array<{ targetId: string; ok: boolean; key?: string; error?: string }>> {
-    const dir = await mkdtemp(join(tmpdir(), "iq-snapshot-"));
-    const dumpFile = join(dir, "snapshot.sql");
+    const seq = (await this.maxQueueSeq()) + 1;
+    this.logger.log(`Export (${reason}) — queue seq through ${seq} — starting.`);
+
+    const results = await this.uploadDataExport(targets, key, schoolId, kdf, seq);
+    const succeeded = results.filter((r) => r.ok);
+    if (succeeded.length === 0) return results;
+
+    // Every queued row through seq is inside the landed export — trim the
+    // local buffer so it stays bounded between exports.
     try {
-      await this.dumpToFile(dumpFile);
-      const stat = statSync(dumpFile);
-      if (stat.size === 0) throw new Error("pg_dump produced an empty snapshot");
+      const pruned = await this.queue.pruneThrough(seq);
+      if (pruned > 0) this.logger.log(`Pruned ${pruned} queue rows covered by the export.`);
+    } catch (err) {
+      this.logger.error(`Queue prune failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
-      const seq = (await this.maxQueueSeq()) + 1;
-      const isoDate = new Date().toISOString().slice(0, 10);
-      const objectKey = `${schoolId}/snapshots/${isoDate}_${String(seq).padStart(10, "0")}_${uniqueSuffix()}.sql.zst.enc`;
+    await this.purgeLegacyPrefixes(
+      targets.filter((t) => succeeded.some((r) => r.targetId === t.id)),
+      schoolId,
+    );
+    return results;
+  }
 
-      this.logger.log(`Snapshot (${reason}) — queue seq through ${seq} — starting.`);
-
-      const encoded = await encodeObject({
-        schoolId,
-        objectKey,
-        kind: "snapshot",
-        kdf,
-        key,
-compression: compressionAlgorithm(),
-        seqFrom: 0,
-        seqTo: seq,
-        appVersion: process.env.APP_VERSION,
-        plaintext: () => createReadStream(dumpFile),
-      });
-
-      const results = [];
-      for (const target of targets) {
+  /**
+   * Removes the pre-cutover `snapshots/`, `events/` and `manifests/` objects
+   * from a target that just received a good export. Best-effort per object:
+   * one failure never fails the backup. Runs on every export so an
+   * interrupted cleanup finishes next time; a clean target is three cheap
+   * empty listings.
+   */
+  private async purgeLegacyPrefixes(
+    targets: Array<{ id: string; driver: StorageDriver }>,
+    schoolId: string,
+  ): Promise<void> {
+    for (const target of targets) {
+      for (const dir of SnapshotService.LEGACY_PREFIXES) {
+        let items: Array<{ key: string }>;
         try {
-          await target.driver.put(objectKey, encoded.openStream(), encoded.size);
-          await this.db.client
-            .insert(backupManifest)
-            .values({
-              target_id: target.id,
-              object_key: objectKey,
-              kind: "snapshot",
-              covers_from_seq: 0,
-              covers_to_seq: seq,
-              uncompressed_sha256: encoded.header.uncompressed_sha256,
-              uncompressed_bytes: encoded.header.uncompressed_bytes,
-              stored_bytes: encoded.size,
-              format_version: encoded.header.format_version,
-            })
-            .onConflictDoNothing();
-          results.push({ targetId: target.id, ok: true, key: objectKey });
+          items = await target.driver.list(`${schoolId}/${dir}/`);
         } catch (err) {
-          this.logger.error(`Snapshot upload to ${target.id} failed: ${err instanceof Error ? err.message : String(err)}`);
-          results.push({ targetId: target.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+          this.logger.warn(
+            `Legacy purge list failed on ${target.id} (${dir}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          continue;
         }
+        let removed = 0;
+        for (const item of items) {
+          try {
+            await target.driver.remove(item.key);
+            removed++;
+          } catch (err) {
+            this.logger.warn(
+              `Legacy purge remove failed on ${target.id} (${item.key}): ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        if (removed > 0) this.logger.log(`Legacy purge on ${target.id}: removed ${removed} objects under ${dir}/.`);
       }
-
-      await this.uploadManifest(targets, key, schoolId, kdf, results.filter((r) => r.ok).map((r) => r.key!));
-      // The Importer-compatible copy for instance-loss recovery. Best-effort:
-      // it must never fail a snapshot that already succeeded.
-      await this.uploadDataExport(targets, key, schoolId, kdf, seq);
-      return results;
-    } finally {
-      await rm(dir, { recursive: true, force: true });
     }
   }
 
+  /**
+   * Builds the versioned Importer-compatible export and uploads it to every
+   * enabled target. Returns per-target results and stamps each target's
+   * success/error bookkeeping. An export failure (or a missing
+   * DataTransferService) yields per-target errors, never a throw — the daily
+   * timer and the setup finish step treat it like any failed run.
+   */
   private async uploadDataExport(
     targets: Array<{ id: string; driver: StorageDriver }>,
     key: Buffer,
     schoolId: string,
     kdf: KdfParams,
     seq: number,
-  ): Promise<void> {
-    if (!this.dataTransfer) return;
+  ): Promise<Array<{ targetId: string; ok: boolean; key?: string; error?: string }>> {
+    if (!this.dataTransfer) {
+      const error = "Export de données indisponible.";
+      return targets.map((target) => ({ targetId: target.id, ok: false, error }));
+    }
     let plaintext: Buffer;
     try {
       ({ buffer: plaintext } = await this.dataTransfer.exportAll());
     } catch (err) {
-      this.logger.error(`Data-export copy skipped (export failed): ${err instanceof Error ? err.message : String(err)}`);
-      return;
+      const error = `Data-export copy skipped (export failed): ${err instanceof Error ? err.message : String(err)}`;
+      this.logger.error(error);
+      return targets.map((target) => ({ targetId: target.id, ok: false, error }));
     }
-    if (!plaintext.length) return;
-    const isoDate = new Date().toISOString().slice(0, 10);
-    const objectKey = `${schoolId}/exports/${isoDate}_${String(seq).padStart(10, "0")}_${uniqueSuffix()}.json.zst.enc`;
+    if (!plaintext.length) {
+      const error = "Data-export copy skipped (empty export).";
+      this.logger.error(error);
+      return targets.map((target) => ({ targetId: target.id, ok: false, error }));
+    }
+    // Single file per school, replaced on every run: the folder holds one
+    // JSON and nothing else. `overwrite: true` below is load-bearing —
+    // without it Dropbox answers 409 and the folder driver refuses.
+    const objectKey = `${schoolId}/exports/latest.json.zst.enc`;
+    let encoded: Awaited<ReturnType<typeof encodeObject>>;
     try {
-      const encoded = await encodeObject({
+      encoded = await encodeObject({
         schoolId,
         objectKey,
         kind: "data_export",
@@ -249,66 +174,74 @@ compression: compressionAlgorithm(),
         appVersion: process.env.APP_VERSION,
         plaintext: () => Readable.from([plaintext]),
       });
-      for (const target of targets) {
-        try {
-          await target.driver.put(objectKey, encoded.openStream(), encoded.size);
-          await this.db.client
-            .insert(backupManifest)
-            .values({
-              target_id: target.id,
-              object_key: objectKey,
-              kind: "data_export",
-              covers_from_seq: 0,
-              covers_to_seq: seq,
-              uncompressed_sha256: encoded.header.uncompressed_sha256,
-              uncompressed_bytes: encoded.header.uncompressed_bytes,
-              stored_bytes: encoded.size,
-              format_version: encoded.header.format_version,
-            })
-            .onConflictDoNothing();
-        } catch (err) {
-          this.logger.error(`Data-export upload to ${target.id} failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      this.logger.log(`Data-export copy uploaded (${plaintext.length} bytes → ${objectKey}).`);
     } catch (err) {
-      this.logger.error(`Data-export copy skipped (encode failed): ${err instanceof Error ? err.message : String(err)}`);
+      const error = `Data-export copy skipped (encode failed): ${err instanceof Error ? err.message : String(err)}`;
+      this.logger.error(error);
+      return targets.map((target) => ({ targetId: target.id, ok: false, error }));
     }
-  }
-
-  private async uploadManifest(
-    targets: Array<{ id: string; driver: StorageDriver }>,
-    key: Buffer,
-    schoolId: string,
-    kdf: KdfParams,
-    objectKeys: string[],
-  ): Promise<void> {
-    const isoDate = new Date().toISOString().slice(0, 10);
-    const objectKey = `${schoolId}/manifests/${isoDate}.json.enc`;
-    const manifest = {
-      school_id: schoolId,
-      created_at: new Date().toISOString(),
-      objects: objectKeys,
-    };
-    const bytes = Buffer.from(JSON.stringify(manifest, null, 2), "utf8");
-    const encoded = await encodeObject({
-      schoolId,
-      objectKey,
-      kind: "manifest",
-      kdf,
-      key,
-      compression: compressionAlgorithm(),
-      plaintext: () => Readable.from([bytes]),
-    });
+    const results: Array<{ targetId: string; ok: boolean; key?: string; error?: string }> = [];
     for (const target of targets) {
       try {
-        // The daily manifest is a rewritten pointer, not versioned data:
-        // same key every upload by design, so it must overwrite.
         await target.driver.put(objectKey, encoded.openStream(), encoded.size, { overwrite: true });
+        await this.db.client
+          .insert(backupManifest)
+          .values({
+            target_id: target.id,
+            object_key: objectKey,
+            kind: "data_export",
+            covers_from_seq: 0,
+            covers_to_seq: seq,
+            uncompressed_sha256: encoded.header.uncompressed_sha256,
+            uncompressed_bytes: encoded.header.uncompressed_bytes,
+            stored_bytes: encoded.size,
+            format_version: encoded.header.format_version,
+          })
+          .onConflictDoNothing();
+        // One file on the cloud, one recent history locally: exports can
+        // land every few seconds in auto mode, so keep the 30 newest rows
+        // per target. Best-effort — a trim failure never fails the backup.
+        try {
+          const recent = await this.db.client
+            .select({ at: backupManifest.created_at })
+            .from(backupManifest)
+            .where(eq(backupManifest.target_id, target.id))
+            .orderBy(desc(backupManifest.created_at))
+            .limit(30);
+          if (recent.length === 30) {
+            await this.db.client
+              .delete(backupManifest)
+              .where(
+                and(
+                  eq(backupManifest.target_id, target.id),
+                  lt(backupManifest.created_at, recent[recent.length - 1].at),
+                ),
+              );
+          }
+        } catch {
+          // ignore — trimming is hygiene, not correctness
+        }
+        await this.db.client
+          .update(cloudTargets)
+          .set({ last_success_at: new Date(), last_error: null, consecutive_failures: 0 })
+          .where(eq(cloudTargets.id, target.id));
+        results.push({ targetId: target.id, ok: true, key: objectKey });
       } catch (err) {
-        this.logger.error(`Manifest upload to ${target.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Data-export upload to ${target.id} failed: ${message}`);
+        await this.db.client
+          .update(cloudTargets)
+          .set({
+            last_error: message,
+            consecutive_failures: sql`${cloudTargets.consecutive_failures} + 1`,
+          })
+          .where(eq(cloudTargets.id, target.id));
+        results.push({ targetId: target.id, ok: false, error: message });
       }
     }
+    if (results.some((r) => r.ok)) {
+      this.logger.log(`Data-export copy uploaded (${plaintext.length} bytes → ${objectKey}).`);
+    }
+    return results;
   }
 
   /** Fingerprint of the schema, compared at boot to detect a migration. */

@@ -16,8 +16,15 @@
   native tool output is mirrored to logs\update-<timestamp>.log by the
   launcher in updates.service.ts.
 
-  All data-safe: it never touches the database contents beyond the additive
-  drizzle-kit push.
+  All data-safe, enforced in order:
+    1. A verified pg_dump safety backup MUST succeed before any schema work
+       (backup-before-schema.ps1 is a gate now, not best-effort).
+    2. drizzle-kit push runs WITHOUT --force: drizzle itself refuses to apply
+       data-loss statements in a non-interactive session (verified against the
+       pinned drizzle-kit version), so a destructive schema change aborts the
+       update BEFORE anything is applied - with the backup path in hand.
+    3. After the restart, the engine waits for the API to accept connections
+       again and reports the health result in the journal and the final panel.
 
   Invoked detached by the backend: UpdateNow in the app -> this script.
 #>
@@ -39,8 +46,21 @@ $BackendDir = Join-Path $Root "apps\backend"
 $ScriptsDir = $PSScriptRoot
 
 . (Join-Path $ScriptsDir "ui.ps1")
-Initialize-Ui -TotalSteps 8
+Initialize-Ui -TotalSteps 9
 Set-UiProgressFile (Join-Path $Root "logs\update-progress.json")
+
+<#
+  Data-state note shown on the failure panel so "your data is safe" is always
+  SPECIFIC: each stage updates it, and Fail prints exactly what has and has
+  not been touched at the moment the update stopped.
+#>
+$script:DataNote = "nothing was changed - the update stopped before any action"
+$script:StoppedAny = $false
+
+function Set-DataNote {
+  param([string]$Note)
+  $script:DataNote = $Note
+}
 
 function Fail {
   param([string]$Message)
@@ -49,9 +69,20 @@ function Fail {
   Write-Panel -Title "UPDATE FAILED" -Colour Red -Icon fail -Note (Get-UiElapsed) -Rows @(
     $Message,
     "---",
-    "Data|nothing was changed - no database writes were made",
+    "Data|$script:DataNote",
     "Restart|close this window, then open the desktop shortcut"
   )
+
+  # Operability: if the update stopped AFTER taking the servers down, bring
+  # them back so a failed update never leaves the school dark. Safe at every
+  # point this can fire: before the schema step nothing was modified, and a
+  # partial additive push leaves the app fully compatible.
+  if ($script:StoppedAny) {
+    Write-Host ""
+    Write-Info "Restarting your servers (nothing critical was changed)..."
+    Start-Process "wscript.exe" -ArgumentList ("`"" + (Join-Path $Root "installer\runtime\start-servers.vbs") + "`"")
+    Write-Info "Servers are coming back up in their own window."
+  }
   Read-Host "  Press Enter to close"
   exit 1
 }
@@ -186,6 +217,8 @@ if (-not ($wasApiUp -or $wasWebUp)) {
   Write-Info "Nothing was running - skipping the shutdown."
 } else {
   & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ScriptsDir "stop.ps1") -Ports @(3000, 3001) | Out-Null
+  $script:StoppedAny = $true
+  Set-DataNote "servers were stopped - the database has not been touched yet"
 
   Write-Host ""
   Write-Info "Waiting for ports 3000/3001 to release..."
@@ -240,23 +273,85 @@ Push-Location $Root
 Pop-Location
 
 # ---------------------------------------------------------------------------
-# 6. Database schema (drizzle-kit push is idempotent and additive)
+# 6. Database schema - DATA-SAFETY CRITICAL SECTION, enforced in order:
+#      a) verified safety backup (gate - failure aborts the update),
+#      b) push WITHOUT --force: drizzle refuses data-loss statements when
+#         non-interactive, so a destructive change is detected with nothing
+#         applied; only additive changes auto-apply,
+#      c) a destructive result ABORTS the update (servers are restarted by
+#         the Fail handler) - a human decides, never --force.
 # ---------------------------------------------------------------------------
-Write-Step "Syncing the database schema"
-# An update is the likeliest moment for a schema change, and `push --force`
-# never asks before dropping something. Dump first.
+Write-Step "Protecting your data (safety backup)"
+$backupResultFile = Join-Path $Root "logs\pre-schema-result.json"
+if (Test-Path $backupResultFile) { Remove-Item $backupResultFile -Force -ErrorAction SilentlyContinue }
 & (Join-Path $PSScriptRoot "backup-before-schema.ps1") -Root $Root
+$guardCode = $LASTEXITCODE
+$backupPath = $null
+if (Test-Path $backupResultFile) {
+  try { $backupJson = Get-Content $backupResultFile -Raw | ConvertFrom-Json } catch { $backupJson = $null }
+  if ($backupJson -and $backupJson.ok -and $backupJson.path) { $backupPath = [string]$backupJson.path }
+}
+if ($guardCode -ne 0) {
+  # backup-before-schema.ps1 printed the reason; the backup is a gate now.
+  Fail "The safety backup failed - the update stopped before touching the schema."
+}
+if ($backupPath) {
+  Write-Ok "Safety backup verified" "$backupPath"
+  Set-DataNote "protected - verified safety backup at $backupPath"
+  Write-UiProgress -State "running" -Label "Protecting your data (safety backup)" -Message $backupPath -Extra @{ backupPath = $backupPath }
+} else {
+  # exit 0 with no artifact = nothing to protect yet (first run / empty DB)
+  Write-Info "No existing data to back up yet (first run) - proceeding."
+}
 
+Write-Step "Syncing the database schema"
+Set-DataNote "protected - schema sync starting (safety backup verified)"
+$pushLog = Join-Path $Root "logs\schema-push.log"
+$pushOk = $false
+$pushDestructive = $false
 Push-Location $BackendDir
-for ($attempt = 1; $attempt -le 5; $attempt++) {
-  pnpm exec drizzle-kit push --force 2>&1 | Out-Null
-  if ($LASTEXITCODE -eq 0) { break }
-  Write-Info "drizzle-kit push failed (attempt $attempt/5) - retrying..."
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+  # Deliberately NO --force: data-loss statements make push exit 1 in a
+  # non-interactive session WITHOUT executing anything (verified against the
+  # pinned drizzle-kit), so this both classifies the change and stays safe.
+  pnpm exec drizzle-kit push 2>&1 | Tee-Object -FilePath $pushLog | Out-Null
+  $code = $LASTEXITCODE
+  if ($code -eq 0) { $pushOk = $true; break }
+
+  $pushOutput = ""
+  if (Test-Path $pushLog) { $pushOutput = (Get-Content $pushLog -Raw -ErrorAction SilentlyContinue) -join "" }
+  if ($pushOutput -match "data loss|DATA LOSS|data-loss|delete .+ column|drop .+ column|remove .+ column|truncate|TRUNCATE") {
+    $pushDestructive = $true
+    break
+  }
+  Write-Info "Schema sync failed (attempt $attempt/3) - retrying..."
   Start-Sleep -Seconds 3
 }
 Pop-Location
-if ($LASTEXITCODE -ne 0) { Fail "drizzle-kit push failed after 5 attempts." }
-Write-Ok "Database schema is up to date"
+
+if ($pushDestructive) {
+  Set-DataNote "safe - the schema change was blocked before anything was applied (your data is untouched)"
+  Write-UiProgress -State "failed" -Label "Schema change needs a decision" -Extra @{ destructive = $true; backupPath = $backupPath }
+  Write-Host ""
+  Write-Warn2 "The new version wants to CHANGE existing columns - this can move or remove data."
+  Write-Warn2 "Nothing was applied: your database is exactly as it was before the update."
+  Write-Host ""
+  Write-Info "What is in the new version (from the schema check):"
+  if (Test-Path $pushLog) {
+    Get-Content $pushLog | Select-String -Pattern "ALTER TABLE|DROP|DELETE|TRUNCATE|delete|drop" | Select-Object -First 8 |
+      ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+  }
+  Write-Host ""
+  Write-Info "Your verified safety backup: $(if ($backupPath) { $backupPath } else { 'none was needed yet' })"
+  Write-Info "Contact support (or your system administrator) to apply this version safely."
+  Write-Host ""
+  Fail "Update paused for a data-safety decision - no changes were applied."
+}
+if (-not $pushOk) {
+  Fail "The schema sync failed after 3 attempts (not a data-loss issue) - your data is untouched."
+}
+Write-Ok "Database schema is up to date" "additive changes only"
+Set-DataNote "protected - schema synced (additive only), safety backup kept at $(if ($backupPath) { $backupPath } else { 'n/a' })"
 
 # ---------------------------------------------------------------------------
 # 7. Restart - only the servers that were running before the update. The
@@ -271,10 +366,38 @@ if ($wasApiUp -or $wasWebUp) {
   Write-Info "Start it whenever you need it from the desktop shortcut."
 }
 
+# ---------------------------------------------------------------------------
+# 7b. Health verification - the update is only a success if the school can
+#     actually work afterwards. If the API was up before, wait for it to come
+#     back; if it never does, say so loudly (and hand the operator the exact
+#     recovery step) instead of printing a green panel over a dead system.
+# ---------------------------------------------------------------------------
+$healthOk = $false
+if ($wasApiUp) {
+  Write-Info "Waiting for the API to accept connections (up to 90s)..."
+  $healthOk = Wait-Label -Condition { Test-Port 3001 } -Label "Waiting for the API" -TimeoutSec 90
+  if ($healthOk) {
+    Write-Ok "API is back up" "port 3001 accepting connections"
+  } else {
+    Write-Warn2 "The API did not come back within 90 seconds."
+    Write-Info "Your DATA IS SAFE - only the restart may have failed."
+    Write-Info "Close this window and open the desktop shortcut to start the system."
+  }
+  Write-UiProgress -State "running" -Label "Restarting the servers" -Message "API health check" -Extra @{ healthOk = $healthOk; backupPath = $backupPath }
+} else {
+  Write-UiProgress -State "running" -Label "Restarting the servers" -Message "no restart was needed" -Extra @{ healthOk = $true; backupPath = $backupPath }
+}
+
 Push-Location $Root
 $head = (git rev-parse --short HEAD 2>$null | Select-Object -Last 1).Trim()
 Pop-Location
 if (-not $head) { $head = "?" }
+
+$healthRow = switch ($true) {
+  (-not $wasApiUp) { "API was not running before - nothing to verify" }
+  ($healthOk)      { "API restarted and accepting connections" }
+  default          { "DID NOT COME BACK - start it from the desktop shortcut" }
+}
 
 Write-Panel -Title "UPDATE COMPLETE" -Colour Green -Note ("done in " + (Get-UiElapsed)) -Rows @(
   "---",
@@ -283,8 +406,10 @@ Write-Panel -Title "UPDATE COMPLETE" -Colour Green -Note ("done in " + (Get-UiEl
   "Now at|$head",
   "---",
   "Servers|$(if ($wasApiUp -or $wasWebUp) { 'restarting via the launcher' } else { 'were already shut down - not started' })",
-  "Data|untouched - additive migrations only",
+  "API health|$healthRow",
+  "Safety backup|$(if ($backupPath) { $backupPath } else { 'not needed (no existing data)' })",
+  "Data|untouched - additive schema changes only, backup kept",
   "Log|logs\update-*.log"
 )
-Write-UiProgress -State "done" -Label "Update complete"
+Write-UiProgress -State "done" -Label "Update complete" -Message $(if ($backupPath) { "Safety backup: $backupPath" } else { "" }) -Extra @{ healthOk = $healthOk; backupPath = $backupPath }
 exit 0

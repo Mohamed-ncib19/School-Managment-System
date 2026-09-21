@@ -95,7 +95,9 @@ export class SentinelService {
 
     const [row] = await this.db.client.insert(students).values({
       first_name: "Unassigned",
-      last_name: "",
+      // NOT NULL in the schema: the sentinel must satisfy it (an empty value
+      // here used to force a spurious fill-value demand on every data export).
+      last_name: "Unassigned",
       phone: "00000000",
       enrollment_date: new Date(),
       monthly_fee: "0",

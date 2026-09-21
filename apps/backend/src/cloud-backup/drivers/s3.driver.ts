@@ -5,6 +5,7 @@ import {
   GetObjectCommand,
   ListObjectsV2Command,
   HeadObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import type {
   DriverOptions,
@@ -123,6 +124,9 @@ export class S3Driver implements StorageDriver {
           if (!bytes || Buffer.compare(Buffer.from(bytes), probe) !== 0) {
             throw new Error("Le contenu lu ne correspond pas au contenu écrit (round-trip mismatch).");
           }
+          // Probe objects are the one thing worth removing: the namespace is
+          // append-only for BACKUP data, not for connectivity litter.
+          await this.client().send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key })).catch(() => undefined);
         },
         this.options,
       );
@@ -206,6 +210,21 @@ export class S3Driver implements StorageDriver {
         size: res.ContentLength ?? 0,
         lastModified: res.LastModified?.toISOString() ?? "",
       };
+    } catch (err) {
+      throw this.classify(err);
+    }
+  }
+
+  /**
+   * Privileged single-object removal for the legacy-format purge only.
+   * Never called by sync, snapshot or restore paths.
+   */
+  async remove(key: string): Promise<void> {
+    try {
+      await withRetry(
+        () => this.client().send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key })),
+        this.options,
+      );
     } catch (err) {
       throw this.classify(err);
     }

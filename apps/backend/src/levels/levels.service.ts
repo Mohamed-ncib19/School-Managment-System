@@ -5,14 +5,12 @@ import { levels } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
-import { SentinelService } from "../hierarchy/sentinel.service";
 
 @Injectable()
 export class LevelsService {
   constructor(
     private readonly db: DbService,
     private readonly auditService: AuditService,
-    private readonly sentinels: SentinelService,
   ) {}
 
   /** Level names are unique (case-insensitive, trimmed). */
@@ -70,7 +68,6 @@ export class LevelsService {
       .insert(levels)
       .values({ name: dto.name, color: dto.color })
       .returning();
-    await this.sentinels.ensureFieldSentinel(level.id, userId);
     await this.auditService.record({
       action: "level.created",
       entityType: "level",

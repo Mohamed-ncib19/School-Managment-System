@@ -285,4 +285,28 @@ export class GDriveDriver implements StorageDriver {
       throw this.classify(err);
     }
   }
+
+  /**
+   * Privileged single-object removal for the legacy-format purge only.
+   * Never called by sync, snapshot or restore paths.
+   */
+  async remove(key: string): Promise<void> {
+    const auth = await this.auth();
+    try {
+      await withRetry(async () => {
+        const drive = await driveClient(auth);
+        const folderId = await this.rootFolder(auth, key.split("/")[0]);
+        const res = await drive.files.list({
+          q: `name = '${this.fileName(key).replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+          fields: "files(id)",
+          pageSize: 1,
+        });
+        const fileId = res.data.files?.[0]?.id;
+        if (!fileId) throw new Error("Fichier introuvable dans Google Drive.");
+        await drive.files.delete({ fileId });
+      }, this.options);
+    } catch (err) {
+      throw this.classify(err);
+    }
+  }
 }

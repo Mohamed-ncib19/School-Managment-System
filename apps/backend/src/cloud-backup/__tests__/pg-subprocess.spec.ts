@@ -21,12 +21,13 @@ describe("psql child process", () => {
   });
 });
 
-describe("pg_dump child process", () => {
-  it("waits for the write stream to finish, not just the child to close", () => {
-    const dump = SNAPSHOT.slice(SNAPSHOT.indexOf("private async dumpToFile"));
-    const body = dump.slice(0, dump.indexOf("\n  /**"));
-    // Resolving on close alone let statSync measure a still-flushing file.
-    expect(body).toMatch(/on\(["']finish["']/);
+describe("export-only backups never shell out to pg_dump", () => {
+  it("snapshot service has no pg_dump path left", () => {
+    // Backups are versioned data exports now; pg_dump/psql survive only in
+    // the legacy login-page restore path (restore.service loadSqlFile).
+    expect(SNAPSHOT).not.toContain("pg_dump");
+    expect(SNAPSHOT).not.toContain("dumpToFile");
+    expect(SNAPSHOT).not.toContain("spawn(");
   });
 });
 

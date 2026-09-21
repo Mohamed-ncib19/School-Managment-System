@@ -2,15 +2,15 @@ import { CloudSetupService } from "../setup/setup.service";
 
 /**
  * `verify()` probes every enabled target live (write/read round trip) and
- * stamps the bookkeeping from the outcome — it must not read bookkeeping
- * that a fresh setup never wrote, or step 2 fails every target with no
- * message. Tested with hand-rolled doubles rather than a live database.
+ * stamps the bookkeeping from the outcome. Queued rows are reported for
+ * information only: exports carry the full dataset, so rows waiting between
+ * exports are normal and never block validation. Tested with hand-rolled
+ * doubles rather than a live database.
  */
 function makeService(opts: {
   probe: "ok" | "fail";
   targetIds?: string[];
   queuePending: number;
-  drained: boolean;
 }) {
   const ids = opts.targetIds ?? ["t1"];
   const updates: Array<Record<string, unknown>> = [];
@@ -36,7 +36,6 @@ function makeService(opts: {
     }),
   };
   const worker = {
-    runDrainNow: async () => opts.drained,
     enabledTargets: async () => [
       {
         id: "t1",
@@ -63,7 +62,7 @@ function makeService(opts: {
 
 describe("setup verification", () => {
   it("probes the target live and reports ok on success", async () => {
-    const { service, updates } = makeService({ probe: "ok", queuePending: 0, drained: true });
+    const { service, updates } = makeService({ probe: "ok", queuePending: 0 });
     const result = await service.verify();
     expect(result.pending).toBe(0);
     expect(result.ok).toBe(true);
@@ -72,22 +71,22 @@ describe("setup verification", () => {
   });
 
   it("stamps the provider message on failure instead of an empty failure", async () => {
-    const { service, updates } = makeService({ probe: "fail", queuePending: 0, drained: true });
+    const { service, updates } = makeService({ probe: "fail", queuePending: 0 });
     const result = await service.verify();
     expect(result.ok).toBe(false);
     expect(result.targets).toEqual([{ id: "t1", ok: false, lastError: "boom" }]);
     expect(updates.some((u) => u.last_error === "boom")).toBe(true);
   });
 
-  it("is not ok while rows are still queued", async () => {
-    const { service } = makeService({ probe: "ok", queuePending: 7, drained: true });
+  it("stays ok while rows are queued between exports", async () => {
+    const { service } = makeService({ probe: "ok", queuePending: 7 });
     const result = await service.verify();
     expect(result.pending).toBe(7);
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 
   it("is not ok when there are no targets at all", async () => {
-    const { service } = makeService({ probe: "ok", targetIds: [], queuePending: 0, drained: false });
+    const { service } = makeService({ probe: "ok", targetIds: [], queuePending: 0 });
     expect((await service.verify()).ok).toBe(false);
   });
 });

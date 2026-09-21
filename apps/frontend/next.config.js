@@ -31,6 +31,13 @@ const nextConfig = {
     config.resolve.alias["@excalidraw/mermaid-to-excalidraw"] = path.join(__dirname, "lib/excalidraw/mermaid-stub.ts");
     return config;
   },
+  // Dev-only: which hostnames may fetch /_next/* assets and HMR payloads.
+  // Without this, Next 14.2.35+ treats 127.0.0.1 as cross-origin when the dev
+  // server is addressed via localhost (or vice versa), and a Fast-Refresh
+  // full reload then fails silently — leaving a blank, unmounted page that
+  // survives cache clears. Both loopback spellings must be allowed; add the
+  // LAN hostname here if you debug the portal from another machine.
+  allowedDevOrigins: ["localhost", "127.0.0.1"],
   async rewrites() {
     // The frontend proxies /api to the backend on the same machine. Because
     // the browser only ever talks to the Next origin, the session cookie is

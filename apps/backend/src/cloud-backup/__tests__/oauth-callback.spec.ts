@@ -16,7 +16,11 @@ describe("gdrive OAuth callback", () => {
 
   it("targets an origin derived from the flow's own redirect URI", () => {
     expect(CONTROLLER).toContain("appOrigin");
-    expect(CONTROLLER).toContain("new URL(pending.redirectUri).origin");
+    // safeOrigin() derives the postMessage target from the pending handshake's
+    // own redirect URI and falls back to "null" (opaque origin) — never "*".
+    expect(CONTROLLER).toContain("safeOrigin");
+    expect(CONTROLLER).toContain('return redirectUri ? new URL(redirectUri).origin : "null";');
+    expect(CONTROLLER).not.toContain('postMessage(' + "${JSON.stringify(payload)},\"*\")");
   });
 
   it("expires abandoned OAuth handshakes so client secrets do not linger", () => {

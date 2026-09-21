@@ -6,7 +6,6 @@ import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
 import { GroupScheduleService } from "../scheduling/group-schedule/group-schedule.service";
-import { SentinelService } from "../hierarchy/sentinel.service";
 
 @Injectable()
 export class GroupsService {
@@ -14,7 +13,6 @@ export class GroupsService {
     private readonly db: DbService,
     private readonly auditService: AuditService,
     private readonly groupSchedule: GroupScheduleService,
-    private readonly sentinels: SentinelService,
   ) {}
 
   /**
@@ -115,7 +113,6 @@ export class GroupsService {
         color: dto.color,
       })
       .returning();
-    await this.sentinels.ensureStudentSentinel(group.id);
     await this.auditService.record({
       action: "group.created",
       entityType: "group",

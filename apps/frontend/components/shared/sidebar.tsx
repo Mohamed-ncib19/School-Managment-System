@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   ChevronLeft,
   ChevronRight,
+  CloudOff,
   LogOut,
   X,
   Users,
@@ -30,6 +31,7 @@ import {
   DoorOpen,
 } from "lucide-react";
 import { useAuthStore } from "@/hooks/use-auth-store";
+import { useCloudSyncStore } from "@/hooks/use-cloud-sync-store";
 import { useTranslation } from "@/lib/i18n/context";
 import { useHierarchyConfig, type HierarchyEntity } from "@/hooks/use-hierarchy-config";
 import { useFinancialSettings } from "@/hooks/use-financial";
@@ -214,6 +216,10 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
     router.push("/login");
   };
 
+  const dropboxFull = useCloudSyncStore((s) =>
+    (s.status?.targets ?? []).some((target) => target.enabled && target.quotaFull),
+  );
+
   const hierarchyPath = parseHierarchyPath(pathname, entityOrder);
 
   /**
@@ -243,19 +249,25 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
           collapsed ? "w-[68px]" : "w-60"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
-        <div className="flex items-center justify-between h-16 px-4 border-b border-border">
+        <div
+          className={`flex items-center border-b border-border ${
+            collapsed
+              ? "flex-col gap-2 px-2 py-4" // 68px width: a row can't hold logo + toggle without clipping — stack them
+              : "justify-between h-16 px-4"
+          }`}
+        >
           {!collapsed && (
-            <Link href="/dashboard" className="flex items-center gap-2">
+            <Link href="/dashboard" className="flex items-center gap-2 min-w-0">
               {brandLogo ? (
-                <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
+                <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain shrink-0" />
               ) : (
-                <BrandMark name={systemName} className="h-8 w-8 text-[11px]" />
+                <BrandMark name={systemName} className="h-8 w-8 shrink-0 text-[11px]" />
               )}
               <span className="font-bold text-sm tracking-tight truncate">{systemName}</span>
             </Link>
           )}
           {collapsed && (
-            <Link href="/dashboard" className="mx-auto">
+            <Link href="/dashboard" className="flex items-center justify-center">
               {brandLogo ? (
                 <img src={brandLogo} alt={systemName} className="h-8 w-8 rounded-btn object-contain" />
               ) : (
@@ -263,11 +275,12 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
               )}
             </Link>
           )}
-          <div className="flex items-center gap-1">
+          <div className={`flex items-center gap-1 ${collapsed ? "justify-center" : ""}`}>
             <button
               onClick={onToggleCollapse}
-              className="hidden lg:flex h-8 w-8 items-center justify-center rounded-btn hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors text-text-secondary"
+              className="hidden lg:flex h-8 w-8 shrink-0 items-center justify-center rounded-btn hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors text-text-secondary"
               aria-label={collapsed ? t("common.expandSidebar") : t("common.collapseSidebar")}
+              title={collapsed ? t("common.expandSidebar", "Déplier la barre latérale") : t("common.collapseSidebar", "Replier la barre latérale")}
             >
               {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
             </button>
@@ -512,6 +525,33 @@ export default function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onClo
         </nav>
 
         <div className="border-t border-border p-3 space-y-2">
+          {dropboxFull &&
+            (collapsed ? (
+              <button
+                onClick={() => router.push("/settings")}
+                className="flex items-center justify-center w-full py-2.5 rounded-btn bg-danger-soft dark:bg-danger-dark-soft text-danger transition-colors"
+                aria-label={t("cloudSafeSave.dropboxFullTitle", "Espace Dropbox plein")}
+                title={t("cloudSafeSave.dropboxFullTitle", "Espace Dropbox plein")}
+              >
+                <CloudOff size={18} />
+              </button>
+            ) : (
+              <button
+                onClick={() => router.push("/settings")}
+                className="flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm bg-danger-soft dark:bg-danger-dark-soft text-danger transition-colors w-full text-left"
+                title={t("cloudSafeSave.dropboxFullTitle", "Espace Dropbox plein")}
+              >
+                <CloudOff size={16} className="shrink-0" />
+                <span className="min-w-0">
+                  <span className="block font-semibold">
+                    {t("cloudSafeSave.dropboxFullTitle", "Espace Dropbox plein")}
+                  </span>
+                  <span className="block text-xs opacity-80">
+                    {t("cloudSafeSave.dropboxFullSidebarSub", "Sauvegarde en pause — voir les étapes")}
+                  </span>
+                </span>
+              </button>
+            ))}
           <ContactSupport collapsed={collapsed} />
           {!collapsed && user && (
             <div className="flex items-center gap-3 px-2 py-1">

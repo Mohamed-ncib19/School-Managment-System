@@ -54,4 +54,13 @@ export class MemoryDriver implements StorageDriver {
       .filter(([key]) => key.startsWith(prefix))
       .map(([key, body]) => ({ key, size: body.length, lastModified: null }));
   }
+
+  async remove(key: string): Promise<void> {
+    if (!this.puts.delete(key)) throw new Error(`No such object: ${key}`);
+  }
+
+  /** Keys currently stored — for asserting purge results. */
+  keys(): string[] {
+    return [...this.puts.keys()];
+  }
 }

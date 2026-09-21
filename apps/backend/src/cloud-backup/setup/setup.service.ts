@@ -105,6 +105,11 @@ export class CloudSetupService {
           "Cette action est irréversible — confirmez explicitement pour continuer.",
       );
     }
+    // A re-key (lost password on an already-configured install) seals the new
+    // password LOCALLY first: cloud seeding is best-effort below, because the
+    // whole point of re-keying is recovering when destinations are dead.
+    // A fresh setup still requires at least one working destination.
+    const isRekey = !!configured?.setup_complete;
 
     const kdf = makeSchoolSalt();
     const wrapped = await this.keys.wrapFromPhrase(input.phrase, kdf);
@@ -140,34 +145,58 @@ export class CloudSetupService {
     }
 
     const key = await this.keys.unwrap(wrapped.wrapped, wrapped.wrapSalt);
-    await this.seedCloud(schoolId, kdf, key);
+    await this.seedCloud(schoolId, kdf, key, isRekey);
     this.logger.log(`Cloud backup seeded for school ${schoolId} (instance ${instanceUuid}).`);
     return { schoolId, instanceUuid, kdf };
   }
 
   /** Writes the salt and check objects to every enabled target. */
-  private async seedCloud(schoolId: string, kdf: KdfParams, key: Buffer): Promise<void> {
+  private async seedCloud(schoolId: string, kdf: KdfParams, key: Buffer, isRekey = false): Promise<void> {
     const targets = await this.enabledTargetDrivers();
     if (targets.length === 0) {
+      if (isRekey) {
+        // Lost-password recovery with no usable destination (stored Dropbox
+        // credentials unreadable, disk unplugged): seal the new password
+        // locally anyway. Verify-password starts accepting it immediately, so
+        // the admin can link a fresh destination; the worker rewrites the
+        // cloud check objects on the next boot once a target answers.
+        this.logger.warn("Re-key sealed locally with no seedable destination — link a working destination next.");
+        return;
+      }
       throw new BadRequestException("Configurez au moins une destination de sauvegarde avant de continuer.");
     }
-    await writeMetaObjects(
-      targets.map((t) => t.driver),
-      schoolId,
-      kdf,
-      key,
-    );
+    // One dead destination (expired Dropbox token, unplugged disk) must not
+    // block (re-)keying the healthy ones: seed per target and only fail when
+    // NOTHING was seeded — otherwise a single broken target wedges setup and
+    // every re-key after it.
+    const failures: string[] = [];
+    for (const target of targets) {
+      try {
+        await writeMetaObjects([target.driver], schoolId, kdf, key);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push(`${target.id}: ${message}`);
+        this.logger.warn(`Seeding ${target.id} failed, continuing with the other destinations: ${message}`);
+      }
+    }
+    if (failures.length === targets.length) {
+      if (isRekey) {
+        this.logger.warn(`Re-key sealed locally, cloud seeding failed everywhere (${failures[0]}) — link a working destination next.`);
+        return;
+      }
+      throw new BadRequestException(
+        `Aucune destination n'a pu recevoir les objets de chiffrement — réparez-en au moins une : ${failures[0]}`,
+      );
+    }
   }
 
   /**
    * Step 2 — live round-trip probe against every enabled target.
    *
-   * This used to read the `last_success_at` bookkeeping the worker writes —
-   * which a fresh setup never has (seeding bypasses the worker, and an empty
-   * queue drains nothing), so step 2 failed every target with no message.
-   * Now each target proves itself here with a real write/read round trip and
-   * the bookkeeping is stamped from the outcome, which is also what the
-   * wizard subtitle promises ("Une écriture de test … puis relue").
+   * Each target proves itself here with a real write/read round trip and the
+   * bookkeeping is stamped from the outcome. The queue pending count is
+   * reported for information only: exports carry the full dataset, so queued
+   * rows between exports are normal and never block validation.
    */
   async verify(): Promise<{
     ok: boolean;
@@ -175,7 +204,6 @@ export class CloudSetupService {
     pending: number;
     targets: Array<{ id: string; ok: boolean; lastError: string | null }>;
   }> {
-    const drained = await this.worker.runDrainNow();
     const rows = await this.db.client.select().from(cloudTargets).where(eq(cloudTargets.enabled, true));
     const live = new Map((await this.enabledTargetDrivers()).map((t) => [t.id, t.driver] as const));
     const targetStatus: Array<{ id: string; ok: boolean; lastError: string | null }> = [];
@@ -203,8 +231,8 @@ export class CloudSetupService {
     }
     const pending = await this.pendingCount();
     return {
-      ok: targetStatus.length > 0 && targetStatus.every((t) => t.ok) && pending === 0,
-      drained,
+      ok: targetStatus.length > 0 && targetStatus.every((t) => t.ok),
+      drained: false,
       pending,
       targets: targetStatus,
     };

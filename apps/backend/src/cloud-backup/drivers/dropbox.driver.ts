@@ -273,8 +273,7 @@ export class DropboxDriver implements StorageDriver {
     }
   }
 
-  async list(prefix: string): Promise<ObjectMeta[]> {
-    const items: ObjectMeta[] = [];
+  async list(prefix: string): Promise<ObjectMeta[]> {    const items: ObjectMeta[] = [];
     // Dropbox lists a folder, not a prefix. List the deepest folder the
     // prefix names, recursively, then filter — the same shape the folder
     // driver uses.
@@ -309,6 +308,18 @@ export class DropboxDriver implements StorageDriver {
     } catch (err) {
       // An absent folder is an empty listing, not a fault.
       if (/not_found/i.test(err instanceof Error ? err.message : "")) return [];
+      throw this.classify(err);
+    }
+  }
+
+  /**
+   * Privileged single-object removal for the legacy-format purge only.
+   * Never called by sync, snapshot or restore paths.
+   */
+  async remove(key: string): Promise<void> {
+    try {
+      await this.rpc("/files/delete_v2", { path: this.path(key) });
+    } catch (err) {
       throw this.classify(err);
     }
   }

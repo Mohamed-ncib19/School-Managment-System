@@ -18,6 +18,12 @@ export interface UpdateProgress {
   label?: string;
   message?: string;
   updatedAt?: string;
+  /** Relative path of the verified pre-schema safety dump, when taken. */
+  backupPath?: string;
+  /** True when a destructive schema change was blocked - data untouched. */
+  destructive?: boolean;
+  /** Post-restart API health check result (undefined = engine too old to report it). */
+  healthOk?: boolean;
 }
 
 export const updatesApi = {

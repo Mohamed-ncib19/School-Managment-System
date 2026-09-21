@@ -5,6 +5,7 @@ import Providers from "./providers";
 import { I18nProvider } from "@/lib/i18n/context";
 import ThemeInit from "@/components/shared/theme-init";
 import { schoolMarkDataUrl } from "@/lib/brand";
+import { BackendGate } from "@/components/shared/backend-gate";
 import "./globals.css";
 
 const inter = Inter({
@@ -101,6 +102,7 @@ export default function RootLayout({
           Aller au contenu principal
         </a>
         <I18nProvider>
+          <BackendGate />
           <Providers>{children}</Providers>
         </I18nProvider>
       </body>

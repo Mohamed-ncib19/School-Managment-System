@@ -14,6 +14,10 @@ export interface TablePreview {
   extraColumns: string[];
   missingTargetTables: { column: string; targetLabel: string }[];
   rowCount: number;
+  /** Hidden system rows (deleted-children placeholders) — never displayed, still imported. */
+  systemRowCount: number;
+  /** True when every row in the file is a system placeholder (nothing to display). */
+  allSystem: boolean;
   sampleRows: Record<string, string>[];
 }
 

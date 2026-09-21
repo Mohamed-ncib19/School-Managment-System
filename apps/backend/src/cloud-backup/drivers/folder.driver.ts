@@ -171,4 +171,16 @@ export class FolderDriver implements StorageDriver {
       throw this.classify(err);
     }
   }
+
+  /**
+   * Privileged single-object removal for the legacy-format purge only.
+   * Never called by sync, snapshot or restore paths.
+   */
+  async remove(key: string): Promise<void> {
+    try {
+      await unlink(this.pathFor(key));
+    } catch (err) {
+      throw this.classify(err);
+    }
+  }
 }

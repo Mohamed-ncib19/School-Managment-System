@@ -297,7 +297,11 @@ function Write-UiProgress {
   param(
     [string]$State = "running",
     [string]$Label = "",
-    [string]$Message = ""
+    [string]$Message = "",
+    # Optional data-safety extras merged into the journal (backupPath,
+    # destructive, healthOk). The in-app tracker renders them when present;
+    # engines that never pass them are unaffected.
+    [hashtable]$Extra = $null
   )
 
   if (-not $script:UiProgressFile) { return }
@@ -309,6 +313,12 @@ function Write-UiProgress {
     label     = $Label
     message   = $Message
     updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+  }
+
+  if ($Extra) {
+    foreach ($extraKey in $Extra.Keys) {
+      $payload[$extraKey] = $Extra[$extraKey]
+    }
   }
 
   try {

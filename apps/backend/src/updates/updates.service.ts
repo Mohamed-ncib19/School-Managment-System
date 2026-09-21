@@ -30,6 +30,12 @@ export interface UpdateProgress {
   label?: string;
   message?: string;
   updatedAt?: string;
+  /** Relative path of the verified pre-schema safety dump (backups/pre-schema-*.dump). */
+  backupPath?: string;
+  /** True when the schema change was blocked as destructive - data untouched, a human must decide. */
+  destructive?: boolean;
+  /** Post-restart API health check result (undefined = engine too old to report it). */
+  healthOk?: boolean;
 }
 
 interface Cached {

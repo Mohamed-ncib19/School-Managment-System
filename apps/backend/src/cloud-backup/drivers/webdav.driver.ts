@@ -137,6 +137,9 @@ export class WebDavDriver implements StorageDriver {
         if (Buffer.compare(buffer, probe) !== 0) {
           throw new Error("Le contenu lu ne correspond pas au contenu écrit (round-trip mismatch).");
         }
+        // Probe objects are the one thing worth removing: the namespace is
+        // append-only for BACKUP data, not for connectivity litter.
+        await client.deleteFile(this.path(key)).catch(() => undefined);
       }, this.options);
       return { ok: true, latencyMs: Date.now() - started, probe: key };
     } catch (err) {
@@ -199,6 +202,19 @@ export class WebDavDriver implements StorageDriver {
         }
       }, this.options);
       return items;
+    } catch (err) {
+      throw this.classify(err);
+    }
+  }
+
+  /**
+   * Privileged single-object removal for the legacy-format purge only.
+   * Never called by sync, snapshot or restore paths.
+   */
+  async remove(key: string): Promise<void> {
+    const client = await this.client();
+    try {
+      await withRetry(() => client.deleteFile(this.path(key)), this.options);
     } catch (err) {
       throw this.classify(err);
     }

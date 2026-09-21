@@ -9,6 +9,7 @@ import { decodeObject } from "../cloud-backup/crypto/object-codec";
 import { splitObject } from "../cloud-backup/crypto/object-header";
 import {
   attendanceSheets,
+  auditLogs,
   classrooms,
   fields,
   financialSettings,
@@ -58,6 +59,9 @@ const IMPORT_CHUNK = 200;
 /** Preview sample values are truncated so a whiteboard scene doesn't bloat it. */
 const SAMPLE_TRUNCATE = 120;
 
+/** How many sample rows the preview carries — enough to eyeball a whole small table. */
+const SAMPLE_ROWS = 50;
+
 interface TransferTable {
   key: string;
   label: string;
@@ -89,6 +93,10 @@ const TABLE_ORDER: TransferTable[] = [
   { key: "schedule_entry_exceptions", label: "Exceptions de séances", table: scheduleEntryExceptions, refs: { schedule_entry_id: "schedule_entries", new_time_slot_id: "time_slots", new_classroom_id: "classrooms", new_prof_id: "professors" } },
   { key: "attendance_sheets", label: "Feuilles de présence", table: attendanceSheets, refs: { group_id: "groups" } },
   { key: "whiteboards", label: "Tableaux blancs", table: whiteboards, refs: { owner_id: "users" } },
+  // The audit trail is part of the school's records: it travels with the
+  // backup, and it has no outgoing FK to anything above (actor_user_id is
+  // nullable — a deleted user must not orphan an audit line).
+  { key: "audit_logs", label: "Journal d'audit", table: auditLogs, refs: {} },
   { key: "receipt_counters", label: "Compteurs de reçus", table: receiptCounters, refs: {} },
   { key: "financial_settings", label: "Paramètres financiers", table: financialSettings, refs: {} },
   { key: "system_settings", label: "Paramètres système", table: systemSettings, refs: {} },
@@ -119,6 +127,10 @@ export interface TablePreview {
   extraColumns: string[];
   missingTargetTables: { column: string; targetLabel: string }[];
   rowCount: number;
+  /** Rows the admin never sees in the UI (deleted-children placeholders) — they still import. */
+  systemRowCount: number;
+  /** True when every row in the file is a system placeholder (nothing to eyeball). */
+  allSystem: boolean;
   sampleRows: Record<string, string>[];
 }
 
@@ -248,6 +260,13 @@ const current = getTableColumns(def.table) as Record<string, any>;
         // cells. Checking here (not just column presence) turns an opaque
         // mid-transaction 500 into a 400 naming the exact row. Empty means
         // null/undefined/"" — exactly what buildRow drops below.
+        // System placeholders ("Unassigned" holding pens created by the
+        // hierarchy delete flows) are exempt: they are not user data, older
+        // installs carry e.g. a student sentinel with an empty last_name, and
+        // demanding a fill value for a row no admin can see is noise.
+        const placeholderIndex = fileTable.columns.indexOf("is_system_placeholder");
+        const isPlaceholder = (row: unknown) =>
+          placeholderIndex >= 0 && Array.isArray(row) && row[placeholderIndex] === true;
         const isEmptyCell = (row: unknown, index: number) =>
           !Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === "";
         for (const [column, col] of Object.entries(current)) {
@@ -257,6 +276,8 @@ const current = getTableColumns(def.table) as Record<string, any>;
           const filled = fill !== undefined && String(fill).trim() !== "";
           if (!fileColumns.includes(column)) {
             if (filled) continue;
+            const userRows = fileTable.rows.some((row) => !isPlaceholder(row));
+            if (!userRows) continue;
             throw new BadRequestException(
               `Import ${def.label} impossible : la colonne « ${column} » manque dans le fichier. ` +
                 `Renseignez-la dans l'aperçu (une valeur pour toutes les lignes) avant d'importer.`,
@@ -264,7 +285,7 @@ const current = getTableColumns(def.table) as Record<string, any>;
           }
           if (filled) continue;
           const colIndex = fileTable.columns.indexOf(column);
-          const bad = fileTable.rows.findIndex((row) => isEmptyCell(row, colIndex));
+          const bad = fileTable.rows.findIndex((row) => !isPlaceholder(row) && isEmptyCell(row, colIndex));
           if (bad >= 0) {
             throw new BadRequestException(
               `Import ${def.label} impossible : la colonne « ${column} » est vide à la ligne ${bad + 1} du fichier. ` +
@@ -357,17 +378,21 @@ const current = getTableColumns(def.table) as Record<string, any>;
 
   /**
    * Accepts either a plain `iq-data-export` JSON file or an encrypted
-   * `data_export` object (`{school}/exports/*.json.zst.enc`) as uploaded to
-   * Dropbox by every snapshot. The envelope header is plaintext and carries
-   * its own KDF parameters, so the phrase alone re-derives the key — the same
-   * zero-knowledge property as the snapshot restore, but ending in the
-   * Importer instead of `psql`.
+   * `data_export` object (`{school}/exports/latest.json.zst.enc`) as uploaded
+   * to Dropbox by every snapshot.
+   *
+   * The secret password is REQUIRED for encrypted files: the Dropbox copy is
+   * meant to travel between machines (or schools), so the importing admin
+   * must prove they hold the secret — auto-opening with this machine's own
+   * sealed key would silently bypass the check and let a file from another
+   * school replace the local data by accident. Plain JSON imports need no
+   * password.
    */
   private async resolveImportBuffer(buffer: Buffer, phrase?: string): Promise<Buffer> {
     if (this.looksLikeJson(buffer)) return buffer;
     if (!phrase?.trim()) {
       throw new BadRequestException(
-        "Ce fichier est chiffré (copie Dropbox) — saisissez la phrase de récupération (12 mots) pour le déchiffrer.",
+        "Ce fichier est chiffré (copie Dropbox) — saisissez le mot de passe secret défini à la connexion pour le déchiffrer.",
       );
     }
     let header;
@@ -387,7 +412,7 @@ const current = getTableColumns(def.table) as Record<string, any>;
       return plaintext;
     } catch {
       throw new BadRequestException(
-        "Phrase de récupération invalide pour ce fichier — vérifiez l'ordre et l'orthographe des 12 mots.",
+        "Mot de passe secret invalide pour ce fichier — il a été chiffré avec un autre mot de passe.",
       );
     }
   }
@@ -431,13 +456,19 @@ const current = getTableColumns(def.table) as Record<string, any>;
     const missingOptional: TableColumnIssue[] = [];
     for (const [column, col] of Object.entries(current)) {
       if (fileSet.has(column)) {
-        // Required column present but with empty cells (null/""): the file
-        // cannot import as-is, so it joins missingRequired and the same fill
-        // flow patches only those cells at import time.
+        // Required column present but with empty cells (null/"") in *user*
+        // rows: the file cannot import as-is, so it joins missingRequired and
+        // the same fill flow patches only those cells at import time. System
+        // placeholder rows ("Unassigned" holding pens, e.g. the student
+        // sentinel's empty last_name) are exempt — the admin never sees them
+        // and they must not block an import of real data.
         if (col.notNull && !col.hasDefault) {
           const index = fileTable.columns.indexOf(column);
+          const placeholderIndex = fileTable.columns.indexOf("is_system_placeholder");
           const sparse = fileTable.rows.some(
-            (row) => !Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === "",
+            (row) =>
+              !(placeholderIndex >= 0 && Array.isArray(row) && row[placeholderIndex] === true) &&
+              (!Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === ""),
           );
           if (sparse) missingRequired.push({ column, type: this.describeType(col.columnType) });
         }
@@ -457,7 +488,17 @@ const current = getTableColumns(def.table) as Record<string, any>;
       missingTargetTables.push({ column, targetLabel: targetDef?.label ?? target });
     }
 
-    const sampleRows = fileTable.rows.slice(0, 3).map((row) => {
+    // "Unassigned" placeholders (is_system_placeholder) are system rows the
+    // app never shows the admin; the file carries them because detached
+    // children reference them, but the preview should display real data —
+    // with the hidden count reported separately.
+    const placeholderIndex = fileTable.columns.indexOf("is_system_placeholder");
+    const visibleRows = fileTable.rows.filter(
+      (row) => !Array.isArray(row) || row[placeholderIndex] !== true,
+    );
+    const systemRowCount = fileTable.rows.length - visibleRows.length;
+
+    const sampleRows = visibleRows.slice(0, SAMPLE_ROWS).map((row) => {
       const out: Record<string, string> = {};
       fileTable.columns.forEach((column, index) => {
         if (!current[column]) return;
@@ -475,6 +516,8 @@ const current = getTableColumns(def.table) as Record<string, any>;
       extraColumns,
       missingTargetTables,
       rowCount: fileTable.rows.length,
+      systemRowCount,
+      allSystem: fileTable.rows.length > 0 && visibleRows.length === 0,
       sampleRows,
     };
   }

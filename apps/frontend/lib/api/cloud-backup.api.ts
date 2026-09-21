@@ -18,12 +18,15 @@ export interface CloudTargetStatus {
   lastSuccessAt: string | null;
   lastError: string | null;
   consecutiveFailures: number;
+  /** True when an enabled Dropbox target last failed with insufficient space. */
+  quotaFull: boolean;
 }
 
 export interface CloudBackupStatus {
   configured: boolean;
   state: SyncState;
   schoolId: string | null;
+  autoExport: boolean;
   instanceUuid: string | null;
   hostname: string | null;
   conflict: { hostname: string; instanceUuid: string; claimedAt: string } | null;
@@ -119,11 +122,18 @@ export const cloudBackupApi = {
   updateTarget: (id: string, body: { name?: string; config?: Record<string, string>; enabled?: boolean }) =>
     ApiClient.put(`/cloud-backup/targets/${id}`, body),
 
+  updateSettings: (body: { autoExport: boolean }) =>
+    ApiClient.put<{ ok: boolean; autoExport: boolean }>("/cloud-backup/settings", body),
+
   deleteTarget: (id: string) => ApiClient.del(`/cloud-backup/targets/${id}`) as unknown as Promise<{ ok: boolean }>,
 
   testTarget: (id: string) => ApiClient.post<{ ok: boolean; latencyMs: number }>(`/cloud-backup/targets/${id}/test`, {}),
 
   generatePhrase: () => ApiClient.post<RecoveryPhrase>("/cloud-backup/setup/generate-phrase", {}),
+
+  /** Confirms the secret password against the sealed key (linking a destination). */
+  verifyPassword: (body: { phrase: string }) =>
+    ApiClient.post<{ ok: boolean }>("/cloud-backup/verify-password", body),
 
   /** Prefill for the wizard, derived from the school's own name. */
   setupSuggestion: () =>

@@ -6,14 +6,12 @@ import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
 import { normalizeTunisianPhone } from "../common/phone.util";
-import { SentinelService } from "../hierarchy/sentinel.service";
 
 @Injectable()
 export class ProfessorsService {
   constructor(
     private readonly db: DbService,
     private readonly auditService: AuditService,
-    private readonly sentinels: SentinelService,
   ) {}
 
   async listProfessors(fieldId?: string) {
@@ -78,7 +76,6 @@ export class ProfessorsService {
         user_id: dto.user_id,
       })
       .returning();
-    await this.sentinels.ensureGroupSentinel(prof.id);
     await this.auditService.record({
       action: "professor.created",
       entityType: "professor",

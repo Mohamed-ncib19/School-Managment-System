@@ -52,22 +52,22 @@ describe("failed rows come back", () => {
   });
 });
 
-describe("the drain cycle requeues before it reads", () => {
-  const worker = readFileSync(join(__dirname, "..", "worker", "sync-worker.service.ts"), "utf8");
-  const drain = worker.slice(worker.indexOf("async drainOnce"));
-  const body = drain.slice(0, drain.indexOf("\n  /**"));
+describe("export covers the queue, then trims it", () => {
+  const snapshot = readFileSync(join(__dirname, "..", "worker", "snapshot.service.ts"), "utf8");
 
-  it("calls requeueRetryable", () => {
-    // The old retryFailed() took an id list and was called by nothing at all.
-    expect(body).toContain("requeueRetryable");
+  it("prunes the queue through the landed export sequence", () => {
+    // No event batches ship anymore: each export carries the full dataset,
+    // so rows at or below its sequence are covered and trimmed.
+    expect(snapshot).toContain("pruneThrough");
   });
 
-  it("requeues before reading the next batch", () => {
-    // Otherwise the requeued rows wait a whole extra cycle.
-    expect(body.indexOf("requeueRetryable")).toBeLessThan(body.indexOf("nextBatch"));
+  it("purges legacy snapshot/event/manifest prefixes after a good export", () => {
+    expect(snapshot).toContain("purgeLegacyPrefixes");
+    expect(snapshot).toContain("LEGACY_PREFIXES");
   });
 
-  it("refuses to drain while a split-brain conflict stands", () => {
-    expect(body).toMatch(/if \(this\.conflict\) return false/);
+  it("never shells out to pg_dump", () => {
+    expect(snapshot).not.toContain("pg_dump");
+    expect(snapshot).not.toContain("dumpToFile");
   });
 });

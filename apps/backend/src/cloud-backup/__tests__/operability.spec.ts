@@ -15,12 +15,12 @@ describe("module wiring", () => {
 });
 
 describe("queue retention", () => {
-  it("exposes a prune for rows that have been shipped", () => {
-    expect(read("queue", "sync-queue.service.ts")).toContain("pruneSent");
+  it("exposes a prune for rows covered by a landed export", () => {
+    expect(read("queue", "sync-queue.service.ts")).toContain("pruneThrough");
   });
 
-  it("prunes after a successful snapshot", () => {
-    expect(read("worker", "sync-worker.service.ts")).toContain("pruneSent");
+  it("prunes after a successful export", () => {
+    expect(read("worker", "snapshot.service.ts")).toContain("pruneThrough");
   });
 });
 

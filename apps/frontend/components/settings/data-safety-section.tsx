@@ -10,11 +10,11 @@ import {
   Trash2,
   CheckCircle2,
   AlertTriangle,
-  Printer,
   TestTube2,
   UploadCloud,
   Database,
   ChevronDown,
+  KeyRound,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import GoogleMark from "@/components/shared/google-mark";
@@ -25,7 +25,6 @@ import {
   cloudBackupApi,
   DriverDefinition,
   DriverFieldDef,
-  RecoveryPhrase,
   CloudBackupStatus,
   CloudTargetStatus,
 } from "@/lib/api/cloud-backup.api";
@@ -47,18 +46,31 @@ const errorMessage = (err: unknown): string => {
 const PHRASE_SESSION_KEY = "iq-cloud-safe-save-phrase";
 
 /**
- * Data safety â€” the cloud safe save section of the Settings page. Shows the
+ * Data safety — the cloud safe save section of the Settings page. Shows the
  * live sync status, the configured destinations, and hosts the 4-step setup
- * wizard (destination â†’ school ID + recovery phrase â†’ verify â†’ first
- * snapshot). The wizard mirrors the disaster-recovery contract: the phrase is
- * shown exactly once and must be written down on the printable sheet.
+ * wizard (destination + secret password → school ID → verify → first
+ * snapshot). The wizard mirrors the disaster-recovery contract: the admin's
+ * secret password is the only key to the encrypted copies.
  */
 export default function DataSafetySection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const { data: drivers } = useQuery({ queryKey: ["cloud-drivers"], queryFn: cloudBackupApi.drivers });
-  const statusQuery = useQuery({ queryKey: ["cloud-status"], queryFn: cloudBackupApi.status });
+  // Realtime card: polls /status every 5s while this section is open, so the
+  // state, pending events and destinations follow the backend on their own.
+  // The Actualiser button stays for an immediate check on demand.
+  const statusQuery = useQuery({
+    queryKey: ["cloud-status"],
+    queryFn: cloudBackupApi.status,
+    refetchInterval: 5_000,
+  });
+  // The navbar pill reads the shared store (30s poll): mirror each fresh
+  // fetch into it so every surface agrees, with the card's own poll leading.
+  const liveStatus = useCloudSyncStore((s) => s.status);
+  useEffect(() => {
+    if (statusQuery.data) useCloudSyncStore.setState({ status: statusQuery.data, checking: false });
+  }, [statusQuery.data]);
 
   const [showWizard, setShowWizard] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +84,9 @@ export default function DataSafetySection() {
     }
   }, [queryClient]);
 
-  const status = (statusQuery.data ?? undefined) as CloudBackupStatus | undefined;
+  // Fresh query data first (5s poll), shared store as fallback for first paint:
+  // the store can lag up to 30s behind and must never shadow a newer fetch.
+  const status = (statusQuery.data ?? liveStatus ?? undefined) as CloudBackupStatus | undefined;
   const configured = status?.configured ?? false;
 
   const runSnapshotNow = async () => {
@@ -157,10 +171,88 @@ function ConfiguredOverview({
   const [showTargets, setShowTargets] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [addIds, setAddIds] = useState<string[]>([]);
+  // Confirmation of the sealed secret password when linking one more
+  // destination to an already-configured install (verified, never stored).
+  const [addSecret, setAddSecret] = useState("");
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [testState, setTestState] = useState<Record<string, { running: boolean; ok: boolean | null; text: string | null }>>({});
+  const [showRekey, setShowRekey] = useState(false);
+  const [rekeySecret, setRekeySecret] = useState("");
+  const [rekeyConfirm, setRekeyConfirm] = useState("");
+  const [rekeyAck, setRekeyAck] = useState(false);
+  const [rekeyBusy, setRekeyBusy] = useState(false);
+  const [rekeyError, setRekeyError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [snapResult, setSnapResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const runToggleAuto = async (next: boolean) => {
+    setAutoBusy(true);
+    try {
+      await cloudBackupApi.updateSettings({ autoExport: next });
+      setSnapResult(null);
+      await onRefresh();
+    } catch (err) {
+      setSnapResult({ ok: false, text: errorMessage(err) });
+    } finally {
+      setAutoBusy(false);
+    }
+  };
+
+  // Lost-password escape hatch: the current secret (old phrase never received)
+  // cannot be recovered, only replaced. Re-keying seals a NEW password and
+  // reseeds the cloud meta objects; copies already on the cloud become
+  // unreadable, local data is untouched, and the next capture re-uploads
+  // under the new password. Uses the existing step-1 re-key guard server-side.
+  const runRekey = async () => {
+    if (!status.schoolId) return;
+    setRekeyError(null);
+    if (rekeySecret.trim().length < 8) {
+      setRekeyError(t("cloudSafeSave.secretPasswordTooShort", "Mot de passe secret : 8 caractères minimum."));
+      return;
+    }
+    if (rekeySecret !== rekeyConfirm) {
+      setRekeyError(t("cloudSafeSave.secretPasswordMismatch", "Les deux mots de passe ne correspondent pas."));
+      return;
+    }
+    if (!rekeyAck) return;
+    setRekeyBusy(true);
+    try {
+      await cloudBackupApi.step1({
+        schoolId: status.schoolId,
+        phrase: rekeySecret,
+        confirmReplaceExisting: true,
+      });
+      await cloudBackupApi.finishSetup(status.schoolId);
+      setRekeySecret("");
+      setRekeyConfirm("");
+      setRekeyAck(false);
+      setShowRekey(false);
+      setSnapResult({ ok: true, text: t("cloudSafeSave.rekeyDone", "Nouveau mot de passe actif — lancez une capture complète.") });
+      await onRefresh();
+    } catch (err) {
+      setRekeyError(errorMessage(err));
+    } finally {
+      setRekeyBusy(false);
+    }
+  };
+
+  const runSnapshotOnce = async () => {
+    setSnapBusy(true);
+    setSnapResult(null);
+    try {
+      await onSnapshotNow();
+      setSnapResult({
+        ok: true,
+        text: t("cloudSafeSave.snapshotDone", "Export envoyé — voir « Dernière synchronisation » ci-dessus."),
+      });
+    } catch (err) {
+      setSnapResult({ ok: false, text: errorMessage(err) });
+    } finally {
+      setSnapBusy(false);
+    }
+  };
 
   const stateLabel =
     status.state === "synced"
@@ -200,6 +292,19 @@ function ConfiguredOverview({
 
   const runDelete = async (id: string, name: string) => {
     if (!window.confirm(t("cloudSafeSave.confirmDeleteTarget", "Retirer cette destination ? Les copies déjà envoyées restent sur le cloud.") + `\n${name}`)) return;
+    setDeleteBusy(id);
+    try {
+      await cloudBackupApi.deleteTarget(id);
+      await onRefresh();
+    } catch (err) {
+      setTestState((prev) => ({ ...prev, [id]: { running: false, ok: false, text: errorMessage(err) } }));
+    } finally {
+      setDeleteBusy(null);
+    }
+  };
+
+  const runPurge = async (id: string, name: string) => {
+    if (!window.confirm(t("cloudSafeSave.confirmPurgeTarget", "Supprimer définitivement cette destination de la liste ? Les copies déjà envoyées restent sur le cloud.") + `\n${name}`)) return;
     setDeleteBusy(id);
     try {
       await cloudBackupApi.deleteTarget(id);
@@ -277,17 +382,133 @@ function ConfiguredOverview({
         </div>
       </dl>
 
+      {status.targets.length === 0 && (
+        <div className="rounded-btn border border-gold/40 bg-gold/10 px-4 py-3 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-text-primary flex-1 min-w-[200px]">
+            {t("cloudSafeSave.noTargetsGuide", "Aucune destination liée — la synchronisation est en pause. Ajoutez une destination pour la reprendre.")}
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary text-xs"
+            onClick={() => {
+              setShowTargets(true);
+              setShowAdd(true);
+            }}
+          >
+            <Plus size={13} />
+            {t("cloudSafeSave.addDestination", "Ajouter une destination")}
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 rounded-btn border border-border bg-background px-4 py-3">
+        <div className="flex-1 min-w-[200px]">
+          <p className="text-sm font-medium text-text-primary">
+            {t("cloudSafeSave.autoExportTitle", "Export automatique")}
+          </p>
+          <p className="text-xs text-text-secondary">
+            {status.autoExport
+              ? t("cloudSafeSave.autoExportOn", "Un nouveau JSON part ~10 s après chaque changement.")
+              : t("cloudSafeSave.autoExportOff", "Exports manuels uniquement — rien ne part tout seul.")}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={status.autoExport}
+          aria-label={t("cloudSafeSave.autoExportTitle", "Export automatique")}
+          onClick={() => void runToggleAuto(!status.autoExport)}
+          disabled={autoBusy}
+          className={cn(
+            "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+            status.autoExport ? "bg-success-strong" : "bg-neutral-soft",
+            autoBusy && "opacity-60",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all",
+              status.autoExport ? "left-[22px]" : "left-0.5",
+            )}
+          />
+        </button>
+      </div>
+
+      <div className="rounded-btn border border-gold/40 bg-background px-4 py-3">
+        <button
+          type="button"
+          className="text-sm font-medium text-text-primary flex items-center gap-2"
+          onClick={() => setShowRekey((v) => !v)}
+          aria-expanded={showRekey || undefined}
+        >
+          <KeyRound size={14} className="text-gold-500 dark:text-gold-400 shrink-0" />
+          {t("cloudSafeSave.showRekey", "Mot de passe perdu ? Redéfinir le mot de passe secret")}
+          <ChevronDown size={14} className={cn("transition-transform", showRekey && "rotate-180")} />
+        </button>
+        {showRekey && (
+          <form className="mt-3 space-y-3" onSubmit={(e) => e.preventDefault()}>
+            <p className="text-xs text-text-secondary">
+              {t("cloudSafeSave.rekeyText", "Le mot de passe actuel est perdu (ancienne phrase jamais reçue). Définissez-en un nouveau : les copies déjà sur le cloud deviendront illisibles, vos données locales ne changent pas, et la prochaine capture repart sous le nouveau mot de passe.")}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="rekey-secret" className="block text-xs font-medium text-text-primary mb-1">
+                  {t("cloudSafeSave.secretPasswordLabel", "Mot de passe secret")} *
+                </label>
+                <input
+                  id="rekey-secret"
+                  type="password"
+                  autoComplete="new-password"
+                  className="input"
+                  placeholder={t("cloudSafeSave.secretPasswordPlaceholder", "8 caractères minimum")}
+                  value={rekeySecret}
+                  onChange={(e) => setRekeySecret(e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="rekey-secret-confirm" className="block text-xs font-medium text-text-primary mb-1">
+                  {t("cloudSafeSave.secretPasswordConfirm", "Confirmer le mot de passe")} *
+                </label>
+                <input
+                  id="rekey-secret-confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  className="input"
+                  value={rekeyConfirm}
+                  onChange={(e) => setRekeyConfirm(e.target.value)}
+                />
+              </div>
+            </div>
+            <label className="flex items-start gap-2 text-xs text-text-primary cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rekeyAck}
+                onChange={(e) => setRekeyAck(e.target.checked)}
+                className="accent-primary h-4 w-4 mt-0.5"
+              />
+              {t("cloudSafeSave.rekeyAck", "Je comprends que les copies cloud existantes deviendront illisibles.")}
+            </label>
+            {rekeyError && <p className="text-xs text-danger">{rekeyError}</p>}
+            <button
+              type="button"
+              className="btn btn-primary text-sm"
+              onClick={() => void runRekey()}
+              disabled={rekeyBusy || !rekeyAck || rekeySecret.trim().length < 8 || rekeySecret !== rekeyConfirm}
+              aria-busy={rekeyBusy || undefined}
+            >
+              {rekeyBusy ? <RefreshCw size={14} className="animate-spin" /> : <KeyRound size={14} />}
+              {rekeyBusy
+                ? t("cloudSafeSave.rekeyDoing", "Redéfinition en cours…")
+                : t("cloudSafeSave.rekeyButton", "Redéfinir le mot de passe")}
+            </button>
+          </form>
+        )}
+      </div>
+
       <div className="flex flex-wrap gap-3">
         <button
           className="btn btn-secondary text-sm"
-          onClick={async () => {
-            setSnapBusy(true);
-            try {
-              await onSnapshotNow();
-            } finally {
-              setSnapBusy(false);
-            }
-          }}
+          onClick={() => void runSnapshotOnce()}
           disabled={snapBusy}
           aria-busy={snapBusy || undefined}
         >
@@ -306,6 +527,21 @@ function ConfiguredOverview({
           <ChevronDown size={14} className={cn("transition-transform", showTargets && "rotate-180")} />
         </button>
       </div>
+
+      {snapResult && (
+        <p
+          role={snapResult.ok ? "status" : "alert"}
+          className={cn(
+            "flex items-start gap-1.5 text-sm",
+            snapResult.ok
+              ? "text-success-strong dark:text-success-dark-strong"
+              : "text-danger-strong dark:text-danger-dark-strong",
+          )}
+        >
+          {snapResult.ok ? <CheckCircle2 size={14} className="shrink-0 mt-0.5" /> : <AlertTriangle size={14} className="shrink-0 mt-0.5" />}
+          <span>{snapResult.text}</span>
+        </p>
+      )}
 
       {showTargets && (
         <div className="rounded-btn border border-border bg-background p-4 space-y-3">
@@ -383,9 +619,20 @@ function ConfiguredOverview({
                       </button>
                     </>
                   ) : (
-                    <p className="text-[11px] text-text-secondary">
-                      {t("cloudSafeSave.targetRetiredNote", "Retirée de la synchronisation — les copies déjà envoyées restent sur le cloud.")}
-                    </p>
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] text-text-secondary">
+                        {t("cloudSafeSave.targetRetiredNote", "Retirée de la synchronisation — les copies déjà envoyées restent sur le cloud.")}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-secondary text-xs min-h-[32px] hover:text-danger"
+                        onClick={() => void runPurge(target.id, target.name)}
+                        disabled={deleting}
+                      >
+                        {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        {t("cloudSafeSave.purgeTarget", "Supprimer définitivement")}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -407,9 +654,14 @@ function ConfiguredOverview({
                 setBusy={setAddBusy}
                 error={addError}
                 setError={setAddError}
+                askSecret={false}
+                confirmSecret
+                secret={addSecret}
+                setSecret={setAddSecret}
                 onNext={async () => {
                   setShowAdd(false);
                   setAddIds([]);
+                  setAddSecret("");
                   await onRefresh();
                 }}
               />
@@ -437,16 +689,18 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
   const [targetIds, setTargetIds] = useState<string[]>([]);
   const [linkedDriverIds, setLinkedDriverIds] = useState<string[]>([]);
   const [schoolId, setSchoolId] = useState("");
-  const [phrase, setPhrase] = useState<RecoveryPhrase | null>(() => {
-    if (typeof window === "undefined") return null;
+  // Admin-chosen secret password (replaces the generated 12-word phrase): it
+  // is the encryption key for every destination, typed once at connection and
+  // reusable for each additional destination. Never stored — sealed server-side
+  // at step 1, kept here only until the wizard finishes.
+  const [secret, setSecret] = useState(() => {
+    if (typeof window === "undefined") return "";
     try {
-      const raw = sessionStorage.getItem(PHRASE_SESSION_KEY);
-      return raw ? (JSON.parse(raw) as RecoveryPhrase) : null;
+      return sessionStorage.getItem(PHRASE_SESSION_KEY) ?? "";
     } catch {
-      return null;
+      return "";
     }
   });
-  const [confirmed, setConfirmed] = useState(false);
 
   // Prefill the school id from the name this install already carries, so the
   // wizard shows an answer instead of asking a question about namespaces.
@@ -489,6 +743,17 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
   }, []);
 
   const next = () => setStep((s) => s + 1);
+
+  // Leaving and coming back mid-wizard must not lose the typed secret (the
+  // old phrase survived the same way); it is cleared onDone by the parent.
+  useEffect(() => {
+    try {
+      if (secret) sessionStorage.setItem(PHRASE_SESSION_KEY, secret);
+      else sessionStorage.removeItem(PHRASE_SESSION_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [secret]);
 
   return (
     <div className="card max-w-xl">
@@ -539,6 +804,10 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
           setBusy={setBusy}
           error={error}
           setError={setError}
+          askSecret
+          confirmSecret={false}
+          secret={secret}
+          setSecret={setSecret}
           onNext={next}
         />
       )}
@@ -547,14 +816,8 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
         <StepPhrase
           schoolId={schoolId}
           setSchoolId={setSchoolId}
-          phrase={phrase}
-          setPhrase={setPhrase}
-          confirmed={confirmed}
-          setConfirmed={setConfirmed}
-          busy={busy}
-          setBusy={setBusy}
-          error={error}
-          setError={setError}
+          secret={secret}
+          setSecret={setSecret}
           onNext={next}
           onBack={() => setStep(0)}
         />
@@ -563,7 +826,7 @@ function SetupWizard({ drivers, onDone }: { drivers: DriverDefinition[]; onDone:
       {step === 2 && (
         <StepVerify
           schoolId={schoolId}
-          phrase={phrase}
+          secret={secret}
           busy={busy}
           setBusy={setBusy}
           error={error}
@@ -591,6 +854,10 @@ function StepTargets({
   setBusy,
   error,
   setError,
+  askSecret,
+  confirmSecret,
+  secret,
+  setSecret,
   onNext,
 }: {
   drivers: DriverDefinition[];
@@ -601,6 +868,12 @@ function StepTargets({
   setBusy: (b: boolean) => void;
   error: string | null;
   setError: (e: string | null) => void;
+  /** Wizard only: capture the admin secret password at connection time. */
+  askSecret: boolean;
+  /** Configured setup only: confirm the existing secret password to link one more destination. */
+  confirmSecret: boolean;
+  secret: string;
+  setSecret: (v: string) => void;
   onNext: () => void;
 }) {
   const { t } = useTranslation();
@@ -622,6 +895,22 @@ function StepTargets({
   const requiredFields = showAdvanced ? (def?.fields ?? []) : visibleFields;
   // One list for the form below: developer credentials join only behind the toggle.
   const shownFields = showAdvanced ? (def?.fields ?? []) : visibleFields;
+
+  // Admin secret password, captured at connection for Dropbox / external disk.
+  // A further destination reuses it through the checkbox below instead of
+  // asking for a new one: one password encrypts every destination.
+  const [reuseSecret, setReuseSecret] = useState(true);
+  const [secretConfirm, setSecretConfirm] = useState("");
+  const SECRET_IDS = ["folder", "dropbox"];
+  const showSecret = (askSecret || confirmSecret) && def !== null && SECRET_IDS.includes(def.id);
+  const hasLinked = targetIds.length > 0 || linkedDriverIds.length > 0;
+  const canReuse = askSecret && !confirmSecret && !!showSecret && secret.trim().length > 0 && hasLinked;
+  const secretReady =
+    !showSecret ||
+    (canReuse && reuseSecret) ||
+    (confirmSecret
+      ? secret.trim().length > 0
+      : secret.trim().length >= 8 && secret === secretConfirm);
 
   /**
    * Connect an account for an OAuth destination.
@@ -729,7 +1018,35 @@ function StepTargets({
   const saveTarget = async () => {
     if (!def) return;
     setError(null);
-    setSaving(true);
+    if (showSecret && confirmSecret) {
+      // Configured install: the key is sealed since step 1 — prove the admin
+      // knows it before attaching another destination to the same ciphertext.
+      if (!secret.trim()) {
+        setError(t("cloudSafeSave.secretPasswordRequired", "Saisissez le mot de passe secret pour lier cette destination."));
+        return;
+      }
+      setSaving(true);
+      try {
+        const check = await cloudBackupApi.verifyPassword({ phrase: secret });
+        if (!check?.ok) throw new Error(t("cloudSafeSave.secretPasswordWrong", "Mot de passe secret incorrect."));
+      } catch (err) {
+        setSaving(false);
+        setError(errorMessage(err));
+        return;
+      }
+    } else if (showSecret && !(canReuse && reuseSecret)) {
+      if (secret.trim().length < 8) {
+        setError(t("cloudSafeSave.secretPasswordTooShort", "Mot de passe secret : 8 caractères minimum."));
+        return;
+      }
+      if (secret !== secretConfirm) {
+        setError(t("cloudSafeSave.secretPasswordMismatch", "Les deux mots de passe ne correspondent pas."));
+        return;
+      }
+      setSaving(true);
+    } else {
+      setSaving(true);
+    }
     try {
       const result = await cloudBackupApi.createTarget({ driverId: def.id, config: values });
       setTargetIds([...targetIds, result.id]);
@@ -911,14 +1228,95 @@ function StepTargets({
               </button>
             )}
 
+            {showSecret && (
+              <form className="rounded-btn border border-gold/40 bg-gold/10 px-4 py-3 space-y-3" onSubmit={(e) => e.preventDefault()}>
+                <div className="flex items-center gap-2">
+                  <KeyRound size={14} className="text-gold-500 dark:text-gold-400 shrink-0" />
+                  <p className="text-sm font-semibold text-text-primary">
+                    {t("cloudSafeSave.secretPasswordLabel", "Mot de passe secret")}
+                  </p>
+                </div>
+                <p className="text-xs text-text-secondary">
+                  {confirmSecret
+                    ? t("cloudSafeSave.confirmSecretPasswordHelp", "Confirmez le mot de passe secret qui chiffre les sauvegardes — seule une personne qui le connaît peut lier une destination.")
+                    : t("cloudSafeSave.secretPasswordHelp", "Il chiffre les copies sur cette destination. Sans lui, aucune restauration n'est possible.")}
+                </p>
+                {confirmSecret ? (
+                  <div>
+                    <label htmlFor="tgt-secret-confirm-only" className="block text-xs font-medium text-text-primary mb-1">
+                      {t("cloudSafeSave.secretPasswordLabel", "Mot de passe secret")} *
+                    </label>
+                    <input
+                      id="tgt-secret-confirm-only"
+                      type="password"
+                      autoComplete="current-password"
+                      className="input"
+                      value={secret}
+                      onChange={(e) => setSecret(e.target.value)}
+                    />
+                  </div>
+                ) : (
+                  <>
+                {canReuse && (
+                  <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reuseSecret}
+                      onChange={(e) => setReuseSecret(e.target.checked)}
+                      className="accent-primary h-4 w-4"
+                    />
+                    {t("cloudSafeSave.useSamePassword", "Utiliser le même mot de passe")}
+                  </label>
+                )}
+                {(!canReuse || !reuseSecret) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="tgt-secret" className="block text-xs font-medium text-text-primary mb-1">
+                        {t("cloudSafeSave.secretPasswordLabel", "Mot de passe secret")} *
+                      </label>
+                      <input
+                        id="tgt-secret"
+                        type="password"
+                        autoComplete="new-password"
+                        className="input"
+                        placeholder={t("cloudSafeSave.secretPasswordPlaceholder", "8 caractères minimum")}
+                        value={secret}
+                        onChange={(e) => setSecret(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="tgt-secret-confirm" className="block text-xs font-medium text-text-primary mb-1">
+                        {t("cloudSafeSave.secretPasswordConfirm", "Confirmer le mot de passe")} *
+                      </label>
+                      <input
+                        id="tgt-secret-confirm"
+                        type="password"
+                        autoComplete="new-password"
+                        className="input"
+                        value={secretConfirm}
+                        onChange={(e) => setSecretConfirm(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+                {canReuse && reuseSecret && (
+                  <p className="text-xs text-text-secondary">
+                    {t("cloudSafeSave.useSamePasswordNote", "Cette destination utilisera le même mot de passe secret.")}
+                  </p>
+                )}
+                  </>
+                )}
+              </form>
+            )}
+
             {linkedDriverIds.includes(def.id) ? (
               <p className="rounded-btn border border-success/30 bg-success-soft dark:bg-success-dark-soft px-4 py-3 text-sm text-success-strong dark:text-success-dark-strong">
                 {t("cloudSafeSave.driverAlreadyLinked", "Cette destination est déjà liée — Continuer ci-dessous.")}
               </p>
             ) : (
               <div className="flex gap-3">
-                <button type="button" className="btn btn-primary text-sm" onClick={() => void saveTarget()} disabled={saving || !requiredFields.every((f) => !f.required || (values[f.name] ?? "").trim())}>
-                  <Plus size={14} />
+                <button type="button" className="btn btn-primary text-sm" onClick={() => void saveTarget()} disabled={saving || !secretReady || !requiredFields.every((f) => !f.required || (values[f.name] ?? "").trim())} aria-busy={saving || undefined}>
+                  {saving ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
                   {t("cloudSafeSave.addTarget", "Tester et enregistrer")}
                 </button>
                 <button type="button" className="btn btn-secondary text-sm" onClick={() => setPicked(null)}>
@@ -951,61 +1349,37 @@ function StepTargets({
 function StepPhrase({
   schoolId,
   setSchoolId,
-  phrase,
-  setPhrase,
-  confirmed,
-  setConfirmed,
-  busy,
-  setBusy,
-  error,
-  setError,
+  secret,
+  setSecret,
   onNext,
   onBack,
 }: {
   schoolId: string;
   setSchoolId: (v: string) => void;
-  phrase: RecoveryPhrase | null;
-  setPhrase: (p: RecoveryPhrase | null) => void;
-  confirmed: boolean;
-  setConfirmed: (b: boolean) => void;
-  busy: boolean;
-  setBusy: (b: boolean) => void;
-  error: string | null;
-  setError: (e: string | null) => void;
+  secret: string;
+  setSecret: (v: string) => void;
   onNext: () => void;
   onBack: () => void;
 }) {
   const { t } = useTranslation();
-
-  const generate = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const p = await cloudBackupApi.generatePhrase();
-      setPhrase(p);
-      setConfirmed(false);
-      try {
-        sessionStorage.setItem(PHRASE_SESSION_KEY, JSON.stringify(p));
-      } catch {
-        /* storage unavailable */
-      }
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Fallback when the secret was not typed at connection (or to change it):
+  // prefilled when step 1 already captured it. Touching the confirmation is
+  // what arms the match check, so a prefilled secret is not blocked by an
+  // empty confirm box.
+  const [confirm, setConfirm] = useState("");
+  const [confirmTouched, setConfirmTouched] = useState(false);
+  const secretValid = secret.trim().length >= 8 && (!confirmTouched || secret === confirm);
 
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-sm font-medium text-text-primary mb-2">{t("cloudSafeSave.step2Title", "Identifiant d'Ã©cole et phrase de rÃ©cupÃ©ration")}</p>
+        <p className="text-sm font-medium text-text-primary mb-2">{t("cloudSafeSave.step2Title", "Identifiant d'école et mot de passe secret")}</p>
         <p className="text-xs text-text-secondary mb-4">
-          {t("cloudSafeSave.step2Subtitle", "L'identifiant d'Ã©cole sert d'espace de stockage. La phrase est la seule clÃ© des donnÃ©es chiffrÃ©es : elle n'est jamais stockÃ©e sur cette machine ni sur le cloud.")}
+          {t("cloudSafeSave.step2Subtitle", "L'identifiant d'école sert d'espace de stockage. Le mot de passe est la seule clé des données chiffrées : il n'est jamais stocké sur cette machine ni sur le cloud.")}
         </p>
 
         <label htmlFor="school-id" className="block text-sm font-medium text-text-primary mb-1.5">
-          {t("cloudSafeSave.schoolId", "Identifiant d'Ã©cole")}
+          {t("cloudSafeSave.schoolId", "Identifiant d'école")}
         </label>
         <input
           id="school-id"
@@ -1016,54 +1390,62 @@ function StepPhrase({
         />
       </div>
 
-      <div className="rounded-btn border border-border bg-background p-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-semibold text-text-primary">{t("cloudSafeSave.recoveryPhraseTitle", "Phrase de rÃ©cupÃ©ration")}</p>
-          <button className="btn btn-secondary text-sm" onClick={() => void generate()} disabled={busy} aria-busy={busy || undefined}>
-            <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
-            {phrase ? t("cloudSafeSave.regenerate", "RÃ©gÃ©nÃ©rer") : t("cloudSafeSave.generate", "GÃ©nÃ©rer")}
-          </button>
+      <form className="rounded-btn border border-border bg-background p-4 space-y-3" onSubmit={(e) => e.preventDefault()}>
+        <div className="flex items-center gap-2">
+          <KeyRound size={14} className="text-gold-500 dark:text-gold-400 shrink-0" />
+          <p className="text-sm font-semibold text-text-primary">{t("cloudSafeSave.secretPasswordTitle", "Mot de passe secret")}</p>
         </div>
-
-        {phrase ? (
-          <>
-            <div className="grid grid-cols-3 gap-2 print:grid-cols-4" id="recovery-sheet">
-              {phrase.words.map((word, i) => (
-                <div key={i} className="rounded-btn border border-border bg-surface px-3 py-2 text-sm font-mono flex items-center gap-2">
-                  <span className="text-xs text-text-secondary w-5 text-right">{i + 1}.</span>
-                  <span className="text-text-primary">{word}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-danger mt-3">
-              {t("cloudSafeSave.phraseWarning", "Ã‰crivez ces 12 mots dans l'ordre sur la feuille de secours. Sans elle, aucune restauration n'est possible en cas de perte de cet ordinateur.")}
-            </p>
-            <div className="flex gap-3 mt-3 print:hidden">
-              <button className="btn btn-secondary text-sm" onClick={() => window.print()}>
-                <Printer size={14} />
-                {t("cloudSafeSave.printSheet", "Imprimer la feuille")}
-              </button>
-              <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={confirmed}
-                  onChange={(e) => setConfirmed(e.target.checked)}
-                  className="accent-primary h-4 w-4"
-                />
-                {t("cloudSafeSave.confirmWritten", "J'ai notÃ© la phrase en lieu sÃ»r.")}
-              </label>
-            </div>
-          </>
-        ) : (
-          <p className="text-sm text-text-secondary">{t("cloudSafeSave.noPhraseYet", "Cliquez sur Â« GÃ©nÃ©rer Â» â€” la phrase n'est montrÃ©e qu'une seule fois.")}</p>
+        <p className="text-xs text-text-secondary">
+          {t("cloudSafeSave.secretPasswordHelp", "Il chiffre les copies sur Dropbox et le disque externe. Sans lui, aucune restauration n'est possible.")}
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="wizard-secret" className="block text-xs font-medium text-text-primary mb-1">
+              {t("cloudSafeSave.secretPasswordLabel", "Mot de passe secret")} *
+            </label>
+            <input
+              id="wizard-secret"
+              type="password"
+              autoComplete="new-password"
+              className="input"
+              placeholder={t("cloudSafeSave.secretPasswordPlaceholder", "8 caractères minimum")}
+              value={secret}
+              onChange={(e) => {
+                setSecret(e.target.value);
+                setConfirmTouched(false);
+                setConfirm("");
+              }}
+            />
+          </div>
+          <div>
+            <label htmlFor="wizard-secret-confirm" className="block text-xs font-medium text-text-primary mb-1">
+              {t("cloudSafeSave.secretPasswordConfirm", "Confirmer le mot de passe")} *
+            </label>
+            <input
+              id="wizard-secret-confirm"
+              type="password"
+              autoComplete="new-password"
+              className="input"
+              value={confirm}
+              onChange={(e) => {
+                setConfirm(e.target.value);
+                setConfirmTouched(true);
+              }}
+            />
+          </div>
+        </div>
+        {confirmTouched && secret !== confirm && (
+          <p className="text-xs text-danger">
+            {t("cloudSafeSave.secretPasswordMismatch", "Les deux mots de passe ne correspondent pas.")}
+          </p>
         )}
-      </div>
+      </form>
 
       <div className="flex justify-between">
         <button className="btn btn-secondary text-sm" onClick={onBack}>
           {t("common.back", "Retour")}
         </button>
-        <button className="btn btn-primary text-sm" onClick={onNext} disabled={!phrase || !confirmed || !schoolId.trim() || busy}>
+        <button className="btn btn-primary text-sm" onClick={onNext} disabled={!secretValid || !schoolId.trim()}>
           {t("common.next", "Continuer")}
         </button>
       </div>
@@ -1075,7 +1457,7 @@ function StepPhrase({
 
 function StepVerify({
   schoolId,
-  phrase,
+  secret,
   busy,
   setBusy,
   error,
@@ -1084,7 +1466,7 @@ function StepVerify({
   onBack,
 }: {
   schoolId: string;
-  phrase: RecoveryPhrase | null;
+  secret: string;
   busy: boolean;
   setBusy: (b: boolean) => void;
   error: string | null;
@@ -1107,11 +1489,11 @@ function StepVerify({
     // Never send an empty step-1: the server can only answer 400, which reads
     // like a system fault for what is actually a missing field. Name it and
     // point back instead.
-    if (!phrase?.phrase?.trim() || !schoolId.trim()) {
+    if (!secret.trim() || !schoolId.trim()) {
       setError(
         t(
           "cloudSafeSave.missingIdOrPhrase",
-          "L'identifiant d'école ou la phrase manque — retournez à l'étape précédente et vérifiez les deux champs.",
+          "L'identifiant d'école ou le mot de passe manque — retournez à l'étape précédente et vérifiez les deux champs.",
         ),
       );
       return;
@@ -1121,7 +1503,7 @@ function StepVerify({
     setBusy(true);
     try {
       if (!step1Done.current) {
-        await cloudBackupApi.step1({ schoolId: schoolId.trim(), phrase: phrase.phrase });
+        await cloudBackupApi.step1({ schoolId: schoolId.trim(), phrase: secret });
         step1Done.current = true;
       }
       const v = await cloudBackupApi.verifySetup();

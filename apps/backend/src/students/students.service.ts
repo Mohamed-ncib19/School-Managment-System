@@ -186,7 +186,7 @@ export class StudentsService {
     status?: string;
     search?: string;
   }): SQL | undefined {
-    const clauses: SQL[] = [];
+    const clauses: SQL[] = [eq(students.is_system_placeholder, false)];
 
     const academic = studentWhere({
       levelId: params.levelId,
@@ -286,6 +286,7 @@ export class StudentsService {
   async recentStudents(limit = 5) {
     const take = Math.min(Math.max(1, limit), 20);
     return this.db.client.query.students.findMany({
+      where: eq(students.is_system_placeholder, false),
       limit: take,
       orderBy: [desc(students.enrollment_date)],
       columns: {

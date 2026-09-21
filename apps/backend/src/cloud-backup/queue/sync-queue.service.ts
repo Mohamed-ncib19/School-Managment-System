@@ -11,9 +11,6 @@ import { RedactingLogger } from "../redaction/redaction";
  */
 export const MAX_ATTEMPTS = 10;
 
-/** Shipped rows are kept this long as a local audit trail, then pruned. */
-export const SENT_RETENTION_DAYS = 30;
-
 export interface PendingBatch {
   rows: Array<{
     id: number;
@@ -132,18 +129,20 @@ export class SyncQueueService {
   }
 
   /**
-   * Deletes rows that were shipped more than `days` ago.
+   * Deletes every queued row at or below `seq`, whatever its status.
    *
-   * The cloud copy is append-only and authoritative; the local queue is a
-   * shipping buffer. Keeping every row forever grew the table without bound —
-   * years of a school's writes with their full JSON payloads — for no
-   * recovery benefit, since a pruned row is already inside an event batch.
+   * Export-only backups ship no event batches: a full data export already
+   * contains every row the queue describes, so once an export covering `seq`
+   * has landed on at least one target the rows below it are covered and the
+   * buffer is trimmed to bound the table. Never call this before a
+   * successful export.
    */
-  async pruneSent(days: number = SENT_RETENTION_DAYS): Promise<number> {
-    const cutoff = new Date(Date.now() - days * 86_400_000);
+  async pruneThrough(seq: number): Promise<number> {
+    if (seq <= 0) return 0;
+    // lt(id, seq + 1) instead of lte: keeps the drizzle import list unchanged.
     const rows = await this.db.client
       .delete(syncQueue)
-      .where(and(eq(syncQueue.status, "sent"), lt(syncQueue.occurred_at, cutoff)))
+      .where(lt(syncQueue.id, seq + 1))
       .returning({ id: syncQueue.id });
     return rows.length;
   }
@@ -178,15 +177,6 @@ export class SyncQueueService {
       oldestPendingAt: oldestRow[0]?.at ?? null,
       pendingBytes: bytesRow[0]?.bytes ?? 0,
     };
-  }
-
-  /** Count of pending rows older than a cutoff — feeds the Attention state. */
-  async pendingOlderThan(cutoff: Date): Promise<number> {
-    const rows = await this.db.client
-      .select({ c: count() })
-      .from(syncQueue)
-      .where(and(eq(syncQueue.status, "pending"), lt(syncQueue.occurred_at, cutoff)));
-    return rows[0]?.c ?? 0;
   }
 
   /** Direct insert used by boot-time backfill (initial snapshot seeding). */

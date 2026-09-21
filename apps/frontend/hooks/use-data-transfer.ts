@@ -4,6 +4,7 @@ import {
   FillValues,
   ImportPreview,
   ImportResult,
+  TablePreview,
 } from "@/lib/api/data-transfer.api";
 
 export function useExportAll() {
@@ -30,4 +31,4 @@ export function useDataImport() {
   });
 }
 
-export type { ImportPreview, ImportResult, FillValues };
+export type { ImportPreview, ImportResult, TablePreview, FillValues };

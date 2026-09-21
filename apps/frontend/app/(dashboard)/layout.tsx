@@ -4,6 +4,7 @@ import AuthGuard from "@/components/shared/auth-guard";
 import DashboardShell from "@/components/shared/dashboard-shell";
 import UpdateNotifier from "@/components/shared/update-notifier";
 import CloudSyncNotifier from "@/components/shared/cloud-sync-notifier";
+import DropboxFullModal from "@/components/shared/dropbox-full-modal";
 import { CurrencyConfigProvider } from "@/components/shared/currency-config-provider";
 
 /**
@@ -17,6 +18,7 @@ export default function DashboardGroupLayout({ children }: { children: React.Rea
       <CurrencyConfigProvider>
         <DashboardShell>{children}</DashboardShell>
         <UpdateNotifier />
+        <DropboxFullModal />
         <CloudSyncNotifier />
       </CurrencyConfigProvider>
     </AuthGuard>

@@ -5,14 +5,12 @@ import { fields, professors } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
 import { changedFields } from "../audit/audit.util";
 import { hardDeleteHierarchy } from "../hierarchy/hard-delete";
-import { SentinelService } from "../hierarchy/sentinel.service";
 
 @Injectable()
 export class FieldsService {
   constructor(
     private readonly db: DbService,
     private readonly auditService: AuditService,
-    private readonly sentinels: SentinelService,
   ) {}
 
   async listFields(levelId?: string) {
@@ -73,7 +71,6 @@ export class FieldsService {
         created_by: dto.created_by,
       })
       .returning();
-    await this.sentinels.ensureProfessorSentinel(field.id);
     await this.auditService.record({
       action: "field.created",
       entityType: "field",

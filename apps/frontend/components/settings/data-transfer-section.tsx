@@ -1,15 +1,60 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Database, Download, Upload, RefreshCw, Trash2, AlertTriangle, CheckCircle2, FileJson } from "lucide-react";
+import { EyeOff, Database, Download, Upload, RefreshCw, Trash2, AlertTriangle, CheckCircle2, FileJson } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
-import { useExportAll, useImportPreview, useDataImport, type ImportPreview, type FillValues } from "@/hooks/use-data-transfer";
+import { useExportAll, useImportPreview, useDataImport, type ImportPreview, type TablePreview, type FillValues } from "@/hooks/use-data-transfer";
 import { cn } from "@/lib/utils/format";
+
+/**
+ * Columns the preview never renders: internal identifiers and secrets. They
+ * travel in the file and import untouched — they are simply not the admin's
+ * business when eyeballing the data. `_id` suffixes join them via rule.
+ */
+const BACKGROUND_COLUMNS = new Set([
+  "id",
+  "created_by",
+  "owner_id",
+  "user_id",
+  "actor_user_id",
+  "entity_id",
+  "password_hash",
+  "reset_token",
+  "reset_token_expires",
+  "wrapped_key",
+  "wrap_salt",
+  "phrase_check",
+]);
+
+/** Rows shown before the admin asks for the whole table. */
+const PREVIEW_ROW_LIMIT = 8;
 
 const errorMessage = (err: unknown): string => {
   const axios = (err as any)?.response?.data;
   if (axios?.message) return Array.isArray(axios.message) ? axios.message.join(" ") : axios.message;
   return (err as Error)?.message ?? "Une erreur est survenue";
+};
+
+/**
+ * Client-side encrypted-file detection so the password field appears the
+ * moment a Dropbox copy is dropped — instead of after a doomed 400. Same
+ * rule as the backend's `looksLikeJson`: plain JSON starts with `{` after
+ * whitespace; the encrypted envelope starts with a binary length header.
+ * An `.enc` extension short-circuits; renamed files are caught by content.
+ */
+const looksEncrypted = async (file: File): Promise<boolean> => {
+  if (file.name.toLowerCase().endsWith(".enc")) return true;
+  try {
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    for (let i = 0; i < head.length; i++) {
+      const byte = head[i];
+      if (byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d) continue;
+      return byte !== 0x7b; // '{' = plain JSON
+    }
+  } catch {
+    /* unreadable — let the server decide */
+  }
+  return false;
 };
 
 export default function DataTransferSection() {
@@ -22,12 +67,16 @@ export default function DataTransferSection() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [phrase, setPhrase] = useState("");
   const [pendingEnc, setPendingEnc] = useState<File | null>(null);
+  /** The held file is encrypted — decided at drop time from content, not extension. */
+  const [encryptedFile, setEncryptedFile] = useState(false);
   const [fills, setFills] = useState<FillValues>({});
   const [included, setIncluded] = useState<Record<string, boolean>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmKeyword, setConfirmKeyword] = useState("");
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Per-table "show every row" toggle — off keeps the preview compact. */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
@@ -38,37 +87,56 @@ export default function DataTransferSection() {
     setPreview(null);
     setPhrase("");
     setPendingEnc(null);
+    setEncryptedFile(false);
     setFills({});
     setIncluded({});
     setConfirmOpen(false);
     setConfirmKeyword("");
     setDone(null);
     setError(null);
+    setExpanded({});
   };
 
-  const onFile = (next: File | null) => {
+  const onFile = async (next: File | null) => {
     if (!next) return;
     setError(null);
     setDone(null);
+    const encrypted = await looksEncrypted(next);
+    setEncryptedFile(encrypted);
+
+    // A Dropbox copy needs its secret before anything can happen: hold the
+    // file and show the password field immediately — never fire a request
+    // that can only answer 400. Typing the phrase re-invokes onFile via the
+    // retry button / Enter, which then proceeds to the server.
+    if (encrypted && !phrase.trim()) {
+      setFile(next);
+      setPreview(null);
+      setPendingEnc(next);
+      setExpanded({});
+      setFills({});
+      setIncluded({});
+      return;
+    }
+
     importPreview.mutate(
-      { file: next, phrase: phrase || undefined },
+      { file: next, phrase: encrypted ? phrase : undefined },
       {
         onSuccess: (result) => {
           setFile(next);
           setPreview(result);
           setPendingEnc(null);
-        setFills({});
-        setIncluded(Object.fromEntries(result.tables.map((table) => [table.table, true])));
-      },
+          setExpanded({});
+          setFills({});
+          setIncluded(Object.fromEntries(result.tables.map((table) => [table.table, true])));
+        },
         onError: (err) => {
           setFile(null);
           setPreview(null);
           setError(errorMessage(err));
-          // Keep the file for one-click retry: the usual case is an
-          // encrypted Dropbox copy dropped before its phrase was typed.
-          // Whether it is encrypted is decided by the server reading the
-          // content, never by the file extension.
-          setPendingEnc(next);
+          // Wrong phrase (or corrupt envelope): keep the file for one-click
+          // retry with the corrected password. A plain-JSON error never
+          // opens the password panel.
+          if (encrypted) setPendingEnc(next);
         },
       },
     );
@@ -98,6 +166,17 @@ export default function DataTransferSection() {
   const toggleTable = (table: string) => {
     setIncluded((prev) => ({ ...prev, [table]: !(prev[table] !== false) }));
   };
+
+  const toggleExpanded = (table: string) =>
+    setExpanded((prev) => ({ ...prev, [table]: !prev[table] }));
+
+  const hiddenColumns = (table: TablePreview) =>
+    table.columnsPresent.filter(
+      (column) => BACKGROUND_COLUMNS.has(column) || column === "id" || column.endsWith("_id"),
+    );
+
+  const displayColumns = (table: TablePreview) =>
+    table.columnsPresent.filter((column) => !hiddenColumns(table).includes(column));
 
   const runImport = () => {
     if (!file || !preview) return;
@@ -190,7 +269,7 @@ export default function DataTransferSection() {
             <p className="text-xs text-text-secondary mb-4">
               {t("settings.importDesc", "Importe un fichier d'export, quelle que soit la version. Les tables présentes dans le fichier remplacent les données actuelles. Les colonnes absentes sont listées dans l'aperçu pour être remplies manuellement. Les copies chiffrées de Dropbox (fichiers .enc, une par sauvegarde) se restaurent ici aussi : déposez le fichier et saisissez la phrase de récupération.")}
             </p>
-            {!preview ? (
+            {!file ? (
               <div
                 onDragEnter={(e) => {
                   e.preventDefault();
@@ -248,10 +327,13 @@ export default function DataTransferSection() {
             ) : (
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-text-primary truncate">{preview.fileName}</p>
+                  <p className="text-sm font-medium text-text-primary truncate">{file.name}</p>
                   <p className="text-xs text-text-secondary truncate">
-                    {t("settings.importFileMeta", "Version source")}: {preview.sourceVersion ?? "?"}
-                    {preview.exportedAt ? ` · ${new Date(preview.exportedAt).toLocaleString()}` : ""}
+                    {preview
+                      ? t("settings.importFileMeta", "Version source") + ": " + (preview.sourceVersion ?? "?") + (preview.exportedAt ? ` · ${new Date(preview.exportedAt).toLocaleString()}` : "")
+                      : pendingEnc
+                        ? t("settings.encryptedFileHint", "Fichier chiffré — saisissez le mot de passe secret pour l'ouvrir")
+                        : t("settings.readingFile", "Lecture du fichier…")}
                   </p>
                 </div>
                 <button type="button" onClick={reset} className="btn btn-secondary text-xs shrink-0">
@@ -260,10 +342,13 @@ export default function DataTransferSection() {
                 </button>
               </div>
             )}
-            {((file ?? pendingEnc)?.name.toLowerCase().endsWith(".enc") || /chiffr|cup/i.test(error ?? "")) && (
+            {((file ?? pendingEnc) &&
+              (encryptedFile ||
+                (file ?? pendingEnc)!.name.toLowerCase().endsWith(".enc") ||
+                /chiffr|cup/i.test(error ?? ""))) && (
               <div className="mt-3 rounded-btn border border-border p-3">
                 <label className="block text-[11px] font-medium text-text-secondary mb-1">
-                  {t("settings.recoveryPhraseLabel", "Phrase de récupération (copie Dropbox chiffrée)")}
+                  {t("settings.recoveryPhraseLabel", "Mot de passe secret (copie Dropbox chiffrée)")}
                 </label>
                 <input
                   type="password"
@@ -277,7 +362,7 @@ export default function DataTransferSection() {
                       onFile(retry);
                     }
                   }}
-                  placeholder={t("settings.recoveryPhrasePlaceholder", "Les 12 mots, dans l'ordre")}
+                  placeholder={t("settings.recoveryPhrasePlaceholder", "Le mot de passe secret défini à la connexion")}
                   autoComplete="off"
                   className="input w-full text-xs"
                 />
@@ -375,6 +460,15 @@ export default function DataTransferSection() {
                             {t("settings.tableComplete", "Complet")}
                           </span>
                         )}
+                        {table.systemRowCount > 0 && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-[10px] font-medium text-text-secondary"
+                            title={t("settings.systemRowsHint", "Éléments système créés automatiquement (ex. placeholders de suppression) — jamais affichés dans l'application, mais importés pour préserver les liens internes.")}
+                          >
+                            <EyeOff size={9} />
+                            {table.systemRowCount} {t("settings.systemRows", "système")}
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11px] text-text-secondary truncate">{table.table}</p>
                     </div>
@@ -445,28 +539,65 @@ export default function DataTransferSection() {
                         </p>
                       )}
 
-                      {table.rowCount > 0 && table.columnsPresent.length > 0 && (
+                      {table.allSystem && (
+                        <p className="text-[11px] text-text-secondary">
+                          {t("settings.allSystemRows", "Toutes les lignes de cette table sont des éléments système (placeholders de suppression) — elles sont importées automatiquement mais ne s'affichent pas ici.")}
+                        </p>
+                      )}
+
+                      {table.sampleRows.length > 0 && displayColumns(table).length > 0 && (
                         <div className="overflow-x-auto rounded-btn border border-border/70">
                           <table className="w-full text-[11px]">
                             <thead>
                               <tr className="bg-neutral-soft/50 text-text-secondary">
-                                {table.columnsPresent.slice(0, 6).map((column) => (
+                                {displayColumns(table).map((column) => (
                                   <th key={column} className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">{column}</th>
                                 ))}
-                                {table.columnsPresent.length > 6 && <th className="px-2.5 py-1.5 text-left font-medium">…</th>}
+                                {hiddenColumns(table).length > 0 && (
+                                  <th
+                                    className="px-2.5 py-1.5 text-left font-medium text-text-secondary/50"
+                                    title={t("settings.hiddenColumnsHint", "Colonnes techniques (identifiants, empreintes) — importées telles quelles, jamais affichées.")}
+                                  >
+                                    {t("settings.hiddenColumns", "technique")}
+                                  </th>
+                                )}
                               </tr>
                             </thead>
                             <tbody>
-                              {table.sampleRows.map((row, rowIndex) => (
-                                <tr key={rowIndex} className="border-t border-border/60 text-text-secondary">
-                                  {table.columnsPresent.slice(0, 6).map((column) => (
-                                    <td key={column} className="px-2.5 py-1.5 whitespace-nowrap">{row[column] || "—"}</td>
-                                  ))}
-                                  {table.columnsPresent.length > 6 && <td className="px-2.5 py-1.5">…</td>}
-                                </tr>
-                              ))}
+                              {table.sampleRows
+                                .slice(0, expanded[table.table] ? table.sampleRows.length : PREVIEW_ROW_LIMIT)
+                                .map((row, rowIndex) => (
+                                  <tr key={rowIndex} className="border-t border-border/60 text-text-secondary">
+                                    {displayColumns(table).map((column) => (
+                                      <td key={column} className="px-2.5 py-1.5 whitespace-nowrap">{row[column] || "—"}</td>
+                                    ))}
+                                    {hiddenColumns(table).length > 0 && (
+                                      <td className="px-2.5 py-1.5 text-text-secondary/40">—</td>
+                                    )}
+                                  </tr>
+                                ))}
                             </tbody>
                           </table>
+                          {(table.sampleRows.length > PREVIEW_ROW_LIMIT || hiddenColumns(table).length > 0) && (
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 bg-neutral-soft/30 px-2.5 py-1.5 text-[10px] text-text-secondary">
+                              {table.sampleRows.length > PREVIEW_ROW_LIMIT && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpanded(table.table)}
+                                  className="font-medium text-primary hover:underline"
+                                >
+                                  {expanded[table.table]
+                                    ? t("settings.showLessRows", "Réduire")
+                                    : t("settings.showAllRows", `Afficher les ${table.sampleRows.length} lignes`)}
+                                </button>
+                              )}
+                              {hiddenColumns(table).length > 0 && (
+                                <span className="text-text-secondary/70">
+                                  {t("settings.hiddenColumnsNote", "Colonnes techniques masquées — importées telles quelles")}: {hiddenColumns(table).join(", ")}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

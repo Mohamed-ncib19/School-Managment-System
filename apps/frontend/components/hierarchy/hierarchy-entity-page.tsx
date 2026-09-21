@@ -641,6 +641,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     },
     onSuccess: (result: any) => {
       qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"] });
+      qc.invalidateQueries({ queryKey: ["hierarchy-summary"] });
       // A group save also rewrites its sessions, and those live under their own
       // query keys — the edit form's tiles and the list's Schedule column would
       // otherwise keep serving the pre-save cache and look like nothing saved.
@@ -688,6 +689,7 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
             .find((groupId: string) => !previousGroupIds.has(groupId)) ?? null;
       }
       qc.invalidateQueries({ queryKey: [entityType === "professor" ? "professors" : entityType + "s"] });
+      qc.invalidateQueries({ queryKey: ["hierarchy-summary"] });
       // A group save also rewrites its sessions, and those live under their own
       // query keys — the edit form's tiles and the list's Schedule column would
       // otherwise keep serving the pre-save cache and look like nothing saved.

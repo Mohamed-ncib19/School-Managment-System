@@ -1,8 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { execFile, spawn } from "child_process";
-import { mkdirSync, openSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
+import { existsSync, mkdirSync, openSync } from "fs";
 import { promisify } from "util";
 
 const execFileP = promisify(execFile);
@@ -84,7 +84,32 @@ export class SystemService {
     return openSync(join(logsDir, `${kind}-${stamp}.log`), "a");
   }
 
+  /**
+   * Locates the project root WITHOUT depending on git: an installed release
+   * has no .git directory (the installer ships files, not a clone), and a
+   * machine running the servers from plain command lines has no git either —
+   * a null here used to make the Shut Down button silently do nothing.
+   * Strategy: walk up from __dirname to the dir containing
+   * pnpm-workspace.yaml (the same marker the stop engines use), falling back
+   * to the compiled layout's known depth, then git as a last resort.
+   */
   private async projectRoot(): Promise<string | null> {
+    // 1. Walk up from this file's location. dist/system/system.service.js
+    //    (build) or src/system/system.service.ts (watch mode) — both are two
+    //    levels below the backend package, which sits in apps/backend.
+    let dir = __dirname;
+    for (let i = 0; i < 8; i++) {
+      if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+
+    // 2. Known monorepo shape, in case the marker file is missing.
+    const candidate = join(__dirname, "..", "..", "..");
+    if (existsSync(join(candidate, "apps")) && existsSync(join(candidate, "installer"))) return candidate;
+
+    // 3. Git as a last resort (dev checkouts always have it).
     try {
       const { stdout } = await execFileP("git", ["rev-parse", "--show-toplevel"], {
         encoding: "utf8",

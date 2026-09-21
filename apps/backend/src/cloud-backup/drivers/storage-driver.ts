@@ -5,12 +5,12 @@ import { isRetryable } from "./retry-policy";
  * The one interface every storage backend implements. Business logic knows
  * nothing about buckets, PROPFIND or OAuth — it only ever talks to this.
  *
- * There is deliberately NO delete() here. The cloud copy is append-only by
- * design: object keys are immutable and unique, nothing is ever overwritten,
- * and a local record deletion becomes an event describing what happened — it
- * never removes a cloud object. Retention pruning, if it is ever added, must
- * be a separate privileged path with its own credentials, never reachable
- * from the running instance.
+ * The cloud copy is append-only by design: object keys are immutable and
+ * unique, nothing is ever overwritten, and a local record deletion becomes an
+ * event describing what happened — it never removes a cloud object. The one
+ * exception is `remove()`, a privileged path used ONLY by the legacy-format
+ * purge (old snapshot/event/manifest prefixes after the export-only
+ * cutover). No sync, snapshot or restore path may call it.
  *
  * Adding a fourth driver (FTP, SFTP, Backblaze-native, …) must require zero
  * changes outside its own file plus one entry in the driver registry.
@@ -63,6 +63,13 @@ export interface StorageDriver {
 
   /** Lists object metadata under a key prefix. */
   list(prefix: string): Promise<ObjectMeta[]>;
+
+  /**
+   * Removes the single object at `key`. Privileged: only the legacy-format
+   * purge may call it. Missing objects should throw (the purge treats that
+   * as already-clean); callers that probe must use `list`/`get` instead.
+   */
+  remove(key: string): Promise<void>;
 }
 
 /** Every driver call is bounded by these and retried with exponential backoff

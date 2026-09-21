@@ -58,10 +58,32 @@ export default function UpdateProgressTracker() {
       {progress.message && progress.message !== progress.label && (
         <p className="mt-1.5 text-xs text-text-secondary">{progress.message}</p>
       )}
-      {progress.state === "done" && (
+      {progress.backupPath && (
+        <p className="mt-1.5 text-xs text-text-secondary">
+          {t("updates.progressBackup", "Safety backup verified")}: {" "}
+          <span className="font-mono">{progress.backupPath}</span>
+        </p>
+      )}
+      {progress.state === "done" && progress.healthOk === false && (
+        <p role="alert" className="mt-1.5 text-xs text-danger">
+          {t(
+            "updates.progressHealthFailed",
+            "The update installed, but the API did not come back automatically. Your data is safe — start the system from the desktop shortcut.",
+          )}
+        </p>
+      )}
+      {progress.state === "done" && progress.healthOk !== false && (
         <p className="mt-1.5 text-xs text-success-strong">{t("updates.progressDone", "Update complete — the system is restarting.")}</p>
       )}
-      {progress.state === "failed" && (
+      {progress.destructive && progress.state === "failed" && (
+        <p role="alert" className="mt-1.5 text-xs text-danger">
+          {t(
+            "updates.progressDestructive",
+            "The new version needs to change existing data columns. The update was stopped BEFORE anything was applied — your data is untouched. Contact support to install this version safely.",
+          )}
+        </p>
+      )}
+      {!progress.destructive && progress.state === "failed" && (
         <p role="alert" className="mt-1.5 text-xs text-danger">
           {t("updates.progressFailed", "The update failed — check the update console or the logs\\update-*.log file.")}
         </p>

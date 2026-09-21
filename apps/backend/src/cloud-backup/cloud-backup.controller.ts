@@ -20,7 +20,7 @@ import { desc, eq } from "drizzle-orm";
 import { DbService } from "../db/db.service";
 import { cloudState, cloudTargets, backupManifest } from "../db/schema";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { SyncWorkerService, ATTENTION_PENDING_ROWS, ATTENTION_OLDEST_MS } from "./worker/sync-worker.service";
+import { SyncWorkerService } from "./worker/sync-worker.service";
 import { SyncQueueService } from "./queue/sync-queue.service";
 import { CredentialStoreService } from "./credential-store/credential-store.service";
 import { CloudKeyService } from "./credential-store/cloud-key.service";
@@ -45,6 +45,18 @@ interface TargetBody {
   driverId: string;
   name?: string;
   config?: Record<string, string>;
+}
+
+/**
+ * Whether a target is blocked by a full Dropbox account.
+ *
+ * Derived from the stored `last_error` rather than a live quota call: the
+ * driver already classifies Dropbox's machine-readable `insufficient_space`
+ * tag into the French "Espace Dropbox insuffisant" message, so matching both
+ * spellings here stays in sync with it without an extra API round-trip.
+ */
+export function isDropboxQuotaFull(driver: string, lastError: string | null): boolean {
+  return driver === "dropbox" && /insuffisant|insufficient_space/i.test(lastError ?? "");
 }
 
 @Controller("cloud-backup")
@@ -110,13 +122,21 @@ export class CloudBackupController {
     const queueStats = await this.queue.stats();
 
     const enabled = targets.filter((t) => t.enabled);
+    // Exports run daily, not every minute: a success within the last 25
+    // hours means "up to date". The old 5-minute window left the status
+    // stuck on "syncing" all day while nothing was (or should be) running.
     const anySuccessRecently = enabled.some(
-      (t) => t.last_success_at && Date.now() - new Date(t.last_success_at).getTime() < 5 * 60_000,
+      (t) => t.last_success_at && Date.now() - new Date(t.last_success_at).getTime() < 25 * 3600_000,
     );
     const allFailed = enabled.length > 0 && enabled.every((t) => t.last_error !== null);
-    const pendingOlder = await this.queue.pendingOlderThan(new Date(Date.now() - ATTENTION_OLDEST_MS));
     const conflict = await this.worker.currentConflict();
 
+    // Real not-backed-up data raises the attention state (orange header pill):
+    // queued/failed events are changes no export has carried yet, and an
+    // enabled destination that never succeeded has never received a capture —
+    // both are checked across ALL linked destinations, not just the last one.
+    const hasUnbackedUp = queueStats.pending > 0 || queueStats.failed > 0;
+    const someTargetNeverSucceeded = enabled.some((t) => !t.last_success_at);
     let syncState: "synced" | "offline" | "syncing" | "attention" | "disabled" | "unconfigured" = "unconfigured";
     if (!state?.setup_complete) {
       syncState = "unconfigured";
@@ -128,10 +148,7 @@ export class CloudBackupController {
       syncState = "disabled";
     } else if (allFailed) {
       syncState = "offline";
-    } else if (queueStats.failed > 0) {
-      // A row past the retry ceiling needs a human, not another cycle.
-      syncState = "attention";
-    } else if (queueStats.pending > ATTENTION_PENDING_ROWS || pendingOlder > 0) {
+    } else if (hasUnbackedUp || someTargetNeverSucceeded) {
       syncState = "attention";
     } else {
       syncState = anySuccessRecently ? "synced" : "syncing";
@@ -141,6 +158,7 @@ export class CloudBackupController {
       configured: !!state?.setup_complete,
       state: syncState,
       schoolId: state?.school_id ?? null,
+      autoExport: state?.auto_export !== false,
       instanceUuid: state?.instance_uuid ?? null,
       hostname: state?.hostname ?? null,
       conflict: conflict
@@ -162,6 +180,7 @@ export class CloudBackupController {
         lastSuccessAt: t.last_success_at,
         lastError: t.last_error,
         consecutiveFailures: t.consecutive_failures,
+        quotaFull: isDropboxQuotaFull(t.driver, t.last_error),
       })),
       lastSync: await this.lastSync(),
       lastSnapshot: state?.last_manifest_at ?? null,
@@ -233,10 +252,25 @@ export class CloudBackupController {
     return { id: row.id, name: row.display_label, driverId: row.driver, enabled: row.enabled };
   }
 
+  /**
+   * Auto/manual switch: when on, the worker uploads a fresh JSON ~10 s after
+   * changes land; when off, exports happen only on demand ("Capture complète
+   * maintenant", setup finish, migration boot). Takes effect within seconds.
+   */
+  @Put("settings")
+  @UseGuards(JwtAuthGuard)
+  async updateSettings(@Body() body: { autoExport?: boolean }) {
+    if (typeof body.autoExport !== "boolean") throw new BadRequestException("autoExport doit être un booléen.");
+    await this.db.client
+      .update(cloudState)
+      .set({ auto_export: body.autoExport })
+      .where(eq(cloudState.singleton, "global"));
+    return { ok: true, autoExport: body.autoExport };
+  }
+
   @Put("targets/:id")
   @UseGuards(JwtAuthGuard)
-  async updateTarget(@Param("id") id: string, @Body() body: { name?: string; config?: Record<string, string>; enabled?: boolean }) {
-    const row = await this.db.client.query.cloudTargets.findFirst({ where: eq(cloudTargets.id, id) });
+  async updateTarget(@Param("id") id: string, @Body() body: { name?: string; config?: Record<string, string>; enabled?: boolean }) {    const row = await this.db.client.query.cloudTargets.findFirst({ where: eq(cloudTargets.id, id) });
     if (!row) throw new NotFoundException("Destination inconnue.");
 
     let configRef = row.config_ref;
@@ -270,6 +304,18 @@ export class CloudBackupController {
   async deleteTarget(@Param("id") id: string) {
     const row = await this.db.client.query.cloudTargets.findFirst({ where: eq(cloudTargets.id, id) });
     if (!row) throw new NotFoundException("Destination inconnue.");
+    if (!row.enabled) {
+      // Already retired: permanently hide the local row. The cloud copies
+      // stay (append-only) — only the local config and its history vanish.
+      await this.db.client.delete(backupManifest).where(eq(backupManifest.target_id, id));
+      await this.db.client.delete(cloudTargets).where(eq(cloudTargets.id, id));
+      try {
+        await this.creds.delete(row.config_ref);
+      } catch {
+        // Credentials were already removed when the target was retired.
+      }
+      return { ok: true, purged: true };
+    }
     // Append-only: disabling, never deleting the cloud copy.
     await this.db.client.update(cloudTargets).set({ enabled: false }).where(eq(cloudTargets.id, id));
     await this.creds.delete(row.config_ref);
@@ -306,6 +352,34 @@ export class CloudBackupController {
   @UseGuards(JwtAuthGuard)
   generatePhrase() {
     return this.setup.generatePhrase();
+  }
+
+  /**
+   * Confirms the typed secret password against the sealed master key, without
+   * changing anything. Used when linking an additional destination to an
+   * already-configured install: the key is sealed since step 1, so a new
+   * destination cannot set a password — it can only prove the admin knows it.
+   */
+  @Post("verify-password")
+  @UseGuards(JwtAuthGuard)
+  async verifyPassword(@Body() body: { phrase?: string }) {
+    const phrase = body.phrase?.trim();
+    if (!phrase) throw new BadRequestException("Mot de passe secret requis.");
+    const state = await this.db.client.query.cloudState.findFirst({ where: eq(cloudState.singleton, "global") });
+    if (!state?.wrapped_key || !state.wrap_salt || !state.kdf_salt) {
+      throw new BadRequestException("Sauvegarde cloud non configurée.");
+    }
+    const kdf = JSON.parse(state.kdf_salt) as Parameters<CloudKeyService["deriveFromPhrase"]>[1];
+    const candidate = await this.keys.deriveFromPhrase(phrase, kdf);
+    const master = await this.keys.unwrap(state.wrapped_key, state.wrap_salt);
+    if (candidate.length !== master.length) {
+      throw new BadRequestException("Mot de passe secret incorrect.");
+    }
+    const { timingSafeEqual } = await import("node:crypto");
+    if (!timingSafeEqual(candidate, master)) {
+      throw new BadRequestException("Mot de passe secret incorrect.");
+    }
+    return { ok: true };
   }
 
   @Post("setup/step-1")

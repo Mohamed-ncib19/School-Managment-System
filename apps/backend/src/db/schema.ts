@@ -744,6 +744,7 @@ export const cloudState = pgTable("cloud_state", {
 	schema_hash: text("schema_hash"),
 	quiet_hour: integer("quiet_hour").default(3).notNull(),
 	drain_interval_seconds: integer("drain_interval_seconds").default(60).notNull(),
+	auto_export: boolean("auto_export").default(true).notNull(),
 	created_at: timestamp("created_at", { precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updated_at: timestamp("updated_at", { precision: 3, mode: 'date' }).defaultNow().notNull().$onUpdate(() => new Date()),
 	last_manifest_at: timestamp("last_manifest_at", { precision: 3, mode: 'date' }),
