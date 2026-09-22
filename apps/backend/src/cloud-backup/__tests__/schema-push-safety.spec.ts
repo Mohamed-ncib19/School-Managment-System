@@ -5,10 +5,13 @@ const REPO = join(__dirname, "..", "..", "..", "..", "..");
 const read = (...p: string[]) => readFileSync(join(REPO, ...p), "utf8");
 
 /**
- * `drizzle-kit push --force` runs on every school's start and update. It
- * applies whatever it decides is needed WITHOUT asking, including destructive
- * statements — a column rename in schema.ts is indistinguishable from "drop
- * the old column, create a new one", and there is no undo.
+ * `drizzle-kit push` runs on every school's start and update. It applies
+ * whatever it decides is needed WITHOUT asking — a column rename in
+ * schema.ts is indistinguishable from "drop the old column, create a new
+ * one", and there is no undo. (The update engines deliberately pass NO
+ * --force, so a destructive change aborts instead of applying; the start
+ * scripts still pass --force, which is exactly why the backup must come
+ * first there.)
  *
  * Every push site must be preceded by a pg_dump, so the worst case is a
  * restore rather than a loss. These are the four sites.
@@ -26,10 +29,12 @@ describe("no schema push without a safety backup", () => {
     ["installer/macos/scripts/update.sh", "backup-before-schema.sh"],
   ])("%s backs up before pushing", (file, helper) => {
     const source = read(...file.split("/"));
-    expect(source).toContain("drizzle-kit push --force");
+    // `exec drizzle-kit push` is the real invocation; bare mentions in
+    // comments (e.g. "drizzle-kit push runs WITHOUT --force") must not match.
+    expect(source).toContain("exec drizzle-kit push");
     expect(source).toContain(helper);
     // The dump must come first, or it is documentation rather than a safeguard.
-    expect(source.indexOf(helper)).toBeLessThan(source.indexOf("drizzle-kit push --force"));
+    expect(source.indexOf(helper)).toBeLessThan(source.indexOf("exec drizzle-kit push"));
   });
 
   it("keeps the safety dumps bounded so they cannot fill a school's disk", () => {
