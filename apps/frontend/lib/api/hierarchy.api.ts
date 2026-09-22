@@ -79,6 +79,4 @@ export const hierarchyApi = {
     ApiClient.post(`/hierarchy/${type}/${id}/delete-cascade`, { confirm: true }),
   detachDelete: (type: string, id: string, plan: any) =>
     ApiClient.post(`/hierarchy/${type}/${id}/detach-delete`, { plan }),
-  unassigned: (parentType: string, parentId: string) =>
-    ApiClient.get<any[]>(`/hierarchy/unassigned`, { params: { parentType, parentId } }),
 };

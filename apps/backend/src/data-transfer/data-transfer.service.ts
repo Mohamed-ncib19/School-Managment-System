@@ -48,6 +48,10 @@ import {
  * Import semantics are "replace the tables present in the file": their rows
  * are deleted and the file's rows inserted with their original ids, inside a
  * single transaction. Tables absent from the file are left untouched.
+ *
+ * Legacy files may still carry `is_system_placeholder` "Unassigned" rows from
+ * before the holding-pen removal. Those rows are skipped on import and hidden
+ * from the preview — the column itself no longer exists in the schema.
  */
 
 export const DATA_FORMAT = "iq-data-export";
@@ -104,6 +108,17 @@ const TABLE_ORDER: TransferTable[] = [
 
 const TABLE_BY_KEY = new Map(TABLE_ORDER.map((def) => [def.key, def]));
 
+/**
+ * Legacy "Unassigned" holding-pen rows from before the removal. The column no
+ * longer exists in the schema, but old exports still carry it — those rows
+ * are skipped on import and hidden from the preview instead of coming back
+ * as visible data.
+ */
+function isLegacyPlaceholderRow(columns: string[], row: unknown): boolean {
+  const index = columns.indexOf("is_system_placeholder");
+  return index >= 0 && Array.isArray(row) && (row as unknown[])[index] === true;
+}
+
 export interface ExportDocument {
   app: string;
   format: string;
@@ -127,10 +142,6 @@ export interface TablePreview {
   extraColumns: string[];
   missingTargetTables: { column: string; targetLabel: string }[];
   rowCount: number;
-  /** Rows the admin never sees in the UI (deleted-children placeholders) — they still import. */
-  systemRowCount: number;
-  /** True when every row in the file is a system placeholder (nothing to eyeball). */
-  allSystem: boolean;
   sampleRows: Record<string, string>[];
 }
 
@@ -251,22 +262,20 @@ export class DataTransferService {
       const opts = fillsSafe[def.key] ?? {};
       if (String(opts.skip) === "true") continue;
 
-const current = getTableColumns(def.table) as Record<string, any>;
+      const current = getTableColumns(def.table) as Record<string, any>;
       const fileColumns = fileTable.columns.filter((column) => current[column]);
+      // Legacy "Unassigned" holding-pen rows from before the removal are
+      // dropped: the column no longer exists and the rows must not come back
+      // as visible data.
+      const realRows = fileTable.rows.filter((row) => !isLegacyPlaceholderRow(fileTable.columns, row));
+      if (realRows.length === 0) continue;
 
-      if (fileTable.rows.length > 0) {
+      if (realRows.length > 0) {
         // Every NOT NULL column without a default must hold a value in every
         // row — or be provided as a fill value, which patches only the empty
         // cells. Checking here (not just column presence) turns an opaque
         // mid-transaction 500 into a 400 naming the exact row. Empty means
         // null/undefined/"" — exactly what buildRow drops below.
-        // System placeholders ("Unassigned" holding pens created by the
-        // hierarchy delete flows) are exempt: they are not user data, older
-        // installs carry e.g. a student sentinel with an empty last_name, and
-        // demanding a fill value for a row no admin can see is noise.
-        const placeholderIndex = fileTable.columns.indexOf("is_system_placeholder");
-        const isPlaceholder = (row: unknown) =>
-          placeholderIndex >= 0 && Array.isArray(row) && row[placeholderIndex] === true;
         const isEmptyCell = (row: unknown, index: number) =>
           !Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === "";
         for (const [column, col] of Object.entries(current)) {
@@ -276,8 +285,6 @@ const current = getTableColumns(def.table) as Record<string, any>;
           const filled = fill !== undefined && String(fill).trim() !== "";
           if (!fileColumns.includes(column)) {
             if (filled) continue;
-            const userRows = fileTable.rows.some((row) => !isPlaceholder(row));
-            if (!userRows) continue;
             throw new BadRequestException(
               `Import ${def.label} impossible : la colonne « ${column} » manque dans le fichier. ` +
                 `Renseignez-la dans l'aperçu (une valeur pour toutes les lignes) avant d'importer.`,
@@ -285,7 +292,7 @@ const current = getTableColumns(def.table) as Record<string, any>;
           }
           if (filled) continue;
           const colIndex = fileTable.columns.indexOf(column);
-          const bad = fileTable.rows.findIndex((row) => !isPlaceholder(row) && isEmptyCell(row, colIndex));
+          const bad = realRows.findIndex((row) => isEmptyCell(row, colIndex));
           if (bad >= 0) {
             throw new BadRequestException(
               `Import ${def.label} impossible : la colonne « ${column} » est vide à la ligne ${bad + 1} du fichier. ` +
@@ -297,9 +304,9 @@ const current = getTableColumns(def.table) as Record<string, any>;
         // Foreign keys pointing at tables absent from the file cannot resolve.
         for (const [column, target] of Object.entries(def.refs)) {
           if (document.tables[target] || !fileColumns.includes(column)) continue;
-          const used = fileTable.rows.some((row) => {
+          const used = realRows.some((row) => {
             const index = fileTable.columns.indexOf(column);
-            const value = row[index];
+            const value = (row as unknown[])[index];
             return value !== null && value !== undefined && String(value).trim() !== "";
           });
           if (used) {
@@ -312,7 +319,7 @@ const current = getTableColumns(def.table) as Record<string, any>;
         }
       }
 
-      const rows = fileTable.rows.map((row) => this.buildRow(current, fileTable.columns, row, opts));
+      const rows = realRows.map((row) => this.buildRow(current, fileTable.columns, row, opts));
       plans.push({ def, rows });
     }
 
@@ -454,21 +461,17 @@ const current = getTableColumns(def.table) as Record<string, any>;
 
     const missingRequired: TableColumnIssue[] = [];
     const missingOptional: TableColumnIssue[] = [];
+    const realRows = fileTable.rows.filter((row) => !isLegacyPlaceholderRow(fileTable.columns, row));
     for (const [column, col] of Object.entries(current)) {
       if (fileSet.has(column)) {
-        // Required column present but with empty cells (null/"") in *user*
-        // rows: the file cannot import as-is, so it joins missingRequired and
-        // the same fill flow patches only those cells at import time. System
-        // placeholder rows ("Unassigned" holding pens, e.g. the student
-        // sentinel's empty last_name) are exempt — the admin never sees them
-        // and they must not block an import of real data.
+        // Required column present but with empty cells (null/""): the file
+        // cannot import as-is, so it joins missingRequired and the same fill
+        // flow patches only those cells at import time.
         if (col.notNull && !col.hasDefault) {
           const index = fileTable.columns.indexOf(column);
-          const placeholderIndex = fileTable.columns.indexOf("is_system_placeholder");
-          const sparse = fileTable.rows.some(
+          const sparse = realRows.some(
             (row) =>
-              !(placeholderIndex >= 0 && Array.isArray(row) && row[placeholderIndex] === true) &&
-              (!Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === ""),
+              !Array.isArray(row) || row[index] === null || row[index] === undefined || row[index] === "",
           );
           if (sparse) missingRequired.push({ column, type: this.describeType(col.columnType) });
         }
@@ -488,21 +491,11 @@ const current = getTableColumns(def.table) as Record<string, any>;
       missingTargetTables.push({ column, targetLabel: targetDef?.label ?? target });
     }
 
-    // "Unassigned" placeholders (is_system_placeholder) are system rows the
-    // app never shows the admin; the file carries them because detached
-    // children reference them, but the preview should display real data —
-    // with the hidden count reported separately.
-    const placeholderIndex = fileTable.columns.indexOf("is_system_placeholder");
-    const visibleRows = fileTable.rows.filter(
-      (row) => !Array.isArray(row) || row[placeholderIndex] !== true,
-    );
-    const systemRowCount = fileTable.rows.length - visibleRows.length;
-
-    const sampleRows = visibleRows.slice(0, SAMPLE_ROWS).map((row) => {
+    const sampleRows = realRows.slice(0, SAMPLE_ROWS).map((row) => {
       const out: Record<string, string> = {};
       fileTable.columns.forEach((column, index) => {
         if (!current[column]) return;
-        out[column] = this.truncateSample(row[index]);
+        out[column] = this.truncateSample((row as unknown[])[index]);
       });
       return out;
     });
@@ -515,9 +508,7 @@ const current = getTableColumns(def.table) as Record<string, any>;
       missingOptional,
       extraColumns,
       missingTargetTables,
-      rowCount: fileTable.rows.length,
-      systemRowCount,
-      allSystem: fileTable.rows.length > 0 && visibleRows.length === 0,
+      rowCount: realRows.length,
       sampleRows,
     };
   }

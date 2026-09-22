@@ -90,12 +90,16 @@ export default function FinancialDashboardPage() {
   const activeDimension = BREAKDOWN_DIMENSIONS.find((d) => d.key === dimension)!;
 
   const payroll = cards?.professor_payroll;
+  const payrollOutstanding = Number(payroll?.value ?? "0");
+  // Zero (or negative, clamped server-side) means every professor is settled:
+  // the card switches to its resting state instead of looking like an open charge.
+  const payrollSettled = !!payroll && payrollOutstanding <= 0;
   const payrollMeter = useMemo(() => {
-    if (!payroll) return null;
+    if (!payroll || payrollSettled) return null;
     const earned = Number(payroll.earned ?? "0");
     const paid = Number(payroll.paid ?? "0");
     return earned > 0 ? Math.min(Math.round((paid / earned) * 100), 100) : null;
-  }, [payroll]);
+  }, [payroll, payrollSettled]);
 
   return (
     <div className="space-y-6">
@@ -226,7 +230,9 @@ export default function FinancialDashboardPage() {
               href="/financial/professors"
               className="card flex items-center gap-4 hover:shadow-hover transition-shadow group"
             >
-              <div className="h-11 w-11 shrink-0 rounded-btn bg-gold-50 dark:bg-gold/15 flex items-center justify-center text-gold-700 dark:text-gold-400">
+              <div className={payrollSettled
+                ? "h-11 w-11 shrink-0 rounded-btn bg-success-soft dark:bg-success-dark-soft flex items-center justify-center text-success-strong dark:text-success-dark-strong"
+                : "h-11 w-11 shrink-0 rounded-btn bg-gold-50 dark:bg-gold/15 flex items-center justify-center text-gold-700 dark:text-gold-400"}>
                 <Wallet size={20} aria-hidden="true" />
               </div>
               <div className="flex-1 min-w-0">
@@ -238,12 +244,16 @@ export default function FinancialDashboardPage() {
                       <p className="text-sm font-semibold text-text-primary">
                         {t("financial.kpi.professorPayroll", "Paie des professeurs")}
                       </p>
-                      <p className="text-h4 font-bold tabular-nums text-gold-700 dark:text-gold-400">
+                      <p className={payrollSettled
+                        ? "text-h4 font-bold tabular-nums text-success-strong dark:text-success-dark-strong"
+                        : "text-h4 font-bold tabular-nums text-gold-700 dark:text-gold-400"}>
                         {formatCurrency(payroll?.value ?? "0")}
                       </p>
                     </div>
                     <p className="text-xs text-text-secondary mt-0.5">
-                      {t("financial.payroll.outstanding", "Reste à verser")}
+                      {payrollSettled
+                        ? t("financial.payroll.settled", "Soldé — rien à verser")
+                        : t("financial.payroll.outstanding", "Reste à verser")}
                       {payroll && (
                         <>
                           {" · "}
@@ -263,10 +273,12 @@ export default function FinancialDashboardPage() {
                   </>
                 )}
               </div>
-              <span className="btn btn-secondary shrink-0 hidden sm:inline-flex">
-                {t("financial.settle", "Régler")}
-                <ArrowUpRight size={14} aria-hidden="true" />
-              </span>
+              {!payrollSettled && (
+                <span className="btn btn-secondary shrink-0 hidden sm:inline-flex">
+                  {t("financial.settle", "Régler")}
+                  <ArrowUpRight size={14} aria-hidden="true" />
+                </span>
+              )}
             </Link>
           </section>
 

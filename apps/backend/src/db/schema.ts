@@ -62,7 +62,6 @@ export const professors = pgTable("professors", {
 	color: text(),
 	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
 	archived_because_parent_id: uuid("archived_because_parent_id"),
-	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("professors_field_id_idx").using("btree", table.field_id.asc().nullsLast()),
 	index("professors_is_active_idx").using("btree", table.is_active.asc().nullsLast()),
@@ -95,7 +94,6 @@ export const fields = pgTable("fields", {
 	is_active: boolean("is_active").default(true).notNull(),
 	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
 	archived_because_parent_id: uuid("archived_because_parent_id"),
-	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("fields_created_by_idx").using("btree", table.created_by.asc().nullsLast()),
 	index("fields_is_active_idx").using("btree", table.is_active.asc().nullsLast()),
@@ -128,7 +126,6 @@ export const groups = pgTable("groups", {
 	color: text(),
 	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
 	archived_because_parent_id: uuid("archived_because_parent_id"),
-	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("groups_prof_id_idx").using("btree", table.prof_id.asc().nullsLast()),
 	index("groups_name_trgm_idx").using("gin", sql`${table.name} gin_trgm_ops`),
@@ -159,7 +156,6 @@ export const students = pgTable("students", {
 	color: text(),
 	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
 	archived_because_parent_id: uuid("archived_because_parent_id"),
-	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 }, (table) => [
 	index("students_group_id_idx").using("btree", table.group_id.asc().nullsLast()),
 	index("students_last_name_first_name_idx").using("btree", table.last_name.asc().nullsLast(), table.first_name.asc().nullsLast()),
@@ -220,7 +216,6 @@ export const levels = pgTable("levels", {
 	is_active: boolean("is_active").default(true).notNull(),
 	color: text(),
 	archived_at: timestamp("archived_at", { precision: 3, mode: 'date' }),
-	is_system_placeholder: boolean("is_system_placeholder").default(false).notNull(),
 });
 
 export const auditLogs = pgTable("audit_logs", {

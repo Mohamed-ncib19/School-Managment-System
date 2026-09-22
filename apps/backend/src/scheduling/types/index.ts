@@ -10,7 +10,6 @@ export interface Classroom {
   color: string | null;
   created_at: string;
   updated_at: string;
-  is_system_placeholder?: boolean;
 }
 
 export interface TimeSlot {

@@ -239,7 +239,7 @@ export class AnalyticsService {
       return this.rank(
         grouped.map((g) => ({
           id: g.prof_id,
-          name: g.prof_id ? (names.get(g.prof_id) ?? "Unknown") : "Unassigned",
+          name: g.prof_id ? (names.get(g.prof_id) ?? "Unknown") : "Unknown",
           revenue: money(g.sum_amount),
           school: money(g.sum_school_share),
           professor: money(g.sum_professor_share),
@@ -307,7 +307,7 @@ export class AnalyticsService {
     // — it would only re-sort a list of at most `limit` rows.
     return grouped.map((row) => ({
       id: row.id,
-      name: row.name ?? "Unassigned",
+      name: row.name ?? "Unknown",
       revenue: toAmount(round2(money(row.sum_amount))),
       school_share: toAmount(round2(money(row.sum_school_share))),
       professor_share: toAmount(round2(money(row.sum_professor_share))),

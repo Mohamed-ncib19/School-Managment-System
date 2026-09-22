@@ -721,8 +721,9 @@ export default function HierarchyEntityPage({ entityType: entityTypeProp, parsed
     onSuccess: () => {
       // Scoped rather than a bare invalidateQueries(): deleting one entity must
       // not refetch every screen in the app. A delete cascades down the
-      // hierarchy (and moves children onto a sentinel), so every entity list
-      // plus the roll-up summary is invalidated — but nothing beyond that.
+      // hierarchy (or reassigns children to their new parent), so every
+      // entity list plus the roll-up summary is invalidated — but nothing
+      // beyond that.
       for (const key of ["levels", "fields", "professors", "groups", "students", "hierarchy-summary"]) {
         qc.invalidateQueries({ queryKey: [key] });
       }

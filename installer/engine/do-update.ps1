@@ -275,10 +275,13 @@ Pop-Location
 # ---------------------------------------------------------------------------
 # 6. Database schema - DATA-SAFETY CRITICAL SECTION, enforced in order:
 #      a) verified safety backup (gate - failure aborts the update),
-#      b) push WITHOUT --force: drizzle refuses data-loss statements when
+#      b) retired-data cleanup (best-effort, after the backup): data-only
+#         DELETEs/DROPs of explicitly retired constructs, so the push below
+#         sees an additive sync instead of a destructive diff,
+#      c) push WITHOUT --force: drizzle refuses data-loss statements when
 #         non-interactive, so a destructive change is detected with nothing
 #         applied; only additive changes auto-apply,
-#      c) a destructive result ABORTS the update (servers are restarted by
+#      d) a destructive result ABORTS the update (servers are restarted by
 #         the Fail handler) - a human decides, never --force.
 # ---------------------------------------------------------------------------
 Write-Step "Protecting your data (safety backup)"
@@ -302,6 +305,63 @@ if ($backupPath) {
 } else {
   # exit 0 with no artifact = nothing to protect yet (first run / empty DB)
   Write-Info "No existing data to back up yet (first run) - proceeding."
+}
+
+<#
+  Retired "Unassigned" holding-pen cleanup (single-version step).
+  Versions before this one created is_system_placeholder rows when deleting
+  without a target; that mechanism is removed and old rows must neither come
+  back as visible data nor trip the destructive-change guard below as a DROP
+  COLUMN diff. Runs AFTER the verified backup above and BEFORE the push:
+    1. DELETE the flagged rows (verified child-free: nothing real references
+       them, and FK restrict would refuse otherwise),
+    2. DROP the retired flag columns so the push sees an additive sync.
+  Best-effort by design: any failure only warns and the push below stays the
+  decider (it still aborts safely on destructive diffs, backup in hand).
+#>
+& {
+  $cleanupEnv = Join-Path $Root "apps\backend\.env"
+  $cleanupMatch = $null
+  if (Test-Path $cleanupEnv) {
+    $cleanupMatch = Select-String -Path $cleanupEnv -Pattern '^\s*DATABASE_URL\s*=\s*(.+)$' | Select-Object -First 1
+  }
+  if (-not $cleanupMatch) { Write-Info "No DATABASE_URL - skipping retired-data cleanup."; return }
+  $cleanupUrl = $cleanupMatch.Matches[0].Groups[1].Value.Trim().Trim('"').Trim("'")
+  try { $cleanupUri = [System.Uri]$cleanupUrl } catch { Write-Info "DATABASE_URL is not a URL - skipping retired-data cleanup."; return }
+  $cleanupParts = $cleanupUri.UserInfo.Split(":")
+  $cleanupUser = [System.Uri]::UnescapeDataString($cleanupParts[0])
+  $cleanupPass = if ($cleanupParts.Count -gt 1) { [System.Uri]::UnescapeDataString($cleanupParts[1]) } else { "" }
+  $cleanupHost = $cleanupUri.Host
+  $cleanupPort = if ($cleanupUri.Port -gt 0) { $cleanupUri.Port } else { 5432 }
+  $cleanupDb = $cleanupUri.AbsolutePath.TrimStart("/").Split("?")[0]
+  if (-not $cleanupDb) { Write-Info "No database name - skipping retired-data cleanup."; return }
+
+  $cleanupPsql = $null
+  $cleanupRuntime = Join-Path $Root ".postgres\runtime"
+  if (Test-Path $cleanupRuntime) {
+    $foundCleanup = Get-ChildItem -Path $cleanupRuntime -Filter "psql.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($foundCleanup) { $cleanupPsql = $foundCleanup.FullName }
+  }
+  if (-not $cleanupPsql) {
+    $onPathCleanup = Get-Command psql -ErrorAction SilentlyContinue
+    if ($onPathCleanup) { $cleanupPsql = $onPathCleanup.Source }
+  }
+  if (-not $cleanupPsql) { Write-Info "psql not found - skipping retired-data cleanup (schema sync decides)."; return }
+
+  $env:PGPASSWORD = $cleanupPass
+  try {
+    foreach ($cleanupTable in @("students", "groups", "professors", "fields", "levels")) {
+      $hasCol = & $cleanupPsql -U $cleanupUser -h $cleanupHost -p $cleanupPort -w -d $cleanupDb -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$cleanupTable' AND column_name='is_system_placeholder'" 2>$null
+      if ($LASTEXITCODE -ne 0 -or -not ($hasCol -match "1")) { continue }
+      & $cleanupPsql -U $cleanupUser -h $cleanupHost -p $cleanupPort -w -d $cleanupDb -c "DELETE FROM ""$cleanupTable"" WHERE ""is_system_placeholder"" = true;" 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { Write-Info "Holding-pen rows in $cleanupTable kept (referenced) - continuing."; continue }
+      & $cleanupPsql -U $cleanupUser -h $cleanupHost -p $cleanupPort -w -d $cleanupDb -c "ALTER TABLE ""$cleanupTable"" DROP COLUMN IF EXISTS ""is_system_placeholder"";" 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { Write-Info "Retired column in $cleanupTable kept - schema sync decides."; continue }
+      Write-Ok "Retired holding-pen data cleared" "$cleanupTable"
+    }
+  } finally {
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+  }
 }
 
 Write-Step "Syncing the database schema"

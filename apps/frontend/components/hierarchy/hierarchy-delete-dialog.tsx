@@ -51,13 +51,7 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
    *
    * For a level that is every other level: levels are the root of the
    * hierarchy, so there is no shared parent to match on, and the destinations
-   * are simply its siblings. The `level` branch was missing entirely, so this
-   * fell through to `[]` and the reassignment dropdowns rendered with nothing
-   * in them but "Leave unassigned".
-   *
-   * Placeholder rows are excluded: the "Unassigned" holding pens the backend
-   * creates are archived by construction and must not be offered as somewhere
-   * to deliberately file a child.
+   * are simply its siblings.
    */
   const siblingOptions = useMemo(() => {
     if (!summary) return [];
@@ -158,6 +152,12 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
   })();
 
   const isPending = mode === "confirm-archive" ? archiveMutation.isPending : mode === "confirm-delete" ? deleteMutation.isPending : detachMutation.isPending;
+  const reassignBlocked =
+    mode === "reassign" &&
+    !!impact &&
+    impact.directChildren.length > 0 &&
+    (siblingOptions.length === 0 ||
+      impact.directChildren.some((child) => !selectedChildren[child.id]));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -248,7 +248,7 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
                         <span>
                           {t(
                             "hierarchy.noReassignTarget",
-                            "There is nowhere else to move these to. They will be kept and filed under “Unassigned”, where you can re-file them later.",
+                            "There is nowhere else to move these to. Create a target first, or archive/delete everything together.",
                           )}
                         </span>
                       </div>
@@ -264,8 +264,9 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
                             className="input text-xs"
                             aria-label={`${child.name} → ${childLabel.target}`}
                             disabled={summaryLoading}
+                            required
                           >
-                            <option value="">{t("hierarchy.leaveUnassigned", "Leave unassigned")}</option>
+                            <option value="" disabled>{t("hierarchy.chooseTarget", "Choose a target")}</option>
                             {siblingOptions.map((sibling) => (
                               <option key={sibling.id} value={sibling.id}>{sibling.name}</option>
                             ))}
@@ -293,7 +294,8 @@ export default function HierarchyDeleteDialog({ entityType, entityId, entityName
                   type="button"
                   className="btn btn-danger disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => (mode === "confirm-archive" ? handleArchive() : mode === "confirm-delete" ? handleDelete() : handleDetachConfirm())}
-                  disabled={isPending}
+                  disabled={isPending || reassignBlocked}
+                  title={reassignBlocked ? t("hierarchy.reassignRequired", "Assign every child to a target first") : undefined}
                 >
                   {isPending ? (
                     <>

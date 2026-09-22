@@ -1,12 +1,10 @@
 import { ConflictException, BadRequestException } from "@nestjs/common";
 import { HierarchyDeleteService } from "../hierarchy-delete.service";
-import { SentinelService } from "../sentinel.service";
 import { AuditService } from "../../audit/audit.service";
 import { DbService } from "../../db/db.service";
 
 jest.mock("../../db/db.service");
 jest.mock("../../audit/audit.service");
-jest.mock("../sentinel.service");
 
 const mockRow = (overrides: any = {}) => ({
   id: overrides.id ?? "mock-id",
@@ -20,7 +18,6 @@ describe("HierarchyDeleteService", () => {
   let service: HierarchyDeleteService;
   let mockDbClient: any;
   let mockAudit: jest.Mocked<AuditService>;
-  let mockSentinels: jest.Mocked<SentinelService>;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -63,18 +60,11 @@ describe("HierarchyDeleteService", () => {
     };
 
     mockAudit = { record: jest.fn() } as any;
-    mockSentinels = {
-      ensureLevelSentinel: jest.fn().mockResolvedValue("sentinel-level-id"),
-      ensureFieldSentinel: jest.fn().mockResolvedValue("sentinel-field-id"),
-      ensureProfessorSentinel: jest.fn().mockResolvedValue("sentinel-prof-id"),
-      ensureGroupSentinel: jest.fn().mockResolvedValue("sentinel-group-id"),
-      ensureStudentSentinel: jest.fn().mockResolvedValue("sentinel-student-id"),
-    } as any;
 
     const DbServiceMock = DbService as jest.MockedClass<typeof DbService>;
     DbServiceMock.mockImplementation(() => ({ client: mockDbClient }) as any);
 
-    service = new HierarchyDeleteService({ client: mockDbClient } as any, mockAudit, mockSentinels);
+    service = new HierarchyDeleteService({ client: mockDbClient } as any, mockAudit);
   });
 
   describe("archiveCascade", () => {
@@ -172,7 +162,7 @@ describe("HierarchyDeleteService", () => {
       spy.mockRestore();
     });
 
-    it("should send a level's fields to the sentinel when left unassigned", async () => {
+    it("should reject a detach that leaves children without a target", async () => {
       mockDbClient.query.levels.findFirst = jest
         .fn()
         .mockResolvedValue(mockRow({ id: "level-1", name: "Level A", is_active: true }));
@@ -186,11 +176,9 @@ describe("HierarchyDeleteService", () => {
         directChildren: [{ id: "field-1", name: "CS", type: "field" }],
       });
 
-      await service.detachAndDelete("level", "level-1", { mode: "unassign" }, "user-1");
-
-      // "Leave unassigned" must park the field somewhere real rather than
-      // orphaning it: fields.level_id is NOT NULL.
-      expect(mockSentinels.ensureLevelSentinel).toHaveBeenCalled();
+      await expect(
+        service.detachAndDelete("level", "level-1", { mode: "reassign", targetParentId: undefined } as any, "user-1"),
+      ).rejects.toThrow(BadRequestException);
 
       spy.mockRestore();
     });
@@ -200,7 +188,9 @@ describe("HierarchyDeleteService", () => {
         .fn()
         .mockResolvedValue(mockRow({ id: "level-1", is_active: false }));
 
-      await expect(service.detachAndDelete("level", "level-1", { mode: "unassign" })).rejects.toThrow(ConflictException);
+      await expect(
+        service.detachAndDelete("level", "level-1", { mode: "reassign", targetParentId: "level-2" }),
+      ).rejects.toThrow(ConflictException);
     });
 
     it("should throw BadRequestException for incomplete reassignment plan", async () => {

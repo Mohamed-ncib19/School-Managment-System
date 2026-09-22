@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { EyeOff, Database, Download, Upload, RefreshCw, Trash2, AlertTriangle, CheckCircle2, FileJson } from "lucide-react";
+import { Database, Download, Upload, RefreshCw, Trash2, AlertTriangle, CheckCircle2, FileJson } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { useExportAll, useImportPreview, useDataImport, type ImportPreview, type TablePreview, type FillValues } from "@/hooks/use-data-transfer";
 import { cn } from "@/lib/utils/format";
@@ -460,13 +460,12 @@ export default function DataTransferSection() {
                             {t("settings.tableComplete", "Complet")}
                           </span>
                         )}
-                        {table.systemRowCount > 0 && (
+                        {table.extraColumns.includes("is_system_placeholder") && (
                           <span
                             className="inline-flex items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-[10px] font-medium text-text-secondary"
-                            title={t("settings.systemRowsHint", "Éléments système créés automatiquement (ex. placeholders de suppression) — jamais affichés dans l'application, mais importés pour préserver les liens internes.")}
+                            title={t("settings.legacyColumnHint", "Ancienne colonne d'un export précédent — ignorée à l'import.")}
                           >
-                            <EyeOff size={9} />
-                            {table.systemRowCount} {t("settings.systemRows", "système")}
+                            {t("settings.legacyColumn", "ancienne colonne ignorée")}
                           </span>
                         )}
                       </div>
@@ -539,9 +538,9 @@ export default function DataTransferSection() {
                         </p>
                       )}
 
-                      {table.allSystem && (
+                      {table.extraColumns.includes("is_system_placeholder") && (
                         <p className="text-[11px] text-text-secondary">
-                          {t("settings.allSystemRows", "Toutes les lignes de cette table sont des éléments système (placeholders de suppression) — elles sont importées automatiquement mais ne s'affichent pas ici.")}
+                          {t("settings.legacyPlaceholderNote", "Ce fichier contient d'anciennes lignes « Unassigned » — elles seront ignorées à l'import et ne reviendront pas dans l'application.")}
                         </p>
                       )}
 

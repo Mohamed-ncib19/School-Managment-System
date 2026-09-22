@@ -158,10 +158,13 @@ progress "running" "Installing dependencies" 5 8
 
 # Sync database schema - DATA-SAFETY CRITICAL SECTION (mirrors do-update.ps1):
 #   a) verified safety backup (gate - failure aborts the update),
-#   b) push WITHOUT --force: drizzle refuses data-loss statements when
+#   b) retired-data cleanup (best-effort, after the backup): data-only
+#      DELETEs/DROPs of explicitly retired constructs, so the push below
+#      sees an additive sync instead of a destructive diff,
+#   c) push WITHOUT --force: drizzle refuses data-loss statements when
 #      non-interactive, so a destructive change is detected with nothing
 #      applied; only additive changes auto-apply,
-#   c) a destructive result ABORTS the update - a human decides.
+#   d) a destructive result ABORTS the update - a human decides.
 echo ""
 echo "Protecting your data (safety backup)..."
 rm -f "$ROOT_DIR/logs/pre-schema-result.json" 2>/dev/null || true
@@ -180,6 +183,50 @@ if [[ -n "$BACKUP_PATH" ]]; then
 else
   echo "  No existing data to back up yet (first run) - proceeding."
 fi
+
+# Retired "Unassigned" holding-pen cleanup (single-version step).
+# Versions before this one created is_system_placeholder rows when deleting
+# without a target; that mechanism is removed and old rows must neither come
+# back as visible data nor trip the destructive-change guard below as a DROP
+# COLUMN diff. Runs AFTER the verified backup above and BEFORE the push.
+# Best-effort by design: any failure only warns and the push below stays the
+# decider (it still aborts safely on destructive diffs, backup in hand).
+(
+  ENV_FILE="$ROOT_DIR/apps/backend/.env"
+  [ -f "$ENV_FILE" ] || { echo "  No DATABASE_URL - skipping retired-data cleanup."; exit 0; }
+  CLEAN_URL="$(sed -n 's/^[[:space:]]*DATABASE_URL[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" | head -1 | tr -d '"' | tr -d "'" | tr -d '\r')"
+  [ -n "$CLEAN_URL" ] || { echo "  No DATABASE_URL - skipping retired-data cleanup."; exit 0; }
+  case "$CLEAN_URL" in postgresql://*|postgres://*) ;; *) echo "  DATABASE_URL is not PostgreSQL - skipping retired-data cleanup."; exit 0;; esac
+  command -v psql >/dev/null 2>&1 || { echo "  psql not found - skipping retired-data cleanup (schema sync decides)."; exit 0; }
+  proto_removed="${CLEAN_URL#*://}"
+  creds="${proto_removed%%@*}"
+  hostpart="${proto_removed#*@}"
+  decode() { printf '%b' "${1//%/\\x}"; }
+  CLEAN_USER="$(decode "${creds%%:*}")"
+  CLEAN_PASS="$(decode "${creds#*:}")"
+  hostport="${hostpart%%/*}"
+  CLEAN_HOST="${hostport%%:*}"
+  if [ "$hostport" = "$CLEAN_HOST" ]; then CLEAN_PORT=5432; else CLEAN_PORT="${hostport#*:}"; fi
+  CLEAN_DB="${hostpart#*/}"
+  CLEAN_DB="${CLEAN_DB%%\?*}"
+  [ -n "$CLEAN_DB" ] || { echo "  No database name - skipping retired-data cleanup."; exit 0; }
+  for t in students groups professors fields levels; do
+    HAS_COL="$(PGPASSWORD="$CLEAN_PASS" psql -U "$CLEAN_USER" -h "$CLEAN_HOST" -p "$CLEAN_PORT" -w -d "$CLEAN_DB" -tAc \
+      "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$t' AND column_name='is_system_placeholder'" 2>/dev/null)" || continue
+    case "$HAS_COL" in *1*) ;; *) continue;; esac
+    if ! PGPASSWORD="$CLEAN_PASS" psql -U "$CLEAN_USER" -h "$CLEAN_HOST" -p "$CLEAN_PORT" -w -d "$CLEAN_DB" \
+      -c "DELETE FROM \"$t\" WHERE \"is_system_placeholder\" = true;" >/dev/null 2>&1; then
+      echo "  Holding-pen rows in $t kept (referenced) - continuing."
+      continue
+    fi
+    if ! PGPASSWORD="$CLEAN_PASS" psql -U "$CLEAN_USER" -h "$CLEAN_HOST" -p "$CLEAN_PORT" -w -d "$CLEAN_DB" \
+      -c "ALTER TABLE \"$t\" DROP COLUMN IF EXISTS \"is_system_placeholder\";" >/dev/null 2>&1; then
+      echo "  Retired column in $t kept - schema sync decides."
+      continue
+    fi
+    echo "  Retired holding-pen data cleared: $t"
+  done
+)
 
 echo ""
 echo "Syncing the database schema..."

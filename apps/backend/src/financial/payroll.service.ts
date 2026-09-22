@@ -374,7 +374,7 @@ export class PayrollService {
     >();
 
     for (const txn of txns) {
-      const key = txn.studentPayment?.group?.id ?? "unassigned";
+      const key = txn.studentPayment?.group?.id ?? "no-group";
       const name = txn.studentPayment?.group?.name ?? "Sans groupe";
       let row = byGroup.get(key);
       if (!row) {

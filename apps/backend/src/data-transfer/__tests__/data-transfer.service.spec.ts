@@ -7,17 +7,17 @@ const SERVICE = readFileSync(join(__dirname, "..", "data-transfer.service.ts"), 
  * Source-level guards for the import preview and export coverage.
  *
  * The full service needs a live Postgres; what the admin depends on is
- * visible in the source: system placeholders never masquerade as school
- * data in the preview, the sample carries the whole table, and the audit
- * trail ships with the export.
+ * visible in the source: legacy "Unassigned" rows from old exports never
+ * come back as school data, the sample carries the whole table, and the
+ * audit trail ships with the export.
  */
 describe("data-transfer preview", () => {
-  it("filters system-placeholder rows out of the displayed samples", () => {
-    expect(SERVICE).toContain("is_system_placeholder");
-    expect(SERVICE).toContain("const systemRowCount = fileTable.rows.length - visibleRows.length;");
-    expect(SERVICE).toContain("allSystem: fileTable.rows.length > 0 && visibleRows.length === 0,");
+  it("skips legacy placeholder rows instead of importing them", () => {
+    expect(SERVICE).toContain("isLegacyPlaceholderRow");
+    expect(SERVICE).not.toContain("systemRowCount");
+    expect(SERVICE).not.toContain("allSystem");
     // The samples themselves are built from the filtered rows.
-    expect(SERVICE).toContain("const sampleRows = visibleRows.slice(0, SAMPLE_ROWS).map(");
+    expect(SERVICE).toContain("const sampleRows = realRows.slice(0, SAMPLE_ROWS).map(");
   });
 
   it("samples the whole small table, not three token rows", () => {
@@ -39,21 +39,8 @@ describe("data-transfer preview", () => {
     expect(users).toBeLessThan(audit);
   });
 
-  it("always checks the placeholder column by name, never by assumed index", () => {
-    expect(SERVICE).toContain('fileTable.columns.indexOf("is_system_placeholder")');
-  });
-
-  it("exempts system placeholders from the required-column fill checks", () => {
-    // The student sentinel historically carried last_name: ""; demanding a
-    // fill value for it blocks every export of an install that ever used the
-    // delete-without-target flow. The import plan and the preview must both
-    // skip placeholder rows when judging emptiness.
-    expect(SERVICE).toContain("const isPlaceholder = (row: unknown)");
-    expect(SERVICE).toContain("findIndex((row) => !isPlaceholder(row) && isEmptyCell(row, colIndex))");
-    expect(SERVICE).toContain("const userRows = fileTable.rows.some((row) => !isPlaceholder(row));");
-    expect(SERVICE).toContain(
-      "!(placeholderIndex >= 0 && Array.isArray(row) && row[placeholderIndex] === true)",
-    );
+  it("detects legacy placeholder rows by column name, never by assumed index", () => {
+    expect(SERVICE).toContain('columns.indexOf("is_system_placeholder")');
   });
 
   it("requires the secret password for encrypted files, never auto-opens them", () => {

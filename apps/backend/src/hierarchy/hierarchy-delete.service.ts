@@ -14,7 +14,6 @@ import {
   studentPayments,
 } from "../db/schema";
 import { AuditService } from "../audit/audit.service";
-import { SentinelService } from "./sentinel.service";
 
 type HierarchyNodeType = "level" | "field" | "professor" | "group" | "student";
 
@@ -32,7 +31,7 @@ interface ArchiveCascadeResult {
 }
 
 interface DetachPlan {
-  mode: "unassign" | "reassign" | "reassign_individual";
+  mode: "reassign" | "reassign_individual";
   targetParentId?: string;
   assignments?: Array<{ childId: string; targetParentId: string }>;
 }
@@ -42,7 +41,6 @@ export class HierarchyDeleteService {
   constructor(
     private readonly db: DbService,
     private readonly audit: AuditService,
-    private readonly sentinels: SentinelService,
   ) {}
 
   /* ------------------------------------------------------------------ */
@@ -129,7 +127,7 @@ export class HierarchyDeleteService {
       const rows = await this.db.client
         .select({ id: fields.id, name: fields.name })
         .from(fields)
-        .where(and(eq(fields.level_id, id), eq(fields.is_system_placeholder, false)));
+        .where(eq(fields.level_id, id));
       fieldIds.push(...rows.map((r) => r.id));
       if (isDirectChildLayer("field")) {
         rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.name, type: "field" }));
@@ -142,7 +140,7 @@ export class HierarchyDeleteService {
       const rows = await this.db.client
         .select({ id: professors.id, full_name: professors.full_name })
         .from(professors)
-        .where(and(inArray(professors.field_id, fieldIds), eq(professors.is_system_placeholder, false)));
+        .where(inArray(professors.field_id, fieldIds));
       professorIds.push(...rows.map((r) => r.id));
       if (isDirectChildLayer("professor")) {
         rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.full_name, type: "professor" }));
@@ -157,7 +155,7 @@ export class HierarchyDeleteService {
       const rows = await this.db.client
         .select({ id: groups.id, name: groups.name })
         .from(groups)
-        .where(and(inArray(groups.prof_id, professorIds), eq(groups.is_system_placeholder, false)));
+        .where(inArray(groups.prof_id, professorIds));
       groupIds.push(...rows.map((r) => r.id));
       if (isDirectChildLayer("group")) {
         rows.forEach((r) => impact.directChildren.push({ id: r.id, name: r.name, type: "group" }));
@@ -172,8 +170,7 @@ export class HierarchyDeleteService {
       const allRows = await this.db.client
         .select({ id: students.id, first_name: students.first_name, last_name: students.last_name })
         .from(students)
-        .innerJoin(studentAssignments, and(eq(studentAssignments.student_id, students.id), inArray(studentAssignments.group_id, groupIds)))
-        .where(eq(students.is_system_placeholder, false));
+        .innerJoin(studentAssignments, and(eq(studentAssignments.student_id, students.id), inArray(studentAssignments.group_id, groupIds)));
       studentIds.push(...allRows.map((r) => r.id));
       if (isDirectChildLayer("student")) {
         allRows.forEach((r) => impact.directChildren.push({ id: r.id, name: `${r.first_name} ${r.last_name}`, type: "student" }));
@@ -368,7 +365,8 @@ export class HierarchyDeleteService {
   /*  3. Detach children + delete/archive parent                         */
   /* ------------------------------------------------------------------ */
 
-  // Returns the reassignment target for a child, or undefined = leave unassigned.
+  // Returns the reassignment target for a child. Every child must have a
+  // target — there is no "leave unassigned" holding pen anymore.
   private resolveTarget(plan: DetachPlan, childId: string): string | undefined {
     if (plan.mode === "reassign") return plan.targetParentId;
     if (plan.mode === "reassign_individual") {
@@ -388,12 +386,12 @@ export class HierarchyDeleteService {
    */
   private groupByTarget(plan: DetachPlan, childIds: string[]) {
     const reassigned = new Map<string, string[]>();
-    const toSentinel: string[] = [];
+    const missingTarget: string[] = [];
 
     for (const childId of childIds) {
       const targetId = this.resolveTarget(plan, childId);
       if (!targetId) {
-        toSentinel.push(childId);
+        missingTarget.push(childId);
         continue;
       }
       const bucket = reassigned.get(targetId) ?? [];
@@ -401,7 +399,13 @@ export class HierarchyDeleteService {
       reassigned.set(targetId, bucket);
     }
 
-    return { reassigned, toSentinel };
+    if (missingTarget.length > 0) {
+      throw new BadRequestException(
+        `Reassignment required for ${missingTarget.length} child(ren) — create a target first, or archive/delete everything together.`,
+      );
+    }
+
+    return { reassigned };
   }
 
   // Re-point one group enrollment (student_assignments) and, when the old group
@@ -451,10 +455,6 @@ export class HierarchyDeleteService {
             if (!valid[0]) throw new BadRequestException("Invalid reassignment target for a field");
             await tx.update(fields).set({ level_id: targetId }).where(inArray(fields.id, ids));
           }
-          if (moves.toSentinel.length > 0) {
-            const sentinelId = await this.sentinels.ensureLevelSentinel();
-            await tx.update(fields).set({ level_id: sentinelId }).where(inArray(fields.id, moves.toSentinel));
-          }
           break;
         }
         case "field": {
@@ -470,10 +470,6 @@ export class HierarchyDeleteService {
             if (!valid[0]) throw new BadRequestException("Invalid reassignment target for a professor");
             await tx.update(professors).set({ field_id: targetId }).where(inArray(professors.id, ids));
           }
-          if (moves.toSentinel.length > 0) {
-            const sentinelId = await this.sentinels.ensureFieldSentinel(parent.level_id, userId);
-            await tx.update(professors).set({ field_id: sentinelId }).where(inArray(professors.id, moves.toSentinel));
-          }
           break;
         }
         case "professor": {
@@ -485,10 +481,6 @@ export class HierarchyDeleteService {
             if (!valid[0]) throw new BadRequestException("Invalid reassignment target for a group");
             await tx.update(groups).set({ prof_id: targetId }).where(inArray(groups.id, ids));
           }
-          if (moves.toSentinel.length > 0) {
-            const sentinelId = await this.sentinels.ensureProfessorSentinel(parent.field_id);
-            await tx.update(groups).set({ prof_id: sentinelId }).where(inArray(groups.id, moves.toSentinel));
-          }
           break;
         }
         case "group": {
@@ -499,13 +491,14 @@ export class HierarchyDeleteService {
               .innerJoin(studentAssignments, and(eq(studentAssignments.student_id, students.id), eq(studentAssignments.group_id, id)))
           ).map((s) => s.id);
           for (const childId of childIds) {
-            let targetId = this.resolveTarget(plan, childId);
-            if (targetId) {
-              const valid = await tx.select().from(groups).where(and(eq(groups.id, targetId), eq(groups.is_active, true), eq(groups.prof_id, parent.prof_id)));
-              if (!valid[0]) throw new BadRequestException("Invalid reassignment target for a student");
-            } else {
-              targetId = (await this.sentinels.ensureGroupSentinel(parent.prof_id));
+            const targetId = this.resolveTarget(plan, childId);
+            if (!targetId) {
+              throw new BadRequestException(
+                "Reassignment required for every student — create a target group first, or archive/delete everything together.",
+              );
             }
+            const valid = await tx.select().from(groups).where(and(eq(groups.id, targetId), eq(groups.is_active, true), eq(groups.prof_id, parent.prof_id)));
+            if (!valid[0]) throw new BadRequestException("Invalid reassignment target for a student");
             await this.moveStudent(tx, childId, id, targetId);
           }
           break;
