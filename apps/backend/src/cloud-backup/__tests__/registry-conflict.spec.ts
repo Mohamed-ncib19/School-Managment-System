@@ -38,6 +38,24 @@ describe("instance registry", () => {
     expect(driver.putCount.get(registry.key(SCHOOL))).toBe(2);
   });
 
+  it("heals a stale same-host identity instead of crying split-brain", async () => {
+    // Re-key/reconnect mints a new UUID on the SAME machine: the previous
+    // boot's claim is still live, same hostname. The host is checked first —
+    // retire the stale self and proceed, no human resolve needed.
+    const registry = new InstanceRegistryService();
+    const driver = new MemoryDriver();
+    await registry.claim(driver, SCHOOL, "uuid-old", "DESKTOP-CC0IE27");
+    const again = await registry.claim(driver, SCHOOL, "uuid-new", "desktop-cc0ie27");
+    expect(again.ok).toBe(true);
+    expect(again.conflict).toBeNull();
+    const stored = await registry.read(driver, SCHOOL);
+    expect(stored?.instances.filter((i) => i.instance_uuid === "uuid-old").pop()?.status).toBe("retired");
+    // ...while a genuinely different host still raises the conflict screen.
+    const rival = await registry.claim(driver, SCHOOL, "uuid-rival", "AUTRE-PC");
+    expect(rival.ok).toBe(false);
+    expect(rival.conflict?.instance_uuid).toBe("uuid-new");
+  });
+
   it("a retired instance never conflicts", async () => {
     const registry = new InstanceRegistryService();
     const driver = new MemoryDriver();

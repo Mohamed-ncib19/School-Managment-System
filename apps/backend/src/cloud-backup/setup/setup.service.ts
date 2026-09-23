@@ -146,6 +146,25 @@ export class CloudSetupService {
 
     const key = await this.keys.unwrap(wrapped.wrapped, wrapped.wrapSalt);
     await this.seedCloud(schoolId, kdf, key, isRekey);
+    // Re-key/reconnect mints a new identity: retire the previous one so this
+    // machine's own stale claim doesn't trip the split-brain guard on the
+    // next boot (same host, dead UUID, still inside the heartbeat TTL).
+    // Best-effort — the registry's same-host self-heal covers whatever this
+    // misses (offline target, renamed host aside).
+    const previousUuid = configured?.instance_uuid;
+    if (previousUuid && previousUuid !== instanceUuid) {
+      try {
+        for (const t of await this.enabledTargetDrivers()) {
+          try {
+            await this.registry.retire(t.driver, schoolId, previousUuid);
+          } catch {
+            /* one dead target must not fail the setup */
+          }
+        }
+      } catch {
+        /* no usable targets right now — self-heal covers it later */
+      }
+    }
     this.logger.log(`Cloud backup seeded for school ${schoolId} (instance ${instanceUuid}).`);
     return { schoolId, instanceUuid, kdf };
   }

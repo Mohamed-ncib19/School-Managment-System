@@ -109,18 +109,40 @@ export class InstanceRegistryService {
 
     const latest = latestPerInstance(current.instances);
     const now = Date.now();
-    const conflict =
-      latest.find(
-        (i) =>
-          i.instance_uuid !== instanceUuid &&
-          i.status === "active" &&
-          // A claim without a recent heartbeat is a dead machine, not a rival.
-          now - new Date(i.claimed_at).getTime() < ACTIVE_TTL_MS,
-      ) ?? null;
+    const live = (i: InstanceRecord) =>
+      i.instance_uuid !== instanceUuid &&
+      i.status === "active" &&
+      // A claim without a recent heartbeat is a dead machine, not a rival.
+      now - new Date(i.claimed_at).getTime() < ACTIVE_TTL_MS;
+
+    // Same-host actives are this machine's own stale identities, not rivals:
+    // re-key and reconnect mint a new UUID, so the previous boot's claim is
+    // still live when the new one lands. Check the host FIRST — retire those
+    // and proceed. A genuinely different hostname keeps the conflict screen.
+    // (A renamed host looks like another machine; that case still needs the
+    // human resolve path, exactly as before.)
+    const staleSelf = latest.filter((i) => live(i) && sameHost(i.hostname, hostname));
+    if (staleSelf.length > 0) {
+      for (const s of staleSelf) {
+        current.instances.push({
+          instance_uuid: s.instance_uuid,
+          hostname: s.hostname,
+          claimed_at: new Date().toISOString(),
+          status: "retired",
+        });
+      }
+      await this.write(driver, schoolId, current);
+      this.logger.log(
+        `Instance ${instanceUuid} retired ${staleSelf.length} stale same-host record(s) ` +
+          `(${staleSelf.map((s) => s.instance_uuid).join(", ")}) for school ${schoolId}`,
+      );
+    }
+
+    const conflict = latestPerInstance(current.instances).find((i) => live(i)) ?? null;
 
     this.logger.log(
       conflict
-        ? `Instance ${instanceUuid} claim collides with active instance ${conflict.instance_uuid}`
+        ? `Instance ${instanceUuid} claim collides with active instance ${conflict.instance_uuid} (${conflict.hostname})`
         : `Instance ${instanceUuid} claimed active for school ${schoolId}`,
     );
     return { ok: !conflict, conflict, registry: current };
@@ -152,6 +174,16 @@ export class InstanceRegistryService {
   ): Promise<ClaimResult> {
     return this.claim(driver, schoolId, instanceUuid, hostname);
   }
+}
+
+/**
+ * Same physical machine, by hostname (case-insensitive — Windows reports it
+ * upper-cased). Empty hostnames never match: the retire path writes "".
+ */
+export function sameHost(a: string, b: string): boolean {
+  const left = (a ?? "").trim().toLowerCase();
+  const right = (b ?? "").trim().toLowerCase();
+  return left.length > 0 && left === right;
 }
 
 /** Latest record per instance UUID, by claimed_at. */
