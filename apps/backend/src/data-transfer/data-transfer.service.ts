@@ -47,7 +47,13 @@ import {
  *
  * Import semantics are "replace the tables present in the file": their rows
  * are deleted and the file's rows inserted with their original ids, inside a
- * single transaction. Tables absent from the file are left untouched.
+ * single transaction. A table present in the file but empty is a "clear-only"
+ * plan: its rows are deleted and nothing is re-inserted, so the target ends
+ * up matching the file instead of keeping stale rows that would still
+ * reference the deleted parents (foreign-key violation on delete). Tables
+ * absent from the file — or explicitly skipped in the preview — are left
+ * untouched, and the import refuses loudly when those leftover rows would
+ * block a delete instead of dying mid-transaction on a raw PG error.
  *
  * Legacy files may still carry `is_system_placeholder` "Unassigned" rows from
  * before the holding-pen removal. Those rows are skipped on import and hidden
@@ -78,29 +84,76 @@ interface TransferTable {
 const TABLE_ORDER: TransferTable[] = [
   { key: "levels", label: "Niveaux", table: levels, refs: {} },
   { key: "users", label: "Utilisateurs", table: users, refs: {} },
-  { key: "fields", label: "Filières", table: fields, refs: { created_by: "users" } },
-  { key: "professors", label: "Professeurs", table: professors, refs: { field_id: "fields" } },
-  { key: "groups", label: "Groupes", table: groups, refs: { prof_id: "professors" } },
-  { key: "students", label: "Étudiants", table: students, refs: { group_id: "groups" } },
+  {
+    key: "fields",
+    label: "Filières",
+    table: fields,
+    refs: { created_by: "users", level_id: "levels", archived_because_parent_id: "levels" },
+  },
+  {
+    key: "professors",
+    label: "Professeurs",
+    table: professors,
+    refs: { field_id: "fields", user_id: "users", archived_because_parent_id: "fields" },
+  },
+  {
+    key: "groups",
+    label: "Groupes",
+    table: groups,
+    refs: { prof_id: "professors", archived_because_parent_id: "professors" },
+  },
+  {
+    key: "students",
+    label: "Étudiants",
+    table: students,
+    refs: { group_id: "groups", archived_because_parent_id: "groups" },
+  },
   { key: "student_assignments", label: "Inscriptions", table: studentAssignments, refs: { student_id: "students", group_id: "groups" } },
   { key: "time_slots", label: "Créneaux horaires", table: timeSlots, refs: {} },
   { key: "classrooms", label: "Salles", table: classrooms, refs: {} },
   { key: "working_hours", label: "Horaires de travail", table: workingHours, refs: {} },
   { key: "hierarchy_configurations", label: "Configurations de navigation", table: hierarchyConfigurations, refs: {} },
   { key: "professor_compensations", label: "Rémunérations", table: professorCompensations, refs: { prof_id: "professors" } },
-  { key: "student_payments", label: "Paiements étudiants", table: studentPayments, refs: { student_id: "students", group_id: "groups" } },
-  { key: "payment_transactions", label: "Transactions", table: paymentTransactions, refs: { payment_id: "student_payments" } },
-  { key: "payroll_payments", label: "Paiements professeurs", table: payrollPayments, refs: { prof_id: "professors" } },
-  { key: "payroll_documents", label: "Documents de paie", table: payrollDocuments, refs: { payout_id: "payroll_payments" } },
+  {
+    key: "student_payments",
+    label: "Paiements étudiants",
+    table: studentPayments,
+    refs: { student_id: "students", group_id: "groups", recorded_by: "users" },
+  },
+  {
+    key: "payment_transactions",
+    label: "Transactions",
+    table: paymentTransactions,
+    refs: { payment_id: "student_payments", recorded_by: "users", prof_id: "professors" },
+  },
+  { key: "payroll_payments", label: "Paiements professeurs", table: payrollPayments, refs: { prof_id: "professors", recorded_by: "users" } },
+  { key: "payroll_documents", label: "Documents de paie", table: payrollDocuments, refs: { payout_id: "payroll_payments", generated_by: "users" } },
   { key: "schedule_entries", label: "Séances d'emploi du temps", table: scheduleEntries, refs: { group_id: "groups", time_slot_id: "time_slots", classroom_id: "classrooms", prof_id: "professors" } },
-  { key: "student_schedule_exceptions", label: "Exceptions d'élèves", table: studentScheduleExceptions, refs: { student_id: "students", schedule_entry_id: "schedule_entries" } },
-  { key: "schedule_entry_exceptions", label: "Exceptions de séances", table: scheduleEntryExceptions, refs: { schedule_entry_id: "schedule_entries", new_time_slot_id: "time_slots", new_classroom_id: "classrooms", new_prof_id: "professors" } },
+  {
+    key: "student_schedule_exceptions",
+    label: "Exceptions d'élèves",
+    table: studentScheduleExceptions,
+    refs: { student_id: "students", schedule_entry_id: "schedule_entries", created_by: "users" },
+  },
+  {
+    key: "schedule_entry_exceptions",
+    label: "Exceptions de séances",
+    table: scheduleEntryExceptions,
+    refs: {
+      schedule_entry_id: "schedule_entries",
+      new_time_slot_id: "time_slots",
+      new_classroom_id: "classrooms",
+      new_prof_id: "professors",
+      created_by: "users",
+    },
+  },
   { key: "attendance_sheets", label: "Feuilles de présence", table: attendanceSheets, refs: { group_id: "groups" } },
   { key: "whiteboards", label: "Tableaux blancs", table: whiteboards, refs: { owner_id: "users" } },
   // The audit trail is part of the school's records: it travels with the
-  // backup, and it has no outgoing FK to anything above (actor_user_id is
-  // nullable — a deleted user must not orphan an audit line).
-  { key: "audit_logs", label: "Journal d'audit", table: auditLogs, refs: {} },
+  // backup. actor_user_id is nullable in practice — a deleted user must not
+  // orphan an audit line — but the FK exists, so it stays declared: the
+  // ordering (users first, audit near-last) is what keeps it valid.
+  { key: "audit_logs", label: "Journal d'audit", table: auditLogs, refs: { actor_user_id: "users" } },
   { key: "receipt_counters", label: "Compteurs de reçus", table: receiptCounters, refs: {} },
   { key: "financial_settings", label: "Paramètres financiers", table: financialSettings, refs: {} },
   { key: "system_settings", label: "Paramètres système", table: systemSettings, refs: {} },
@@ -253,6 +306,24 @@ export class DataTransferService {
     const document = this.parseDocument(buffer);
     const fillsSafe = fills && typeof fills === "object" ? fills : {};
 
+    // Tables that will supply ids: present in the file, not skipped in the
+    // preview, AND carrying at least one real row (after legacy-placeholder
+    // filtering). Computed up front so the foreign-key validation below is
+    // decided by plan membership — not by file presence. A target table that
+    // is in the file but skipped or present-but-empty (clear-only plan) does
+    // NOT resolve references: skipped rows stay as they are, cleared tables
+    // supply zero ids.
+    const included = new Set<string>();
+    for (const def of TABLE_ORDER) {
+      const fileTable = document.tables[def.key];
+      if (!fileTable) continue;
+      const opts = fillsSafe[def.key] ?? {};
+      if (String(opts.skip) === "true") continue;
+      const hasRealRows = fileTable.rows.some((row) => !isLegacyPlaceholderRow(fileTable.columns, row));
+      if (!hasRealRows) continue;
+      included.add(def.key);
+    }
+
     // Per-table insert plan, validated against the current schema.
     const plans: { def: TransferTable; rows: Record<string, unknown>[] }[] = [];
     for (const def of TABLE_ORDER) {
@@ -268,8 +339,12 @@ export class DataTransferService {
       // dropped: the column no longer exists and the rows must not come back
       // as visible data.
       const realRows = fileTable.rows.filter((row) => !isLegacyPlaceholderRow(fileTable.columns, row));
-      if (realRows.length === 0) continue;
-
+      // A table present in the file but with no rows is a clear-only plan:
+      // its current rows are deleted and nothing is re-inserted. Skipping it
+      // instead would leave stale rows behind — and those rows still
+      // reference the parent rows being replaced, so the delete phase would
+      // abort with a foreign-key violation (e.g. "still referenced from
+      // table fields" when the file's fields section is empty).
       if (realRows.length > 0) {
         // Every NOT NULL column without a default must hold a value in every
         // row — or be provided as a fill value, which patches only the empty
@@ -301,9 +376,12 @@ export class DataTransferService {
           }
         }
 
-        // Foreign keys pointing at tables absent from the file cannot resolve.
+        // Foreign keys pointing at tables that will not supply ids cannot
+        // resolve: the target is absent from the file, skipped in the
+        // preview, or present-but-empty (clear-only — zero ids to give), so
+        // a non-empty FK column here would die on a raw PG error.
         for (const [column, target] of Object.entries(def.refs)) {
-          if (document.tables[target] || !fileColumns.includes(column)) continue;
+          if (included.has(target) || !fileColumns.includes(column)) continue;
           const used = realRows.some((row) => {
             const index = fileTable.columns.indexOf(column);
             const value = (row as unknown[])[index];
@@ -312,8 +390,8 @@ export class DataTransferService {
           if (used) {
             throw new BadRequestException(
               `Import ${def.label} impossible : la colonne « ${column} » référence la table ` +
-                `« ${TABLE_BY_KEY.get(target)?.label ?? target} » qui n'est pas dans le fichier. ` +
-                `Importez un fichier d'export complet ou excluez cette table.`,
+                `« ${TABLE_BY_KEY.get(target)?.label ?? target} » qui n'est ni dans le fichier ni importée. ` +
+                `Importez un fichier d'export complet ou excluez aussi cette table.`,
             );
           }
         }
@@ -326,6 +404,13 @@ export class DataTransferService {
     if (plans.length === 0) {
       throw new BadRequestException("Le fichier ne contient aucune table connue.");
     }
+    // Refuse a wipe-everything import: a file whose known tables are all
+    // empty would delete every row and insert nothing. Nothing to do is not
+    // an import — say so instead of emptying the school.
+    const plannedRows = plans.reduce((sum, plan) => sum + plan.rows.length, 0);
+    if (plannedRows === 0) {
+      throw new BadRequestException("Le fichier ne contient aucune ligne à importer.");
+    }
 
     const imported: Record<string, number> = {};
     await this.db.client.transaction(async (tx) => {
@@ -336,6 +421,29 @@ export class DataTransferService {
         .from(users)
         .where(eq(users.id, actorUserId))
         .limit(1);
+
+      // A table left untouched (absent from the file or skipped) keeps its
+      // rows — but those rows may reference a table we are about to clear,
+      // which would abort the whole transaction on a raw foreign-key error.
+      // Detect that first and name the conflict while nothing has changed.
+      const plannedKeys = new Set(plans.map((plan) => plan.def.key));
+      for (const plan of plans) {
+        for (const child of TABLE_ORDER) {
+          if (plannedKeys.has(child.key)) continue;
+          const blockers = Object.entries(child.refs)
+            .filter(([, target]) => target === plan.def.key)
+            .map(([column]) => column);
+          if (blockers.length === 0) continue;
+          const leftover = await tx.select().from(child.table).limit(1);
+          if (leftover.length > 0) {
+            throw new BadRequestException(
+              `Import ${plan.def.label} impossible : la table « ${child.label} » contient déjà des lignes ` +
+                `qui référencent ces données, mais elle n'est ni dans le fichier ni importée. ` +
+                `Importez un fichier d'export complet ou excluez aussi « ${plan.def.label} ».`,
+            );
+          }
+        }
+      }
 
       // Delete in dependency order: children before parents.
       for (const plan of [...plans].reverse()) {
@@ -487,7 +595,13 @@ export class DataTransferService {
     for (const [column, target] of Object.entries(def.refs)) {
       if (!fileSet.has(column)) continue;
       const targetDef = TABLE_BY_KEY.get(target);
-      if (targetDef && documentTables[target]) continue;
+      // A target that is absent — or present-but-empty (clear-only, zero ids
+      // to give) — cannot resolve this FK. Preview must agree with importAll's
+      // `included` set, otherwise the preview says OK and the import 400s.
+      const targetTable = documentTables[target];
+      const targetHasRows =
+        !!targetTable && targetTable.rows.some((row) => !isLegacyPlaceholderRow(targetTable.columns, row));
+      if (targetDef && targetHasRows) continue;
       missingTargetTables.push({ column, targetLabel: targetDef?.label ?? target });
     }
 
