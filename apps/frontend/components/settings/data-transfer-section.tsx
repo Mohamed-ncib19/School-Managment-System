@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Database, Download, Upload, RefreshCw, Trash2, AlertTriangle, CheckCircle2, FileJson } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { useExportAll, useImportPreview, useDataImport, type ImportPreview, type TablePreview, type FillValues } from "@/hooks/use-data-transfer";
@@ -11,6 +11,13 @@ import { cn } from "@/lib/utils/format";
  * travel in the file and import untouched — they are simply not the admin's
  * business when eyeballing the data. `_id` suffixes join them via rule.
  */
+/**
+ * Session key carrying the import confirmation across the post-import reload.
+ * A whole-database import must refresh every cache in the app (react-query,
+ * zustand stores, router) — only a full reload reaches them all.
+ */
+const IMPORT_DONE_KEY = "data-import-done";
+
 const BACKGROUND_COLUMNS = new Set([
   "id",
   "created_by",
@@ -81,6 +88,26 @@ export default function DataTransferSection() {
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A successful import replaces the whole database, then reloads (see
+  // runImport): the confirmation message survives the reload through here.
+  useEffect(() => {
+    try {
+      const pending = sessionStorage.getItem(IMPORT_DONE_KEY);
+      if (pending) {
+        sessionStorage.removeItem(IMPORT_DONE_KEY);
+        setDone(pending);
+        const timer = setTimeout(() => setDone(null), 8000);
+        return () => clearTimeout(timer);
+      }
+    } catch {
+      /* storage unavailable — the banner simply stays empty */
+    }
+    return () => {
+      if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+    };
+  }, []);
 
   const reset = () => {
     setFile(null);
@@ -197,7 +224,26 @@ export default function DataTransferSection() {
           setConfirmOpen(false);
           setConfirmKeyword("");
           setPhrase("");
+          // Drop the file's preview: it describes the file just consumed,
+          // not the database — leaving it up reads as "old data".
+          setFile(null);
+          setPreview(null);
+          setFills({});
+          setIncluded({});
+          setExpanded({});
+          setPendingEnc(null);
+          setEncryptedFile(false);
+          if (fileInputRef.current) fileInputRef.current.value = "";
           setDone(result.message);
+          // The import replaced every table caches may hold: persist the
+          // confirmation, then reload so all data on screen comes from the
+          // new database instead of pre-import caches.
+          try {
+            sessionStorage.setItem(IMPORT_DONE_KEY, result.message);
+          } catch {
+            /* storage unavailable — the banner still shows until reload */
+          }
+          reloadTimerRef.current = setTimeout(() => window.location.reload(), 1500);
         },
         onError: (err) => {
           setConfirmOpen(false);
