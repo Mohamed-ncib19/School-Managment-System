@@ -183,6 +183,28 @@ export class UpdatesService {
         });
         child.on("error", (e) => fail(`Could not launch the update engine: ${e.message}`));
         child.unref();
+        this.logger.log(`Update spawn command: ${updateCmd}`);
+        // Watchdog: `cmd /c start` reports success even when no window ever
+        // appears (hidden/minimised backend console), and its exit code is
+        // already gone with unref(). If the engine hasn't claimed the journal
+        // past our step-0 marker within 45 s, say so loudly with the remedy
+        // instead of leaving the UI at 0% until the frontend gives up.
+        // Never delay a shutdown: the engine stops this very process.
+        setTimeout(() => {
+          try {
+            const journal = join(root, "logs", "update-progress.json");
+            if (!existsSync(journal)) return;
+            const current = JSON.parse(readFileSync(journal, "utf8")) as UpdateProgress;
+            if (current.state === "running" && current.step === 0 && current.label === "Starting update engine") {
+              fail(
+                "The update window did not open on the server — update from the desktop " +
+                  "control panel instead (Stop, then Start).",
+              );
+            }
+          } catch {
+            /* journal unreadable — the engine owns it from here */
+          }
+        }, 45_000).unref?.();
       } else {
         const child = spawn("/bin/sh", [absScript], { cwd: root, detached: true, stdio: "ignore" });
         child.on("error", (e) => fail(`Could not launch the update engine: ${e.message}`));
