@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { execFile, spawn } from "child_process";
-import { existsSync, mkdirSync, readFileSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 
@@ -130,8 +130,9 @@ export class UpdatesService {
     const script = isWindows
       ? "installer\\engine\\do-update.ps1"
       : "installer/macos/scripts/update.sh";
+    const absScript = join(root, script);
 
-    if (!existsSync(join(root, script))) {
+    if (!existsSync(absScript)) {
       // Docker images exclude installer/ (.dockerignore), so there is no
       // engine to spawn in-container — fail loudly instead of spawning a
       // shell on a missing file.
@@ -139,29 +140,70 @@ export class UpdatesService {
       return { ok: false, started: false };
     }
 
+    // Claim the progress journal BEFORE spawning: if the engine's own window
+    // never materialises (e.g. this backend runs hidden/minimised and
+    // `cmd /c start` inherits that state), the UI must see "running" turn
+    // into a loud failure instead of polling "idle" forever.
+    this.writeProgress(root, {
+      state: "running",
+      step: 0,
+      stepTotal: 9,
+      label: "Starting update engine",
+      message: "Starting update engine",
+      updatedAt: new Date().toISOString(),
+    });
+    const fail = (message: string) => {
+      this.logger.error(message);
+      this.writeProgress(root, {
+        state: "failed",
+        label: message,
+        message,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+
     try {
       if (isWindows) {
         const logFile = this.openLog(root, "update");
         const ps = process.env.SystemRoot
           ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
           : "powershell.exe";
+        // Absolute, backslash paths: the backend's CWD and `git` print
+        // forward slashes, which cmd.exe's `start /D` and `-File` mishandle
+        // once a hidden/minimised parent is involved.
+        const winRoot = root.replace(/\//g, "\\");
         const updateCmd =
-          `start "SCHOOL MANAGEMENT SYSTEM - Update" /D "${root}" ` +
-          `"${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${script}" ` +
+          `start "SCHOOL MANAGEMENT SYSTEM - Update" /D "${winRoot}" ` +
+          `"${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${absScript}" ` +
           `>> "${logFile}" 2>&1`;
-        spawn("cmd.exe", ["/d", "/c", updateCmd], {
+        const child = spawn("cmd.exe", ["/d", "/c", updateCmd], {
           cwd: root,
           stdio: "ignore",
           windowsHide: false,
-        }).unref();
+        });
+        child.on("error", (e) => fail(`Could not launch the update engine: ${e.message}`));
+        child.unref();
       } else {
-        spawn("/bin/sh", [script], { cwd: root, detached: true, stdio: "ignore" }).unref();
+        const child = spawn("/bin/sh", [absScript], { cwd: root, detached: true, stdio: "ignore" });
+        child.on("error", (e) => fail(`Could not launch the update engine: ${e.message}`));
+        child.unref();
       }
       this.logger.log(`Update engine launched: ${script}`);
       return { ok: true, started: true };
     } catch (e) {
-      this.logger.error(`Could not launch the update engine: ${(e as Error).message}`);
+      fail(`Could not launch the update engine: ${(e as Error).message}`);
       return { ok: false, started: false };
+    }
+  }
+
+  /** Best-effort write of the engine progress journal (never throws). */
+  private writeProgress(root: string, progress: UpdateProgress): void {
+    try {
+      const dir = join(root, "logs");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "update-progress.json"), JSON.stringify(progress), "utf8");
+    } catch {
+      /* a missing journal just reads back as idle — same as before */
     }
   }
 

@@ -9,6 +9,10 @@ import UpdateProgressTracker from "./update-progress";
 const SNOOZE_KEY = "update-snoozed-sha";
 const PROGRESS_POLL_MS = 2_000;
 const PROGRESS_MAX_MS = 25 * 60_000;
+// The backend claims the journal as "running" before spawning the engine, so
+// "idle" this long after "Update now" means the engine window never started —
+// fail loudly instead of polling for 25 minutes.
+const PROGRESS_IDLE_MS = 90_000;
 
 /**
  * Polls the backend's update check while the dashboard is open. When a newer
@@ -90,6 +94,10 @@ export default function UpdateNotifier() {
       if (p.state === "done" || p.state === "failed" || p.state === "stalled") {
         useUpdateStore.setState({ applying: false, failed: p.state !== "done" });
       } else if (Date.now() - startedAt > PROGRESS_MAX_MS) {
+        useUpdateStore.setState({ applying: false, failed: true });
+      } else if ((!p || p.state === "idle") && Date.now() - startedAt > PROGRESS_IDLE_MS) {
+        // Engine never reported: no window, no journal. Tell the operator to
+        // update via the desktop control panel (Stop, then Start) instead.
         useUpdateStore.setState({ applying: false, failed: true });
       }
     };
