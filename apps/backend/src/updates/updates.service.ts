@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { execFile, spawn } from "child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 
@@ -109,18 +109,16 @@ export class UpdatesService {
   }
 
   /**
-   * Launch the platform's update engine in its own visible console (Windows)
-   * that stops the servers, pulls, installs, migrates and restarts on its own.
-   * The HTTP response is sent before the engine gets round to stopping this
-   * process.
+   * Launch the platform's update engine headless: it stops the servers,
+   * pulls, installs, migrates and restarts on its own. The HTTP response is
+   * sent before the engine gets round to stopping this process.
    *
-   * The engine must NOT inherit the backend's console: the API runs in a
-   * minimized window, which would hide the whole progress flow. `cmd /c start`
-   * therefore gives the engine a fresh console the moment it launches, with
-   * its native output mirrored to logs\update-<timestamp>.log for later
-   * inspection (PowerShell's Write-Host UI stays on the new window). Like the
-   * shutdown engine, do NOT spawn it detached with `stdio: "ignore"` — that
-   * combination freezes PowerShell on Windows.
+   * Headless is deliberate: `cmd /c start` needs a console to attach the new
+   * window to and silently produces nothing when this backend itself runs
+   * hidden/minimised (the normal state on a school machine). Progress travels
+   * through logs\update-progress.json, which the UI polls; engine output goes
+   * to logs\update-<timestamp>.log via fd redirect. The engine takes
+   * -NonInteractive so it never waits for a keypress.
    */
   async applyUpdate(): Promise<{ ok: boolean; started: boolean }> {
     const root = await this.git(["rev-parse", "--show-toplevel"]);
@@ -164,26 +162,41 @@ export class UpdatesService {
 
     try {
       if (isWindows) {
+        // Headless by design: `cmd /c start` needs a console to attach the
+        // new window to, and silently produces NOTHING (no window, no log,
+        // no journal) when this backend itself runs hidden/minimised — which
+        // is the normal state on a school machine. powershell.exe started
+        // directly has no such requirement; progress travels through the
+        // journal the app polls, and engine output lands in the log file for
+        // real (fd redirect, not a shell `>>` that died with the old path).
         const logFile = this.openLog(root, "update");
         const ps = process.env.SystemRoot
           ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
           : "powershell.exe";
-        // Absolute, backslash paths: the backend's CWD and `git` print
-        // forward slashes, which cmd.exe's `start /D` and `-File` mishandle
-        // once a hidden/minimised parent is involved.
-        const winRoot = root.replace(/\//g, "\\");
-        const updateCmd =
-          `start "SCHOOL MANAGEMENT SYSTEM - Update" /D "${winRoot}" ` +
-          `"${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${absScript}" ` +
-          `>> "${logFile}" 2>&1`;
-        const child = spawn("cmd.exe", ["/d", "/c", updateCmd], {
-          cwd: root,
-          stdio: "ignore",
-          windowsHide: false,
-        });
+        let logFd: number | null = null;
+        try {
+          logFd = openSync(logFile, "a");
+        } catch {
+          logFd = null;
+        }
+        const child = spawn(
+          ps,
+          ["-NonInteractive", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", absScript, "-NonInteractive"],
+          {
+            cwd: root,
+            detached: true,
+            stdio: ["ignore", logFd ?? "ignore", logFd ?? "ignore"],
+            windowsHide: true,
+          },
+        );
+        try {
+          if (logFd !== null) closeSync(logFd);
+        } catch {
+          /* the child holds its own copy */
+        }
         child.on("error", (e) => fail(`Could not launch the update engine: ${e.message}`));
         child.unref();
-        this.logger.log(`Update spawn command: ${updateCmd}`);
+        this.logger.log(`Update engine spawned headless (pid ${child.pid ?? "?"}): ${absScript} -> ${logFile}`);
         // Watchdog: `cmd /c start` reports success even when no window ever
         // appears (hidden/minimised backend console), and its exit code is
         // already gone with unref(). If the engine hasn't claimed the journal

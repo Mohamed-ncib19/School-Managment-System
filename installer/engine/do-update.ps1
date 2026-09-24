@@ -10,11 +10,12 @@
   that were running before the update. A system the operator had shut down
   stays shut down: the engine is only a restarter, never a starter.
 
-  The window is visible on purpose: the whole flow is narrated with the shared
-  step/progress UI (ui.ps1). The long steps - git pull and pnpm install - run
-  in background jobs so the window keeps drawing instead of freezing, and
-  native tool output is mirrored to logs\update-<timestamp>.log by the
-  launcher in updates.service.ts.
+  Progress is dual-channel: the journal (logs\update-progress.json) the app
+  polls for the in-dialog tracker, and engine output to
+  logs\update-<timestamp>.log. The backend launches this headless
+  (-NonInteractive), so there may be no visible window at all — the journal
+  is the contract, the console is optional. The long steps - git pull and
+  pnpm install - run in background jobs.
 
   All data-safe, enforced in order:
     1. A verified pg_dump safety backup MUST succeed before any schema work
@@ -29,7 +30,12 @@
   Invoked detached by the backend: UpdateNow in the app -> this script.
 #>
 [CmdletBinding()]
-param()
+param(
+  # Headless launch from the backend (no console): progress goes to the
+  # journal (logs\update-progress.json) the app polls, engine output to
+  # logs\update-*.log, and nothing ever waits for a keypress.
+  [switch]$NonInteractive
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -83,7 +89,9 @@ function Fail {
     Start-Process "wscript.exe" -ArgumentList ("`"" + (Join-Path $Root "installer\runtime\start-servers.vbs") + "`"")
     Write-Info "Servers are coming back up in their own window."
   }
-  Read-Host "  Press Enter to close"
+  # Headless (backend-launched) runs have no console to read from — a bare
+  # Read-Host would hang the engine forever after the failure was reported.
+  if (-not $NonInteractive) { Read-Host "  Press Enter to close" }
   exit 1
 }
 
@@ -166,7 +174,7 @@ if (Test-Path $EnvFile) {
   if ($match) { $Branch = $match.Matches[0].Groups[1].Value.Trim() }
 }
 
-Clear-Host
+try { Clear-Host } catch { }
 Write-Banner -Title "SCHOOL MANAGEMENT SYSTEM" -Subtitle "Update  -  branch $Branch" -Colour Cyan
 
 if (-not (Test-Path (Join-Path $Root ".git"))) { Fail "Not a git repository - update only works on a cloned install." }
