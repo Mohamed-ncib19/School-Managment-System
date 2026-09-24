@@ -12,7 +12,7 @@
 #define AppName "Système de gestion scolaire"
 #define AppShortName "SchoolManagementSystem"
 #define AppPublisher "Mohamed Ncib"
-#define AppVersion "1.0.5"
+#define AppVersion "1.0.6"
 #define AppExeName "launch.vbs"
 
 [Setup]
